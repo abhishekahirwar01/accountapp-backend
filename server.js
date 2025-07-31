@@ -2,6 +2,7 @@ const express = require("express");
 const dotenv = require("dotenv");
 const cors = require("cors");
 const connectDB = require("./config/db");
+const masterAdminRoutes = require("./routes/masterAdminRoutes");
 
 dotenv.config();
 connectDB();
@@ -11,6 +12,7 @@ app.use(cors());
 app.use(express.json());
 
 app.use("/api/accounts", require("./routes/accountRoutes"));
+app.use("/api/master-admin", masterAdminRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
