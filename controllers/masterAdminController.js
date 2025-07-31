@@ -31,14 +31,25 @@ exports.loginMasterAdmin = async (req, res) => {
   try {
     const { username, password } = req.body;
 
-    const admin = await MasterAdmin.findOne({ username });
+    // Validate input
+    if (!username || !password) {
+      return res.status(400).json({ message: "Username and password are required" });
+    }
+
+    const admin = await MasterAdmin.findOne({ username: username.toLowerCase() });
+
     if (!admin) {
-      return res.status(404).json({ message: "Invalid username" });
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
+
+    // Check if password exists for the admin
+    if (!admin.password) {
+      return res.status(401).json({ message: "Account not properly configured" });
     }
 
     const isMatch = await bcrypt.compare(password, admin.password);
     if (!isMatch) {
-      return res.status(401).json({ message: "Invalid password" });
+      return res.status(401).json({ message: "Invalid credentials" });
     }
 
     const token = jwt.sign(
@@ -52,10 +63,15 @@ exports.loginMasterAdmin = async (req, res) => {
       token,
       admin: {
         id: admin._id,
-        username: admin.username
+        username: admin.username,
+        name: admin.name,
+        email: admin.email,
+        role: "master"
       }
     });
+
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("Login error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
