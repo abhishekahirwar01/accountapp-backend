@@ -1,5 +1,7 @@
 const Client = require("../models/Client");
 const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+
 
 // Create Client (Only Master Admin)
 exports.createClient = async (req, res) => {
@@ -53,6 +55,45 @@ exports.getClients = async (req, res) => {
   try {
     const clients = await Client.find({ masterAdmin: req.user.id }).select("-password");
     res.status(200).json(clients);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+// Client Login
+exports.loginClient = async (req, res) => {
+  try {
+    const { clientUsername, password } = req.body;
+
+    const client = await Client.findOne({ clientUsername });
+    if (!client) {
+      return res.status(404).json({ message: "Client not found" });
+    }
+
+    const isMatch = await bcrypt.compare(password, client.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid password" });
+    }
+
+    const token = jwt.sign(
+      { id: client._id, role: "client" },
+      process.env.JWT_SECRET,
+      { expiresIn: "1d" }
+    );
+
+    res.status(200).json({
+      message: "Login successful",
+      token,
+      client: {
+        id: client._id,
+        clientUsername: client.clientUsername,
+        contactName: client.contactName,
+        email: client.email,
+        phone: client.phone,
+        role: client.role
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
