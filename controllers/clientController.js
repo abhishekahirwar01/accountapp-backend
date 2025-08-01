@@ -98,3 +98,74 @@ exports.loginClient = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+// Update Client (Only Master Admin)
+exports.updateClient = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      contactName,
+      email,
+      phone,
+      companyName,
+      subscriptionPlan,
+      status
+    } = req.body;
+
+    const client = await Client.findOne({ _id: id, masterAdmin: req.user.id });
+    if (!client) {
+      return res.status(404).json({ message: "Client not found" });
+    }
+
+    // Check for duplicate email/phone (if changed)
+    if (email && email !== client.email) {
+      const existingEmail = await Client.findOne({ email });
+      if (existingEmail) {
+        return res.status(400).json({ message: "Email already exists" });
+      }
+      client.email = email;
+    }
+
+    if (phone && phone !== client.phone) {
+      const existingPhone = await Client.findOne({ phone });
+      if (existingPhone) {
+        return res.status(400).json({ message: "Phone already exists" });
+      }
+      client.phone = phone;
+    }
+
+    // Update other fields
+    if (contactName) client.contactName = contactName;
+    if (companyName) client.companyName = companyName;
+    if (subscriptionPlan) client.subscriptionPlan = subscriptionPlan;
+    if (status) client.status = status;
+
+    await client.save();
+
+    res.status(200).json({ message: "Client updated successfully", client });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
+// Delete Client (Only Master Admin)
+exports.deleteClient = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Check if client belongs to the logged-in master admin
+    const client = await Client.findOne({ _id: id, masterAdmin: req.user.id });
+    if (!client) {
+      return res.status(404).json({ message: "Client not found or unauthorized" });
+    }
+
+    await Client.deleteOne({ _id: id });
+
+    res.status(200).json({ message: "Client deleted successfully" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
