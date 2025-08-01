@@ -169,3 +169,33 @@ exports.deleteClient = async (req, res) => {
   }
 };
 
+
+
+// Reset Client Password (Only Master Admin or Client Themselves)
+exports.resetPassword = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newpassword } = req.body;
+    if (!newpassword) {
+      return res.status(400).json({ message: "New Password is required" });
+    }
+    if (req.user.role !== "master") {
+      return res.status(403).json({ message: "Only master admin can reset password" });
+    }
+    // Find the client under this master admin
+    const client = await Client.findById(id);
+    if (!client) {
+      return res.status(404).json({ message: "client not found" });
+    }
+    // Hash and update password
+    const hashedPassword = await bcrypt.hash(newpassword, 10);
+    client.password = hashedPassword;
+
+    client.save();
+    res.status(200).json({ message: "Password reset successfully" })
+  }
+  catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
