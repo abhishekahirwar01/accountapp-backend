@@ -9,7 +9,8 @@ exports.createCompany = async (req, res) => {
       address,
       companyOwner,
       contactNumber,
-      gstin
+      gstin,
+      companyType 
     } = req.body;
 
     const existing = await Company.findOne({ registrationNumber });
@@ -24,6 +25,7 @@ exports.createCompany = async (req, res) => {
       companyOwner,
       contactNumber,
       gstin,
+      companyType,
       client: req.user.id
     });
 
@@ -85,7 +87,8 @@ exports.updateCompany = async (req, res) => {
       address,
       companyOwner,
       contactNumber,
-      gstin
+      gstin,
+      companyType
     } = req.body;
 
     const company = await Company.findById(companyId);
@@ -105,6 +108,8 @@ exports.updateCompany = async (req, res) => {
     company.companyOwner = companyOwner || company.companyOwner;
     company.contactNumber = contactNumber || company.contactNumber;
     company.gstin = gstin || company.gstin;
+    company.companyType = companyType || company.companyType;
+
 
     await company.save();
     res.status(200).json({ message: "Company updated", company });

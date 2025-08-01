@@ -7,6 +7,11 @@ const companySchema = new mongoose.Schema({
   companyOwner: { type: String, required: true },
   contactNumber: { type: String, required: true },
   gstin: { type: String, default: null },
+   companyType: {
+    type: String,
+    enum: ["manufacturing", "trading", "service"],
+    required: true
+  },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
 }, { timestamps: true });
 
