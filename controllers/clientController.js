@@ -199,3 +199,20 @@ exports.resetPassword = async (req, res) => {
   }
 }
 
+
+
+// Get Single Client by ID (Only Master Admin)
+exports.getClientById = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const client = await Client.findOne({ _id: id, masterAdmin: req.user.id }).select("-password");
+    if (!client) {
+      return res.status(404).json({ message: "Client not found" });
+    }
+
+    res.status(200).json(client);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
