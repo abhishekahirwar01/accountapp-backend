@@ -56,26 +56,6 @@ exports.getAllCompanies = async (req, res) => {
   }
 };
 
-// exports.getCompanies = async (req, res) => {
-//   try {
-//     let companies;
-
-//     if (req.user.role === "master") {
-//       // Master Admin gets all companies
-//       companies = await Company.find().populate("client", "clientUsername email");
-//     } else if (req.user.role === "client") {
-//       // Client gets only their companies
-//       companies = await Company.find({ client: req.user.id });
-//     } else {
-//       return res.status(403).json({ message: "Unauthorized role" });
-//     }
-
-//     res.status(200).json(companies);
-//   } catch (err) {
-//     res.status(500).json({ error: err.message });
-//   }
-// };
-
 
 // Update Company (Client or Master Admin)
 exports.updateCompany = async (req, res) => {
@@ -141,4 +121,27 @@ exports.deleteCompany = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+
+// Get Companies by Client ID (Master Admin Only)
+exports.getCompaniesByClientId = async (req, res) => {
+  try {
+    const clientId = req.params.clientId;
+
+    // Only allow:
+    // - masterAdmin to view any client
+    // - OR the same client to view their own companies
+    if (req.user.role !== "master" && req.user.id !== clientId) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    const companies = await Company.find({ client: clientId }).populate("client", "clientUsername email");
+
+    res.status(200).json(companies);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
 

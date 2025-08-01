@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const { createClient, getClients, loginClient, updateClient, deleteClient, resetPassword } = require("../controllers/clientController");
+const { createClient, getClients, loginClient, updateClient, deleteClient, resetPassword , getClientById} = require("../controllers/clientController");
 const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
 
 // Create a client
@@ -17,6 +17,10 @@ router.delete("/:id", verifyMasterAdmin, deleteClient);
 
 
 router.put("/reset-password/:id", verifyMasterAdmin, resetPassword);
+
+
+// Get company by ID (client or master)
+router.get("/:id", verifyMasterAdmin, getClientById);
 
 //client login
 router.post("/login", loginClient);
