@@ -8,6 +8,7 @@ router.post("/", verifyClientOrAdmin, productController.createProduct);
 
 router.get("/", verifyClientOrAdmin , productController.getProducts);
 
+
 router.put("/:id", verifyClientOrAdmin, productController.updateProducts);
 router.delete("/:id", verifyClientOrAdmin, productController.deleteProducts);
 
