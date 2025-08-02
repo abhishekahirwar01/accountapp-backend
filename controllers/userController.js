@@ -126,3 +126,30 @@ exports.deleteUser = async (req, res) => {
   }
 };
 
+
+exports.resetPassword = async (req, res) => {
+  try {
+    const { userId, oldPassword, newPassword } = req.body;
+
+    if (!userId || !oldPassword || !newPassword) {
+      return res.status(400).json({ message: "All fields are required." });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ message: "User not found." });
+
+    const isMatch = await bcrypt.compare(oldPassword, user.password);
+    if (!isMatch) return res.status(401).json({ message: "Old password is incorrect." });
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedNewPassword = await bcrypt.hash(newPassword, salt);
+
+    user.password = hashedNewPassword;
+    await user.save();
+
+    res.json({ message: "Password reset successfully." });
+  } catch (error) {
+    console.error("Reset password error:", error.message);
+    res.status(500).json({ message: "Server error." });
+  }
+};

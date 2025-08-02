@@ -45,3 +45,30 @@ exports.createPurchaseEntry = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+exports.getPurchaseEntries = async (req, res) => {
+  try {
+    const filter = {};
+
+    // If the user is a client, fetch only their data
+    if (req.user.role === "client") {
+      filter.client = req.user.id;
+    }
+
+    // If a specific company is selected, filter by it
+    if (req.query.companyId) {
+      filter.company = req.query.companyId;
+    }
+
+    const entries = await PurchaseEntry.find(filter)
+      .populate("vendor", "vendorName")
+      .populate("product", "productName")
+      .populate("company", "companyName");
+
+    res.status(200).json(entries);
+  } catch (err) {
+    console.error("Error fetching purchase entries:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
