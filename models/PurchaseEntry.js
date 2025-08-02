@@ -2,7 +2,7 @@
 const mongoose = require("mongoose");
 
 const purchaseSchema = new mongoose.Schema({
-  party: { type: mongoose.Schema.Types.ObjectId, ref: "Party", required: true },
+  vendor: { type: mongoose.Schema.Types.ObjectId, ref: "Vendor", required: true },
   date: { type: Date, required: true },
   amount: { type: Number, required: true },
   product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
