@@ -25,6 +25,20 @@ exports.createUser = async (req, res) => {
       return res.status(400).json({ message: "Invalid companies selected" });
     }
 
+      // ✅ Step 2: Fetch Client to get userLimit
+    const client = await Client.findById(req.user.id);
+    if (!client) {
+      return res.status(404).json({ message: "Client not found" });
+    }
+
+    // ✅ Step 3: Count existing users created by this client
+    const userCount = await User.countDocuments({ createdByClient: req.user.id });
+
+    // ✅ Step 4: Check against limit
+    if (userCount >= client.userLimit) {
+      return res.status(403).json({ message: "User creation limit reached. Please contact admin." });
+    }
+
     const newUser = new User({
       userName,
       userId,
