@@ -219,3 +219,25 @@ exports.getClientById = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+//user limit update
+// PUT /api/clients/:clientId/user-limit
+exports.setUserLimit = async (req, res) => {
+  const { clientId } = req.params;
+  const { userLimit } = req.body;
+
+  try {
+    const client = await Client.findByIdAndUpdate(
+      clientId,
+      { userLimit },
+      { new: true }
+    );
+    if (!client) {
+      return res.status(404).json({ message: "Client not found" });
+    }
+    res.json({ message: "User limit updated", client });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};

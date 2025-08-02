@@ -7,10 +7,10 @@ const clientSchema = new mongoose.Schema({
   phone: { type: String, required: true, unique: true },
   email: { type: String, required: true, unique: true },
   maxCompanies: { type: Number, default: 5 },
-  maxUsers: { type: Number, default: 10 },
   canSendInvoiceEmail: { type: Boolean, default: true },
   canSendInvoiceWhatsapp: { type: Boolean, default: false },
   role: { type: String, default: "client" },
+  userLimit: { type: Number, default: 5 },
   masterAdmin: { type: mongoose.Schema.Types.ObjectId, ref: "MasterAdmin" },
 }, { timestamps: true });
 
