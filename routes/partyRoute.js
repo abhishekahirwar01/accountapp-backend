@@ -7,4 +7,7 @@ const partyController = require("../controllers/partyController");
 router.post("/", verifyClientOrAdmin, partyController.createParty);
 
 
+router.get("/", verifyClientOrAdmin, partyController.getParties);
+
+
 module.exports = router;
