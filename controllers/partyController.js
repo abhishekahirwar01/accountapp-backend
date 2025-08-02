@@ -2,10 +2,13 @@ const Party = require("../models/Party");
 
 exports.createParty = async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, contactNumber, email, address } = req.body;
 
     const party = new Party({
       name,
+      contactNumber,
+       email,
+        address,
       createdByClient: req.user.id
     });
 
