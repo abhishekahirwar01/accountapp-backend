@@ -29,6 +29,7 @@ exports.getProducts = async (req, res) => {
   } catch (err) {
     res.status(500).json({message: "Server error", error:err.message})
   }
+
 }
 
 exports.updateProducts = async(req, res) => {
@@ -79,3 +80,4 @@ exports.deleteProducts = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+

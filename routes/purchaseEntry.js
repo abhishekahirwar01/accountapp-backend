@@ -6,8 +6,9 @@ const purchaseController = require("../controllers/purchaseController");
 // Create Purchase Entry
 router.post("/", verifyClientOrAdmin, purchaseController.createPurchaseEntry);
 
+
 // // Get All Purchase Entries of Logged-in Client
-// router.get("/", verifyClientOrMaster, purchaseController.getPurchaseEntriesByClient);
+router.get("/", verifyClientOrAdmin, purchaseController.getPurchaseEntries);
 
 // // Get Purchase Entry by ID
 // router.get("/:id", verifyClientOrMaster, purchaseController.getPurchaseEntryById);
