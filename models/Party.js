@@ -1,9 +1,25 @@
 const mongoose = require("mongoose");
 
-const partySchema = new mongoose.Schema({
-  name: { type: String, required: true,unique: true, lowercase: true, trim: true },
-  createdByClient: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
-}, { timestamps: true });
+const partySchema = new mongoose.Schema(
+  {
+    name: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+    contactNumber: { type: String, unique: true },
+    email: { type: String, unique: true, lowercase: true, trim: true },
+    address: { type: String, trim: true },
+    createdByClient: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Client",
+      required: true,
+    },
+  },
+  { timestamps: true }
+);
 
 // Ensure name + client combo is unique
 partySchema.index({ name: 1, createdByClient: 1 }, { unique: true });
