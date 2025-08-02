@@ -19,3 +19,14 @@ exports.createProduct = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
+
+
+exports.getProducts = async (req, res) => {
+  try {
+    const products = await Product.find({ createdByClient: req.user.id });
+    res.json(products);
+  } catch (err) {
+    res.status(500).json({message: "Server error", error:err.message})
+  }
+}
