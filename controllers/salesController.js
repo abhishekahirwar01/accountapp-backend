@@ -12,6 +12,7 @@ exports.createSalesEntry = async (req, res) => {
       product: productName,
       description,
       gstPercentage,
+       discountPercentage,
       invoiceType,
       companyId,
     } = req.body;
@@ -44,6 +45,7 @@ exports.createSalesEntry = async (req, res) => {
       product: product._id,
       description,
       gstPercentage,
+      discountPercentage,
       invoiceType,
       company: company._id,
       gstin: company.gstin || null,
