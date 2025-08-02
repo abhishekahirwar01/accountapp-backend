@@ -8,10 +8,12 @@ const salesSchema = new mongoose.Schema({
   product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
   description: { type: String },
   gstPercentage: { type: Number },
+  discountPercentage: { type: Number },
   invoiceType: { type: String, enum: ["Tax", "Invoice"], required: true },
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: true },
   gstin: { type: String },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true }
+   
 }, { timestamps: true });
 
 module.exports = mongoose.model("SalesEntry", salesSchema);
