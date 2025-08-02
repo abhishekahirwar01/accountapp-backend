@@ -1,12 +1,12 @@
 // controllers/purchaseController.js
 const PurchaseEntry = require("../models/PurchaseEntry");
 const Company = require("../models/Company");
-const { ensurePartyAndProduct } = require("../utils/ensurePartyAndProduct");
+const {ensureVendorAndProduct } = require("../utils/ensurePartyAndProduct");
 
 exports.createPurchaseEntry = async (req, res) => {
   try {
     const {
-      partyName,
+      vendorName,
       date,
       amount,
      product: productName,
@@ -24,10 +24,10 @@ exports.createPurchaseEntry = async (req, res) => {
   return res.status(403).json({ message: "This company does not belong to you" });
 }
 
-    const { party, product } = await ensurePartyAndProduct(partyName, productName,  req.user.id);
+    const { vendor, product } = await ensureVendorAndProduct(vendorName, productName,  req.user.id);
 
     const entry = new PurchaseEntry({
-      party: party._id,
+      vendor: vendor._id,
       date,
       amount,
       product: product._id,

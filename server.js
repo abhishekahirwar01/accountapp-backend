@@ -9,6 +9,8 @@ const salesRoutes = require("./routes/salesEntry");
 const purchaseRoutes = require("./routes/purchaseEntry");
 const productRoutes = require("./routes/productRoute");
 const partyRoutes = require("./routes/partyRoute");
+const vendorRoutes = require("./routes/vendorRoute");
+const userRoutes = require("./routes/userRoutes");
 
 dotenv.config();
 connectDB();
@@ -24,6 +26,8 @@ app.use("/api/sales", salesRoutes);
 app.use("/api/purchase", purchaseRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/parties", partyRoutes);
+app.use("/api/vendors", vendorRoutes);
+app.use("/api/users", userRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
