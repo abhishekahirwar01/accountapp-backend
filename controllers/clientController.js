@@ -11,7 +11,11 @@ exports.createClient = async (req, res) => {
       password,
       contactName,
       phone,
-      email
+      email,
+      maxCompanies = 5,
+      maxUsers = 10,
+      canSendInvoiceEmail = true,
+      canSendInvoiceWhatsapp = false
     } = req.body;
 
     // Check for duplicates
@@ -38,8 +42,12 @@ exports.createClient = async (req, res) => {
       contactName,
       phone,
       email,
-      role: "client",                    // optional, will default from schema
-      masterAdmin: req.user.id          // from JWT middleware
+      maxCompanies,
+      maxUsers,
+      canSendInvoiceEmail,
+      canSendInvoiceWhatsapp,
+      role: "client",
+      masterAdmin: req.user.id
     });
 
     await client.save();
@@ -108,46 +116,41 @@ exports.updateClient = async (req, res) => {
       contactName,
       email,
       phone,
-      companyName,
-      subscriptionPlan,
-      status
+      maxCompanies,
+      maxUsers,
+      canSendInvoiceEmail,
+      canSendInvoiceWhatsapp
     } = req.body;
 
     const client = await Client.findOne({ _id: id, masterAdmin: req.user.id });
-    if (!client) {
-      return res.status(404).json({ message: "Client not found" });
-    }
+    if (!client) return res.status(404).json({ message: "Client not found" });
 
-    // Check for duplicate email/phone (if changed)
+    // Check duplicates
     if (email && email !== client.email) {
       const existingEmail = await Client.findOne({ email });
-      if (existingEmail) {
-        return res.status(400).json({ message: "Email already exists" });
-      }
+      if (existingEmail) return res.status(400).json({ message: "Email already exists" });
       client.email = email;
     }
 
     if (phone && phone !== client.phone) {
       const existingPhone = await Client.findOne({ phone });
-      if (existingPhone) {
-        return res.status(400).json({ message: "Phone already exists" });
-      }
+      if (existingPhone) return res.status(400).json({ message: "Phone already exists" });
       client.phone = phone;
     }
 
-    // Update other fields
     if (contactName) client.contactName = contactName;
-    if (companyName) client.companyName = companyName;
-    if (subscriptionPlan) client.subscriptionPlan = subscriptionPlan;
-    if (status) client.status = status;
+    if (typeof maxCompanies === "number") client.maxCompanies = maxCompanies;
+    if (typeof maxUsers === "number") client.maxUsers = maxUsers;
+    if (typeof canSendInvoiceEmail === "boolean") client.canSendInvoiceEmail = canSendInvoiceEmail;
+    if (typeof canSendInvoiceWhatsapp === "boolean") client.canSendInvoiceWhatsapp = canSendInvoiceWhatsapp;
 
     await client.save();
-
     res.status(200).json({ message: "Client updated successfully", client });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 // Delete Client (Only Master Admin)
