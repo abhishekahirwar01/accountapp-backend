@@ -19,3 +19,14 @@ exports.createParty = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
+
+
+exports.getParties = async (req, res) => {
+  try {
+    const parties = await Party.find({ createdByClient: req.user.id });
+    res.json(parties);
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
