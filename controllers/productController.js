@@ -21,7 +21,6 @@ exports.createProduct = async (req, res) => {
 };
 
 
-
 exports.getProducts = async (req, res) => {
   try {
     const products = await Product.find({ createdByClient: req.user.id });
