@@ -12,6 +12,8 @@ const companySchema = new mongoose.Schema({
     required: true
   },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
+  // NEW: Assigned client
+  selectedClient: { type: mongoose.Schema.Types.ObjectId, ref: "Client", default: null }
 }, { timestamps: true });
 
 module.exports = mongoose.model("Company", companySchema);
