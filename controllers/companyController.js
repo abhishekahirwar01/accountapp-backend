@@ -1,4 +1,5 @@
 const Company = require("../models/Company");
+const Client = require("../models/Client");
 
 // Create Company (Client Only)
 exports.createCompany = async (req, res) => {
@@ -10,12 +11,25 @@ exports.createCompany = async (req, res) => {
       companyOwner,
       contactNumber,
       gstin,
-      companyType ,
+      companyType,
+      selectedClient,
     } = req.body;
 
     const existing = await Company.findOne({ registrationNumber });
     if (existing) {
       return res.status(400).json({ message: "Company with this registration number already exists" });
+    }
+    // Validate selectedClient if provided
+    let assignedClientId = req.user.id;
+    if (
+      (req.user.role === "client" || req.user.role === "master") &&
+      selectedClient
+    ) {
+      const assignedClient = await Client.findById(selectedClient);
+      if (!assignedClient) {
+        return res.status(404).json({ message: "Selected client not found" });
+      }
+      assignedClientId = selectedClient;
     }
 
     const company = new Company({
@@ -26,7 +40,8 @@ exports.createCompany = async (req, res) => {
       contactNumber,
       gstin,
       companyType,
-      client: req.user.id
+      client: assignedClientId,
+      selectedClient: assignedClientId,
     });
 
     await company.save();
@@ -57,6 +72,7 @@ exports.getAllCompanies = async (req, res) => {
 };
 
 
+
 // Update Company (Client or Master Admin)
 exports.updateCompany = async (req, res) => {
   try {
@@ -68,7 +84,8 @@ exports.updateCompany = async (req, res) => {
       companyOwner,
       contactNumber,
       gstin,
-      companyType
+      companyType,
+      selectedClient,
     } = req.body;
 
     const company = await Company.findById(companyId);
@@ -76,7 +93,7 @@ exports.updateCompany = async (req, res) => {
       return res.status(404).json({ message: "Company not found" });
     }
 
-    // Allow only owner (client) or master admin
+    // Allow only the client who owns the company or master admin
     if (req.user.role === "client" && company.client.toString() !== req.user.id) {
       return res.status(403).json({ message: "Access denied" });
     }
@@ -90,6 +107,10 @@ exports.updateCompany = async (req, res) => {
     company.gstin = gstin || company.gstin;
     company.companyType = companyType || company.companyType;
 
+    // If master admin, allow updating the assigned client
+    if (req.user.role === "master" && selectedClient) {
+      company.client = selectedClient;
+    }
 
     await company.save();
     res.status(200).json({ message: "Company updated", company });
