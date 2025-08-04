@@ -14,10 +14,11 @@ const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
 const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
 
 // Client creates company
-router.post("/", verifyClient, createCompany);
+router.post("/", verifyClientOrAdmin, createCompany);
 
 // // Client views own companies
 router.get("/my", verifyClientOrAdmin, getClientCompanies);
+
 
 // // Master Admin views all companies
 router.get("/all", verifyMasterAdmin, getAllCompanies);
