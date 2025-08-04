@@ -10,8 +10,11 @@ exports.createPurchaseEntry = async (req, res) => {
     const {
       vendor: vendorId,
       date,
+      pricePerUnit,
       amount,
       product: productId,
+      quantity,
+      unitType,
       description,
       gstPercentage,
       invoiceType,
@@ -38,8 +41,11 @@ exports.createPurchaseEntry = async (req, res) => {
     const entry = new PurchaseEntry({
       vendor: vendor._id,
       date,
+      pricePerUnit,
       amount,
       product: product._id,
+      quantity,
+      unitType,
       description,
       gstPercentage,
       invoiceType,
