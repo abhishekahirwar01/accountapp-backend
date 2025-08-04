@@ -4,34 +4,13 @@ const Company = require("../models/Company");
 exports.createCompany = async (req, res) => {
   try {
     const {
-      businessName,
-      businessType,
+      registrationNumber,
+      companyName,
       address,
-      City,
-      addressState,
-      Country,
-      Pincode,
-      Telephone,
-      mobileNumber,
-      emailId,
-      Website,
-      PANNumber,
-      IncomeTaxLoginPassword,
+      companyOwner,
+      contactNumber,
       gstin,
-      gstState,
-      RegistrationType,
-      PeriodicityofGSTReturns,
-      GSTUsername,
-      GSTPassword,
-      ewayBillApplicable,
-      EWBBillUsername,
-      EWBBillPassword,
-      TANNumber,
-      TAXDeductionCollectionAcc,
-      DeductorType,
-      TDSLoginUsername,
-      TDSLoginPassword
-
+      companyType ,
     } = req.body;
 
     const existing = await Company.findOne({ registrationNumber });
