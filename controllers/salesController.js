@@ -12,7 +12,10 @@ exports.createSalesEntry = async (req, res) => {
       party: partyId,       // align with frontend key
       date,
       amount,
+      pricePerUnit,
       product: productId,   // align with frontend key
+      quantity, 
+      unitType,
       description,
       gstPercentage,
       discountPercentage,
@@ -42,8 +45,11 @@ exports.createSalesEntry = async (req, res) => {
     const entry = new SalesEntry({
       party: party._id,
       date,
+      pricePerUnit,
       amount,
       product: product._id,
+      quantity,
+      unitType,
       description,
       gstPercentage,
       discountPercentage,
