@@ -26,37 +26,37 @@ exports.getProducts = async (req, res) => {
     const products = await Product.find({ createdByClient: req.user.id });
     res.json(products);
   } catch (err) {
-    res.status(500).json({message: "Server error", error:err.message})
+    res.status(500).json({ message: "Server error", error: err.message })
   }
 
 }
 
-exports.updateProducts = async(req, res) => {
+exports.updateProducts = async (req, res) => {
   try {
-      const productId = req.params.id;
-      const { name } = req.body;
-  
-      const product = await Product.findById(productId);
-      if (!product) {
-        return res.status(404).json({ message: "product not found" });
-      }
-  
-      // Authorization check: only creator client or admin
-      if (req.user.role !== "admin" && product.createdByClient.toString() !== req.user.id) {
-        return res.status(403).json({ message: "Not authorized to update this product" });
-      }
-  
-      if (name) product.name = name;
-     
-  
-      await product.save();
-      res.status(200).json({ message: "product updated", product});
-    } catch (err) {
-      if (err.code === 11000) {
-        return res.status(400).json({ message: "Duplicate product details" });
-      }
-      res.status(500).json({ message: "Server error", error: err.message });
+    const productId = req.params.id;
+    const { name } = req.body;
+
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ message: "product not found" });
     }
+
+    // Authorization check: only creator client or admin
+    if (req.user.role !== "admin" && product.createdByClient.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Not authorized to update this product" });
+    }
+
+    if (name) product.name = name;
+
+
+    await product.save();
+    res.status(200).json({ message: "product updated", product });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res.status(400).json({ message: "Duplicate product details" });
+    }
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
 }
 
 exports.deleteProducts = async (req, res) => {

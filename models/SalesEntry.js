@@ -6,6 +6,9 @@ const salesSchema = new mongoose.Schema({
   date: { type: Date, required: true },
   amount: { type: Number, required: true },
   product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
+   quantity: { type: Number, required: true },
+   pricePerUnit:{type: Number},
+   unitType: { type: String, enum: ["Kg", "Litre", "Piece", "Box", "Meter", "Dozen", "Pack", "Other"], default: "Piece" }, // ✅ Added field
   description: { type: String },
   gstPercentage: { type: Number },
   discountPercentage: { type: Number },
