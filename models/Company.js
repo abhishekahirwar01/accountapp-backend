@@ -1,12 +1,12 @@
 const mongoose = require("mongoose");
 
 const companySchema = new mongoose.Schema({
+  registrationNumber:{ type: String, required: true, unique: true },
   businessName: { type: String, required: true },
   businessType: {
     type: String,
     required: true
   },
-
   address: { type: String },
   City: { type: String },
   addressState: { type: String },
