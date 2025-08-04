@@ -34,6 +34,7 @@ exports.getParties = async (req, res) => {
   }
 };
 
+
 exports.updateParty = async(req, res) => {
   try {
       const partyId = req.params.id;
@@ -84,3 +85,4 @@ exports.deleteParty = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
