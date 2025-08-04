@@ -10,7 +10,7 @@ exports.createCompany = async (req, res) => {
       companyOwner,
       contactNumber,
       gstin,
-      companyType 
+      companyType ,
     } = req.body;
 
     const existing = await Company.findOne({ registrationNumber });
