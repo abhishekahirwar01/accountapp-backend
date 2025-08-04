@@ -6,12 +6,33 @@ exports.createCompany = async (req, res) => {
   try {
     const {
       registrationNumber,
-      companyName,
+      businessName,
+      businessType,
       address,
-      companyOwner,
-      contactNumber,
+      City,
+      addressState,
+      Country,
+      Pincode,
+      Telephone,
+      mobileNumber,
+      emailId,
+      Website,
+      PANNumber,
+      IncomeTaxLoginPassword,
       gstin,
-      companyType,
+      gstState,
+      RegistrationType,
+      PeriodicityofGSTReturns,
+      GSTUsername,
+      GSTPassword,
+      ewayBillApplicable,
+      EWBBillUsername,
+      EWBBillPassword,
+      TANNumber,
+      TAXDeductionCollectionAcc,
+      DeductorType,
+      TDSLoginUsername,
+      TDSLoginPassword,
       selectedClient,
     } = req.body;
 
@@ -34,12 +55,33 @@ exports.createCompany = async (req, res) => {
 
     const company = new Company({
       registrationNumber,
-      companyName,
+      businessName,
+      businessType,
       address,
-      companyOwner,
-      contactNumber,
+      City,
+      addressState,
+      Country,
+      Pincode,
+      Telephone,
+      mobileNumber,
+      emailId,
+      Website,
+      PANNumber,
+      IncomeTaxLoginPassword,
       gstin,
-      companyType,
+      gstState,
+      RegistrationType,
+      PeriodicityofGSTReturns,
+      GSTUsername,
+      GSTPassword,
+      ewayBillApplicable,
+      EWBBillUsername,
+      EWBBillPassword,
+      TANNumber,
+      TAXDeductionCollectionAcc,
+      DeductorType,
+      TDSLoginUsername,
+      TDSLoginPassword,
       client: assignedClientId,
       selectedClient: assignedClientId,
     });
@@ -78,13 +120,33 @@ exports.updateCompany = async (req, res) => {
   try {
     const companyId = req.params.id;
     const {
-      registrationNumber,
-      companyName,
+      businessName,
+      businessType,
       address,
-      companyOwner,
-      contactNumber,
+      City,
+      addressState,
+      Country,
+      Pincode,
+      Telephone,
+      mobileNumber,
+      emailId,
+      Website,
+      PANNumber,
+      IncomeTaxLoginPassword,
       gstin,
-      companyType,
+      gstState,
+      RegistrationType,
+      PeriodicityofGSTReturns,
+      GSTUsername,
+      GSTPassword,
+      ewayBillApplicable,
+      EWBBillUsername,
+      EWBBillPassword,
+      TANNumber,
+      TAXDeductionCollectionAcc,
+      DeductorType,
+      TDSLoginUsername,
+      TDSLoginPassword,
       selectedClient,
     } = req.body;
 
@@ -99,13 +161,33 @@ exports.updateCompany = async (req, res) => {
     }
 
     // Update fields
-    company.registrationNumber = registrationNumber || company.registrationNumber;
-    company.companyName = companyName || company.companyName;
+    company.businessName = businessName || company.businessName;
+    company.businessType = businessType || company.businessType;
     company.address = address || company.address;
-    company.companyOwner = companyOwner || company.companyOwner;
-    company.contactNumber = contactNumber || company.contactNumber;
-    company.gstin = gstin || company.gstin;
-    company.companyType = companyType || company.companyType;
+    company.City = City || company.City;
+    company.addressState = addressState || company.addressState;
+    company.Country = Country || company.Country;
+    company.Pincode = Pincode || company.Pincode;
+    company.Telephone = Telephone || company.Telephone;
+    company.mobileNumber = mobileNumber || company.mobileNumber;
+    company. emailId =  emailId || company. emailId;
+    company. Website =  Website || company. Website;
+    company. PANNumber = PANNumber || company. PANNumber;
+    company. IncomeTaxLoginPassword = IncomeTaxLoginPassword || company. IncomeTaxLoginPassword;
+    company. gstin = gstin || company. gstin;
+    company.gstState = gstState || company. gstState;
+    company. RegistrationType = RegistrationType || company. RegistrationType;
+    company. PeriodicityofGSTReturns = PeriodicityofGSTReturns || company. PeriodicityofGSTReturns;
+    company. GSTUsername = GSTUsername || company. GSTUsername;
+    company. GSTPassword = GSTPassword || company. GSTPassword;
+    company. ewayBillApplicable = ewayBillApplicable || company. ewayBillApplicable;
+    company. EWBBillUsername = EWBBillUsername || company. EWBBillUsername;
+    company.EWBBillPassword = EWBBillPassword || company. EWBBillPassword;
+    company.TANNumber = TANNumber || company. TANNumber;
+    company.TAXDeductionCollectionAcc = TAXDeductionCollectionAcc || company. TAXDeductionCollectionAcc;
+    company.DeductorType = DeductorType || company. DeductorType;
+    company.TDSLoginUsername = TDSLoginUsername || company. TDSLoginUsername;
+    company.TDSLoginPassword = TDSLoginPassword || company. TDSLoginPassword;
 
     // If master admin, allow updating the assigned client
     if (req.user.role === "master" && selectedClient) {
