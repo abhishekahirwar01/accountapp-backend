@@ -9,7 +9,7 @@ const salesSchema = new mongoose.Schema({
   description: { type: String },
   gstPercentage: { type: Number },
   discountPercentage: { type: Number },
-  invoiceType: { type: String, enum: ["Tax", "Invoice"], required: true },
+  invoiceType: { type: String, enum: ["Tax", "Invoice"]},
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: true },
   gstin: { type: String },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true }
