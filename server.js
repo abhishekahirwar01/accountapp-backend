@@ -20,6 +20,8 @@ dotenv.config();
 connectDB();
 
 const app = express();
+
+
 // app.use(cors());
 // Enhanced CORS configuration
 const allowedOrigins = [
@@ -42,6 +44,19 @@ app.use(cors({
 
 app.use(express.json());
 
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error("Database middleware error:", err);
+    res.status(500).json({ 
+      error: "Database connection failed",
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
+
 app.use("/api/master-admin", masterAdminRoutes);
 app.use("/api/clients", clientRoutes);
 app.use("/api/companies", companyRoutes);
@@ -56,18 +71,7 @@ app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/test", require("./routes/testRoutes"));
 // Database connection middleware
-app.use(async (req, res, next) => {
-  try {
-    await connectDB();
-    next();
-  } catch (err) {
-    console.error("Database middleware error:", err);
-    res.status(500).json({ 
-      error: "Database connection failed",
-      details: process.env.NODE_ENV === 'development' ? err.message : undefined
-    });
-  }
-});
+
 
 // Test endpoints with better error handling
 app.get("/api/test-env", (req, res) => {
