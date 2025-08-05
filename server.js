@@ -54,6 +54,7 @@ app.use("/api/products", productRoutes);
 app.use("/api/parties", partyRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/test", require("./routes/testRoutes"));
 // Database connection middleware
 app.use(async (req, res, next) => {
   try {
@@ -117,6 +118,26 @@ app.get('/api/check-collections', async (req, res) => {
   }
 });
 
+// Add this test endpoint
+app.get('/api/check-data', async (req, res) => {
+  try {
+    const collections = await mongoose.connection.db.listCollections().toArray();
+    const collectionCounts = {};
+    
+    for (const coll of collections) {
+      collectionCounts[coll.name] = await mongoose.connection.db
+        .collection(coll.name)
+        .countDocuments();
+    }
+    
+    res.json({
+      counts: collectionCounts,
+      sampleClients: await mongoose.connection.db.collection('clients').find().limit(2).toArray()
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 // const PORT = process.env.PORT || 5000;
 // app.listen(PORT, () => {
 //   console.log(`🚀 Server running on http://localhost:${PORT}`);
