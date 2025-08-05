@@ -113,8 +113,6 @@ exports.getAllCompanies = async (req, res) => {
   }
 };
 
-
-
 // Update Company (Client or Master Admin)
 exports.updateCompany = async (req, res) => {
   try {
@@ -224,8 +222,6 @@ exports.deleteCompany = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 // Get Companies by Client ID (Master Admin Only)
 exports.getCompaniesByClientId = async (req, res) => {

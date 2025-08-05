@@ -2,14 +2,31 @@ const Vendor = require("../models/Vendor");
 
 exports.createVendor = async (req, res) => {
   try {
-    const { vendorName ,  contactNumber, email,  address} = req.body;
+    const {
+      vendorName,
+      contactNumber,
+      email,
+      address,
+      city,
+      state,
+      gstin,
+      gstRegistrationType,
+      pan,
+      isTDSApplicable
+    } = req.body;
 
     const vendor = new Vendor({
       vendorName,
       contactNumber,
-       email,  
-       address,
-      createdByClient: req.user.id
+      email,
+      address,
+      city,
+      state,
+      gstin,
+      gstRegistrationType,
+      pan,
+      isTDSApplicable,
+      createdByClient: req.user.id,
     });
 
     await vendor.save();
@@ -17,11 +34,12 @@ exports.createVendor = async (req, res) => {
 
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(400).json({ message: "Vendor already exists for this client" });
+      return res.status(400).json({ message: "Vendor already exists for this client (duplicate name or contact/email)" });
     }
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
 
 exports.getVendors = async (req, res) => {
   try {
@@ -40,14 +58,25 @@ exports.getVendors = async (req, res) => {
 exports.updateVendor = async (req, res) => {
   try {
     const vendorId = req.params.id;
-    const { vendorName, contactNumber, email, address } = req.body;
+    const {
+      vendorName,
+      contactNumber,
+      email,
+      address,
+      city,
+      state,
+      gstin,
+      gstRegistrationType,
+      pan,
+      isTDSApplicable
+    } = req.body;
 
     const vendor = await Vendor.findById(vendorId);
     if (!vendor) {
       return res.status(404).json({ message: "Vendor not found" });
     }
 
-    // Authorization check: only creator client or admin
+    // Authorization: only creator client or admin
     if (req.user.role !== "admin" && vendor.createdByClient.toString() !== req.user.id) {
       return res.status(403).json({ message: "Not authorized to update this vendor" });
     }
@@ -56,6 +85,12 @@ exports.updateVendor = async (req, res) => {
     if (contactNumber) vendor.contactNumber = contactNumber;
     if (email) vendor.email = email;
     if (address) vendor.address = address;
+    if (city) vendor.city = city;
+    if (state) vendor.state = state;
+    if (gstin) vendor.gstin = gstin;
+    if (gstRegistrationType) vendor.gstRegistrationType = gstRegistrationType;
+    if (pan) vendor.pan = pan;
+    if (typeof isTDSApplicable === 'boolean') vendor.isTDSApplicable = isTDSApplicable;
 
     await vendor.save();
     res.status(200).json({ message: "Vendor updated", vendor });

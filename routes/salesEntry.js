@@ -10,6 +10,12 @@ router.post("/", verifyClientOrAdmin, salesController.createSalesEntry);
 router.get("/", verifyClientOrAdmin, salesController.getSalesEntries);
 
 
+router.delete("/:id", verifyClientOrAdmin, salesController.deleteSalesEntry);
+router.put("/:id", verifyClientOrAdmin, salesController.updateSalesEntry);
+router.get("/by-client/:clientId",verifyClientOrAdmin , salesController.getSalesEntriesByClient);
+
+
+
 // // Get Sales Entry by ID
 // router.get("/:id", verifyClientOrMaster, salesController.getSalesEntryById);
 
