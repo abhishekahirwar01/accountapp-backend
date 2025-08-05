@@ -1,8 +1,10 @@
 // routes/testRoutes.js
-const router = require('express').Router();
+const express = require('express');
+const router = express.Router();
 
-router.get('/test', (req, res) => {
-  res.json({ working: true, from: "route file" });
+// Test route
+router.get('/', (req, res) => {
+  res.json({ message: "Test route is working!" });
 });
 
-module.exports = router;
+module.exports = router; // Must export the router
