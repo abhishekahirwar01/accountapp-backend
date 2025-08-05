@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require('mongoose'); // Add this at the top
 const dotenv = require("dotenv");
 const cors = require("cors");
 const connectDB = require("./config/db");
@@ -20,9 +21,10 @@ connectDB();
 
 const app = express();
 // app.use(cors());
+// Enhanced CORS configuration
 const allowedOrigins = [
   'https://your-frontend.vercel.app',
-  'http://localhost:3000' // for local development
+  'http://localhost:3000'
 ];
 
 app.use(cors({
@@ -30,12 +32,14 @@ app.use(cors({
     if (!origin || allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
+      console.log('CORS blocked for origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   credentials: true
 }));
+
 app.use(express.json());
 
 app.use("/api/master-admin", masterAdminRoutes);
@@ -51,22 +55,38 @@ app.use("/api/parties", partyRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
 
+// Test endpoints with better error handling
 app.get("/api/test-env", (req, res) => {
   res.json({
-    MONGO_URI: process.env.MONGO_URI,
-    JWT_SECRET: process.env.JWT_SECRET
+    MONGO_URI: process.env.MONGO_URI ? 'exists' : 'missing',
+    JWT_SECRET: process.env.JWT_SECRET ? 'exists' : 'missing',
+    NODE_ENV: process.env.NODE_ENV
   });
 });
 
 app.get('/api/db-status', async (req, res) => {
-  const status = {
-    readyState: mongoose.connection.readyState,
-    dbName: mongoose.connection.db?.databaseName,
-    collections: await mongoose.connection.db?.listCollections().toArray(),
-    models: mongoose.modelNames(),
-    lastError: mongoose.connection._lastError
-  };
-  res.json(status);
+  try {
+    if (!mongoose.connection.db) {
+      throw new Error('Database connection not established');
+    }
+    
+    const status = {
+      readyState: mongoose.connection.readyState,
+      dbName: mongoose.connection.db.databaseName,
+      collections: await mongoose.connection.db.listCollections().toArray(),
+      models: mongoose.modelNames(),
+      lastError: mongoose.connection._lastError
+    };
+    
+    res.json(status);
+  } catch (error) {
+    console.error('DB Status Error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      connectionState: mongoose.connection.readyState,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
 });
 
 app.get('/api/check-collections', async (req, res) => {
