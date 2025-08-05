@@ -17,20 +17,20 @@
 
 const mongoose = require("mongoose");
 
-
 const connectDB = async () => {
   console.log("💡 MONGO_URI from ENV:", process.env.MONGO_URI);
 
-  try {
-    const conn = await mongoose.connect(process.env.MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
-    });
+  if (!process.env.MONGO_URI) {
+    console.error("❌ MONGO_URI is undefined");
+    return;
+  }
 
+  try {
+    const conn = await mongoose.connect(process.env.MONGO_URI);
     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
   } catch (error) {
     console.error(`❌ MongoDB Connection Error: ${error.message}`);
-    process.exit(1); // Vercel logs will show exact reason
+    process.exit(1);
   }
 };
 
