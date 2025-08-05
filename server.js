@@ -54,6 +54,19 @@ app.use("/api/products", productRoutes);
 app.use("/api/parties", partyRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
+// Database connection middleware
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    console.error("Database middleware error:", err);
+    res.status(500).json({ 
+      error: "Database connection failed",
+      details: process.env.NODE_ENV === 'development' ? err.message : undefined
+    });
+  }
+});
 
 // Test endpoints with better error handling
 app.get("/api/test-env", (req, res) => {
@@ -66,25 +79,27 @@ app.get("/api/test-env", (req, res) => {
 
 app.get('/api/db-status', async (req, res) => {
   try {
-    if (!mongoose.connection.db) {
-      throw new Error('Database connection not established');
-    }
+    const db = mongoose.connection.db;
+    if (!db) throw new Error('Database not initialized');
     
     const status = {
       readyState: mongoose.connection.readyState,
-      dbName: mongoose.connection.db.databaseName,
-      collections: await mongoose.connection.db.listCollections().toArray(),
+      state: ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState],
+      dbName: db.databaseName,
+      collections: await db.listCollections().toArray(),
       models: mongoose.modelNames(),
-      lastError: mongoose.connection._lastError
+      ping: await db.command({ ping: 1 })
     };
     
     res.json(status);
   } catch (error) {
-    console.error('DB Status Error:', error);
-    res.status(500).json({ 
+    res.status(500).json({
       error: error.message,
       connectionState: mongoose.connection.readyState,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      env: {
+        MONGO_URI: !!process.env.MONGO_URI,
+        NODE_ENV: process.env.NODE_ENV
+      }
     });
   }
 });
