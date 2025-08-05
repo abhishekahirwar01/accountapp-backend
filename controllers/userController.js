@@ -73,6 +73,7 @@ exports.getUsers = async (req, res) => {
 
     res.status(200).json(users);
   } catch (err) {
+     console.error("🔥 Error in /api/users:", err);
     res.status(500).json({ error: err.message });
   }
 };
