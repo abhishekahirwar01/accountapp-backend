@@ -25,7 +25,7 @@ const app = express();
 // app.use(cors());
 // Enhanced CORS configuration
 const allowedOrigins = [
-  'https://your-frontend.vercel.app',
+  'https://accountapp-theta.vercel.app',
   'http://localhost:3000',
    'http://localhost:8678'
 ];
