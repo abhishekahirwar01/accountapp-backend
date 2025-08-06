@@ -87,7 +87,7 @@ const connectDB = async () => {
     console.log("🔄 Creating new DB connection");
     
     const conn = await mongoose.connect(process.env.MONGO_URI, {
-      dbName: "accountingSoftware",
+      dbName: "test",
       serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
       maxPoolSize: 5,
