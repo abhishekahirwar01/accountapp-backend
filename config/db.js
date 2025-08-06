@@ -15,71 +15,117 @@
 
 
 
+
+
+
 // const mongoose = require("mongoose");
 
+// // Serverless connection caching
+// let cachedDb = null;
+// let connectionPromise = null;
+
 // const connectDB = async () => {
-//   console.log("💡 MONGO_URI from ENV:", process.env.MONGO_URI);
-
-//   if (!process.env.MONGO_URI) {
-//     console.error("❌ MONGO_URI is undefined");
-//     return;
+//   if (cachedDb) {
+//     console.log("♻️ Using existing DB connection");
+//     return cachedDb;
 //   }
 
-//   try {
-//     const conn = await mongoose.connect(process.env.MONGO_URI, {
-//   dbName: "accountingSoftware",
-//  useNewUrlParser: true
-// });
-//     console.log(`✅ MongoDB Connected: ${conn.connection.host}`);
-//   } catch (error) {
-//     console.error(`❌ MongoDB Connection Error: ${error.message}`);
-//     process.exit(1);
+//   if (!connectionPromise) {
+//     console.log("💡 MONGO_URI:", process.env.MONGO_URI ? "exists" : "missing");
+    
+//     connectionPromise = mongoose.connect(process.env.MONGO_URI, {
+//       dbName: "accountingSoftware",
+//       serverSelectionTimeoutMS: 10000, // 10 seconds
+//       socketTimeoutMS: 45000,
+//       maxPoolSize: 5,
+//       retryWrites: true,
+//       w: "majority"
+//     }).then(conn => {
+//       console.log(`✅ MongoDB Connected to ${conn.connection.host}`);
+//       cachedDb = conn;
+//       return conn;
+//     }).catch(err => {
+//       console.error("❌ Connection Error:", err);
+//       connectionPromise = null; // Allow retries
+//       throw err;
+//     });
 //   }
+
+//   return connectionPromise;
 // };
+
+// // Event listeners for debugging
+// mongoose.connection.on('connecting', () => console.log("🔄 Connecting to DB..."));
+// mongoose.connection.on('connected', () => console.log("✅ DB Connection Established"));
+// mongoose.connection.on('disconnected', () => console.log("❌ DB Disconnected"));
 
 // module.exports = connectDB;
 
 
 
+
+
+
+
+
+
+
+
+
 const mongoose = require("mongoose");
 
-// Serverless connection caching
+// Serverless connection handling
 let cachedDb = null;
-let connectionPromise = null;
 
 const connectDB = async () => {
-  if (cachedDb) {
+  if (cachedDb && cachedDb.connection.readyState === 1) {
     console.log("♻️ Using existing DB connection");
     return cachedDb;
   }
 
-  if (!connectionPromise) {
-    console.log("💡 MONGO_URI:", process.env.MONGO_URI ? "exists" : "missing");
+  try {
+    console.log("🔄 Creating new DB connection");
     
-    connectionPromise = mongoose.connect(process.env.MONGO_URI, {
+    const conn = await mongoose.connect(process.env.MONGO_URI, {
       dbName: "accountingSoftware",
-      serverSelectionTimeoutMS: 10000, // 10 seconds
+      serverSelectionTimeoutMS: 10000,
       socketTimeoutMS: 45000,
       maxPoolSize: 5,
+      minPoolSize: 1, // Maintain at least 1 connection
       retryWrites: true,
-      w: "majority"
-    }).then(conn => {
-      console.log(`✅ MongoDB Connected to ${conn.connection.host}`);
-      cachedDb = conn;
-      return conn;
-    }).catch(err => {
-      console.error("❌ Connection Error:", err);
-      connectionPromise = null; // Allow retries
-      throw err;
+      w: "majority",
+      connectTimeoutMS: 10000 // Added connection timeout
     });
-  }
 
-  return connectionPromise;
+    console.log(`✅ MongoDB Connected to ${conn.connection.host}`);
+    
+    // Close connection on process termination
+    process.on('SIGTERM', async () => {
+      await conn.disconnect();
+      console.log('MongoDB connection closed');
+    });
+
+    cachedDb = conn;
+    return conn;
+
+  } catch (err) {
+    console.error("❌ Connection Error:", err);
+    
+    // Specific error handling for Vercel
+    if (err.message.includes("ECONNREFUSED")) {
+      console.error("Vercel Tip: Check if MongoDB IP is whitelisted");
+    }
+    
+    throw err;
+  }
 };
 
-// Event listeners for debugging
+// Enhanced event listeners
 mongoose.connection.on('connecting', () => console.log("🔄 Connecting to DB..."));
 mongoose.connection.on('connected', () => console.log("✅ DB Connection Established"));
-mongoose.connection.on('disconnected', () => console.log("❌ DB Disconnected"));
+mongoose.connection.on('disconnected', () => {
+  console.log("❌ DB Disconnected");
+  cachedDb = null; // Clear cache on disconnect
+});
 
 module.exports = connectDB;
