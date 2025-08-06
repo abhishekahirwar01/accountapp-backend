@@ -26,7 +26,8 @@ const app = express();
 // Enhanced CORS configuration
 const allowedOrigins = [
   'https://your-frontend.vercel.app',
-  'http://localhost:3000'
+  'http://localhost:3000',
+   'http://localhost:8678'
 ];
 
 app.use(cors({
