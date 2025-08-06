@@ -143,6 +143,19 @@ app.get('/api/check-data', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// server.js
+app.get('/api/debug/clients', async (req, res) => {
+  try {
+    const clients = await mongoose.connection.db.collection('clients').find().limit(5).toArray();
+    res.json({
+      count: await mongoose.connection.db.collection('clients').countDocuments(),
+      sampleClients: clients
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 // const PORT = process.env.PORT || 5000;
 // app.listen(PORT, () => {
 //   console.log(`🚀 Server running on http://localhost:${PORT}`);
