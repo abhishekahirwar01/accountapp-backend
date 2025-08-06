@@ -70,43 +70,79 @@ exports.getClients = async (req, res) => {
 
 
 // Client Login
+// exports.loginClient = async (req, res) => {
+//   try {
+//     const { clientUsername, password } = req.body;
+
+//     const client = await Client.findOne({ clientUsername });
+//     if (!client) {
+//       return res.status(404).json({ message: "Client not found" });
+//     }
+
+//     const isMatch = await bcrypt.compare(password, client.password);
+//     if (!isMatch) {
+//       return res.status(401).json({ message: "Invalid password" });
+//     }
+
+//     const token = jwt.sign(
+//       { id: client._id, role: "client" },
+//       process.env.JWT_SECRET,
+//       { expiresIn: "1d" }
+//     );
+
+//     res.status(200).json({
+//       message: "Login successful",
+//       token,
+//       client: {
+//         id: client._id,
+//         clientUsername: client.clientUsername,
+//         contactName: client.contactName,
+//         email: client.email,
+//         phone: client.phone,
+//         role: client.role
+//       }
+//     });
+//   } catch (err) {
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+// controllers/clientController.js
 exports.loginClient = async (req, res) => {
   try {
-    const { clientUsername, password } = req.body;
+    console.log('Login request body:', req.body);
+    
+    // Normalize email input
+    const email = req.body.email?.toLowerCase().trim();
+    if (!email) {
+      return res.status(400).json({ error: "Email is required" });
+    }
 
-    const client = await Client.findOne({ clientUsername });
+    // Debug: Check if any clients exist
+    const clientCount = await Client.countDocuments();
+    console.log(`Total clients in DB: ${clientCount}`);
+
+    // Find client with case-insensitive search
+    const client = await Client.findOne({ email });
+    console.log('Found client:', client ? client.email : 'None');
+
     if (!client) {
-      return res.status(404).json({ message: "Client not found" });
+      // List first 5 emails for debugging
+      const sampleEmails = await Client.find().limit(5).select('email');
+      return res.status(404).json({
+        error: "Client not found",
+        searchedEmail: email,
+        availableEmails: sampleEmails.map(c => c.email),
+        totalClients: clientCount
+      });
     }
 
-    const isMatch = await bcrypt.compare(password, client.password);
-    if (!isMatch) {
-      return res.status(401).json({ message: "Invalid password" });
-    }
+    // ... rest of your password verification logic ...
 
-    const token = jwt.sign(
-      { id: client._id, role: "client" },
-      process.env.JWT_SECRET,
-      { expiresIn: "1d" }
-    );
-
-    res.status(200).json({
-      message: "Login successful",
-      token,
-      client: {
-        id: client._id,
-        clientUsername: client.clientUsername,
-        contactName: client.contactName,
-        email: client.email,
-        phone: client.phone,
-        role: client.role
-      }
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: error.message });
   }
 };
-
 
 // Update Client (Only Master Admin)
 exports.updateClient = async (req, res) => {
