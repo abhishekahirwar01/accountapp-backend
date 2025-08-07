@@ -9,6 +9,11 @@ const productSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+    stocks: {
+      type: Number,
+      default: 0, // ✅ added stocks with default value
+      min: 0,
+    },
     createdByClient: { type: mongoose.Schema.Types.ObjectId, ref: "Client" }, // optional
   },
   { timestamps: true }
