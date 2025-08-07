@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 
 const companySchema = new mongoose.Schema({
-  registrationNumber:{ type: String, required: true, unique: true },
+  registrationNumber: { type: String, required: true, unique: true },
   businessName: { type: String, required: true },
   businessType: {
     type: String,
@@ -24,11 +24,7 @@ const companySchema = new mongoose.Schema({
   PeriodicityofGSTReturns: { type: String, default: null },
   GSTUsername: { type: String, default: null },
   GSTPassword: { type: String, default: null },
-  ewayBillApplicable: {
-    type: String,
-    enum: ["Yes", "No"],
-    default: "No"
-  },
+  ewayBillApplicable: {type:Boolean},
   EWBBillUsername: { type: String, default: null },
   EWBBillPassword: { type: String, default: null },
   TANNumber: { type: String, default: null },
