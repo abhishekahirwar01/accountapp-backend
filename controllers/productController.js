@@ -2,10 +2,11 @@ const Product = require("../models/Product");
 
 exports.createProduct = async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name , stocks } = req.body;
 
     const product = new Product({
       name,
+      stocks,
       createdByClient: req.user.id
     });
 
@@ -34,30 +35,31 @@ exports.getProducts = async (req, res) => {
 exports.updateProducts = async (req, res) => {
   try {
     const productId = req.params.id;
-    const { name } = req.body;
+    const { name, stocks } = req.body;
 
     const product = await Product.findById(productId);
     if (!product) {
-      return res.status(404).json({ message: "product not found" });
+      return res.status(404).json({ message: "Product not found" });
     }
 
-    // Authorization check: only creator client or admin
+    // Authorization check
     if (req.user.role !== "admin" && product.createdByClient.toString() !== req.user.id) {
       return res.status(403).json({ message: "Not authorized to update this product" });
     }
 
     if (name) product.name = name;
-
+    if (typeof stocks === "number" && stocks >= 0) product.stocks = stocks; // ✅ Update stocks only if valid
 
     await product.save();
-    res.status(200).json({ message: "product updated", product });
+    res.status(200).json({ message: "Product updated", product });
   } catch (err) {
     if (err.code === 11000) {
       return res.status(400).json({ message: "Duplicate product details" });
     }
     res.status(500).json({ message: "Server error", error: err.message });
   }
-}
+};
+
 
 exports.deleteProducts = async (req, res) => {
   try {
