@@ -1,7 +1,7 @@
 const Client = require("../models/Client");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-
+const vercelauth = require('../middleware/vercelauth')
 
 // Create Client (Only Master Admin)
 exports.createClient = async (req, res) => {

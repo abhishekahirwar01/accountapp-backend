@@ -2,7 +2,9 @@ const User = require("../models/User");
 const Company = require("../models/Company");
 const bcrypt = require("bcryptjs");
 const Client = require("../models/Client");
+
 const mongoose = require("mongoose");   
+
 
 exports.createUser = async (req, res) => {
   try {
@@ -73,6 +75,7 @@ exports.getUsers = async (req, res) => {
 
     res.status(200).json(users);
   } catch (err) {
+     console.error("🔥 Error in /api/users:", err);
     res.status(500).json({ error: err.message });
   }
 };
