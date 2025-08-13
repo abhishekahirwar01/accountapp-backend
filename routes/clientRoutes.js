@@ -28,4 +28,6 @@ router.put("/:clientId/user-limit",verifyMasterAdmin, setUserLimit)
 
 //client login
 router.post("/login", loginClient);
+
+// router.post('/login-debug', loginClient);
 module.exports = router;
