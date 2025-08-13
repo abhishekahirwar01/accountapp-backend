@@ -4,6 +4,33 @@ const bcrypt = require("bcryptjs");
 const Client = require("../models/Client");
 
 const mongoose = require("mongoose");   
+// already there
+const ALL_ROLES = User.schema.path("role").enumValues; // ["admin","manager","user"]
+
+// NEW: map whoever is logged in to an effective role for assignment checks
+async function getEffectiveActorRole(req) {
+  // If the token has a valid app role, use it
+  if (req.user && ALL_ROLES.includes(req.user.role)) return req.user.role;
+
+  // If this token is for a Client (tenant owner), treat as admin
+  // (adjust these checks to match your auth payload)
+  if (req.user && (req.user.accountType === "client" || req.user.isClientOwner === true || req.user.type === "client")) {
+    return "admin";
+  }
+
+  // Fallback: does a Client with this id exist? If yes, treat as admin.
+  try {
+    if (req.user?.id && await Client.exists({ _id: req.user.id })) return "admin";
+  } catch (_) {}
+
+  return "user";
+}
+
+function assignableRolesFor(currentRole) {
+  if (currentRole === "admin") return ALL_ROLES;
+  if (currentRole === "manager") return ["user"]; // or ["manager","user"] if you prefer
+  return ["user"];
+}
 
 
 exports.createUser = async (req, res) => {
@@ -14,9 +41,18 @@ exports.createUser = async (req, res) => {
       password,
       contactNumber,
       address,
-      companies // array of company IDs selected by the client
+      companies ,
+       role = "user"  
     } = req.body;
 
+    if (!ALL_ROLES.includes(role)) {
+      return res.status(400).json({ message: "Invalid role" });
+    }
+     const actorRole = await getEffectiveActorRole(req);
+   const allowedRoles = assignableRolesFor(actorRole);
+    if (!allowedRoles.includes(role)) {
+      return res.status(403).json({ message: "Not allowed to assign this role" });
+    }
     const hashedPassword = await bcrypt.hash(password, 10);
 
     // Verify companies are valid and belong to the client
@@ -50,7 +86,8 @@ exports.createUser = async (req, res) => {
       contactNumber,
       address,
       companies,
-      createdByClient: req.user.id
+      createdByClient: req.user.id,
+       role  
     });
 
     await newUser.save();
@@ -83,15 +120,33 @@ exports.getUsers = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
   try {
-    const { userName, contactNumber, address, companies, password } = req.body;
+    const { userName, contactNumber, address, companies, password ,role} = req.body;
     const userId = req.params.id;
 
     const user = await User.findById(userId);
+    const actorRole = await getEffectiveActorRole(req);
+
     if (!user) return res.status(404).json({ message: "User not found" });
 
     // Only allow updates by the same client or admin
-    if (req.user.role !== "admin" && user.createdByClient.toString() !== req.user.id) {
+    if (actorRole !== "admin" && user.createdByClient.toString() !== req.user.id) {
       return res.status(403).json({ message: "Not authorized to update this user" });
+    }
+
+     // ✅ If role change requested, validate and block escalation
+    if (typeof role !== "undefined") {
+      if (!ALL_ROLES.includes(role)) {
+        return res.status(400).json({ message: "Invalid role" });
+      }
+      // Non-admins cannot modify an admin user's role
+      if (user.role === "admin" && actorRole !== "admin") {
+        return res.status(403).json({ message: "Cannot change role of an admin user" });
+      }
+      const allowedRoles = assignableRolesFor(actorRole);
+      if (!allowedRoles.includes(role)) {
+        return res.status(403).json({ message: "Not allowed to assign this role" });
+      }
+      user.role = role;
     }
 
     // Validate companies belong to the same client
@@ -184,7 +239,7 @@ exports.getUsersByClient = async (req, res) => {
     }
 
     // AuthZ: admins can query any client; non-admins only their own
-    if (req.user.role !== "master" && req.user.id !== clientId) {
+    if (req.user.role !== "admin" && req.user.id !== clientId) {
       return res.status(403).json({ message: "Not authorized to view users for this client" });
     }
 
