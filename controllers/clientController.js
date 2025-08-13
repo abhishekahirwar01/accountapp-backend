@@ -220,8 +220,6 @@ exports.getClientById = async (req, res) => {
   }
 };
 
-
-//user limit update
 // PUT /api/clients/:clientId/user-limit
 exports.setUserLimit = async (req, res) => {
   const { clientId } = req.params;
