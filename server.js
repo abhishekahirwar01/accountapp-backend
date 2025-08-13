@@ -15,6 +15,7 @@ const userRoutes = require("./routes/userRoutes");
 const receiptRoutes = require("./routes/receiptRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const journalRoutes = require("./routes/journalRoutes");
+const permissionRoutes = require('./routes/permission.routes')
 
 dotenv.config();
 connectDB();
@@ -70,8 +71,8 @@ app.use("/api/products", productRoutes);
 app.use("/api/parties", partyRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
-app.use("/api/test", require("./routes/testRoutes"));
-// Database connection middleware
+
+app.use("/api", permissionRoutes);
 
 
 // Test endpoints with better error handling
