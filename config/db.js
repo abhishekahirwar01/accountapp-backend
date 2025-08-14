@@ -79,7 +79,7 @@ let cachedDb = null;
 
 const connectDB = async () => {
   if (cachedDb && cachedDb.connection.readyState === 1) {
-    console.log("♻️ Using existing DB connection");
+    // console.log("♻️ Using existing DB connection");
     return cachedDb;
   }
 
