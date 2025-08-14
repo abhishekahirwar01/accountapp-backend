@@ -82,3 +82,67 @@ exports.deleteProducts = async (req, res) => {
   }
 };
 
+
+
+
+exports.updateStockBulk = async (req, res) => {
+  try {
+    const { items = [], action = "decrease" } = req.body;
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "Items array is required." });
+    }
+
+    // merge duplicate lines and normalize keys
+    const qtyById = new Map();
+    for (const raw of items) {
+      const productId = String(raw.product || raw.productId || "");
+      const qty = Number(raw.quantity);
+      if (!productId || !Number.isFinite(qty) || qty <= 0) {
+        return res.status(400).json({ message: "Each item needs product id and positive quantity." });
+      }
+      qtyById.set(productId, (qtyById.get(productId) || 0) + qty);
+    }
+
+    // fetch only this client's products
+    const ids = [...qtyById.keys()];
+    const products = await Product.find({
+      _id: { $in: ids },
+      createdByClient: req.user.id,
+    });
+
+    // existence & authorization checks
+    const productMap = new Map(products.map(p => [String(p._id), p]));
+    for (const id of ids) {
+      if (!productMap.has(id)) {
+        return res.status(404).json({ message: `Product not found or unauthorized: ${id}` });
+      }
+    }
+
+    // compute new stocks and validate (no negative results)
+    const sign = action === "increase" ? 1 : -1;
+    for (const [id, qty] of qtyById.entries()) {
+      const p = productMap.get(id);
+      const current = Number(p.stocks || 0);
+      const next = current + sign * qty;
+      if (next < 0) {
+        return res.status(400).json({
+          message: `Insufficient stock for "${p.name}". Available: ${current}, requested: ${qty}`,
+        });
+      }
+      p.stocks = next;
+    }
+
+    // persist with bulkWrite
+    const ops = products.map(p => ({
+      updateOne: { filter: { _id: p._id }, update: { $set: { stocks: p.stocks } } },
+    }));
+    await Product.bulkWrite(ops, { ordered: true });
+
+    res.json({
+      message: "Stock updated",
+      updated: products.map(p => ({ id: p._id, name: p.name, stocks: p.stocks })),
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};

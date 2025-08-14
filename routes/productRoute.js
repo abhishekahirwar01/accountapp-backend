@@ -13,4 +13,6 @@ router.put("/:id", verifyClientOrAdmin, productController.updateProducts);
 router.delete("/:id", verifyClientOrAdmin, productController.deleteProducts);
 
 
+router.post("/update-stock", verifyClientOrAdmin, productController.updateStockBulk);
+
 module.exports = router;
