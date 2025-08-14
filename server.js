@@ -16,6 +16,7 @@ const receiptRoutes = require("./routes/receiptRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const journalRoutes = require("./routes/journalRoutes");
 const permissionRoutes = require('./routes/permission.routes')
+const serviceRoutes = require('./routes/serviceRoutes')
 
 dotenv.config();
 connectDB();
@@ -71,6 +72,7 @@ app.use("/api/receipts", receiptRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/journals", journalRoutes);
 app.use("/api/products", productRoutes);
+app.use("/api/services", serviceRoutes);
 app.use("/api/parties", partyRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
