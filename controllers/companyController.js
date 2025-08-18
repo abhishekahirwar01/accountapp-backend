@@ -1,5 +1,20 @@
+const path = require("path");
+const fs = require("fs");
 const Company = require("../models/Company");
 const Client = require("../models/Client");
+
+// Helper to convert absolute file path to a public URL under /uploads
+const toPublicUrl = (absPath) => {
+  // absPath ends with .../uploads/company-logos/xyz.png
+  const rel = path.relative(path.join(process.cwd(), "uploads"), absPath); // company-logos/xyz.png
+  return `/uploads/${rel.replace(/\\/g, "/")}`;
+};
+
+// Optional: delete a file if it exists
+const safeUnlink = (absPath) => {
+  if (!absPath) return;
+  fs.promises.unlink(absPath).catch(() => {});
+};
 
 // Create Company (Client Only)
 exports.createCompany = async (req, res) => {
@@ -34,11 +49,16 @@ exports.createCompany = async (req, res) => {
       TDSLoginUsername,
       TDSLoginPassword,
       selectedClient,
+      logo,
     } = req.body;
 
     const existing = await Company.findOne({ registrationNumber });
     if (existing) {
-      return res.status(400).json({ message: "Company with this registration number already exists" });
+      return res
+        .status(400)
+        .json({
+          message: "Company with this registration number already exists",
+        });
     }
     // Validate selectedClient if provided
     let assignedClientId = req.user.id;
@@ -51,6 +71,14 @@ exports.createCompany = async (req, res) => {
         return res.status(404).json({ message: "Selected client not found" });
       }
       assignedClientId = selectedClient;
+    }
+
+    // Logo URL resolution: uploaded file takes priority
+    let logoUrl = null;
+    if (req.file && req.file.path) {
+      logoUrl = toPublicUrl(req.file.path);
+    } else if (typeof logo === "string" && logo.trim()) {
+      logoUrl = logo.trim();
     }
 
     const company = new Company({
@@ -84,6 +112,7 @@ exports.createCompany = async (req, res) => {
       TDSLoginPassword,
       client: assignedClientId,
       selectedClient: assignedClientId,
+      logo: logoUrl,
     });
 
     await company.save();
@@ -106,7 +135,10 @@ exports.getClientCompanies = async (req, res) => {
 // // Get All Companies (Master Admin Only)
 exports.getAllCompanies = async (req, res) => {
   try {
-    const companies = await Company.find().populate("client", "clientUsername email");
+    const companies = await Company.find().populate(
+      "client",
+      "clientUsername email"
+    );
     res.status(200).json(companies);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -146,6 +178,7 @@ exports.updateCompany = async (req, res) => {
       TDSLoginUsername,
       TDSLoginPassword,
       selectedClient,
+      logo,
     } = req.body;
 
     const company = await Company.findById(companyId);
@@ -154,7 +187,10 @@ exports.updateCompany = async (req, res) => {
     }
 
     // Allow only the client who owns the company or master admin
-    if (req.user.role === "client" && company.client.toString() !== req.user.id) {
+    if (
+      req.user.role === "client" &&
+      company.client.toString() !== req.user.id
+    ) {
       return res.status(403).json({ message: "Access denied" });
     }
 
@@ -168,24 +204,57 @@ exports.updateCompany = async (req, res) => {
     company.Pincode = Pincode || company.Pincode;
     company.Telephone = Telephone || company.Telephone;
     company.mobileNumber = mobileNumber || company.mobileNumber;
-    company. emailId =  emailId || company. emailId;
-    company. Website =  Website || company. Website;
-    company. PANNumber = PANNumber || company. PANNumber;
-    company. IncomeTaxLoginPassword = IncomeTaxLoginPassword || company. IncomeTaxLoginPassword;
-    company. gstin = gstin || company. gstin;
-    company.gstState = gstState || company. gstState;
-    company. RegistrationType = RegistrationType || company. RegistrationType;
-    company. PeriodicityofGSTReturns = PeriodicityofGSTReturns || company. PeriodicityofGSTReturns;
-    company. GSTUsername = GSTUsername || company. GSTUsername;
-    company. GSTPassword = GSTPassword || company. GSTPassword;
-    company. ewayBillApplicable = ewayBillApplicable || company. ewayBillApplicable;
-    company. EWBBillUsername = EWBBillUsername || company. EWBBillUsername;
-    company.EWBBillPassword = EWBBillPassword || company. EWBBillPassword;
-    company.TANNumber = TANNumber || company. TANNumber;
-    company.TAXDeductionCollectionAcc = TAXDeductionCollectionAcc || company. TAXDeductionCollectionAcc;
-    company.DeductorType = DeductorType || company. DeductorType;
-    company.TDSLoginUsername = TDSLoginUsername || company. TDSLoginUsername;
-    company.TDSLoginPassword = TDSLoginPassword || company. TDSLoginPassword;
+    company.emailId = emailId || company.emailId;
+    company.Website = Website || company.Website;
+    company.PANNumber = PANNumber || company.PANNumber;
+    company.IncomeTaxLoginPassword =
+      IncomeTaxLoginPassword || company.IncomeTaxLoginPassword;
+    company.gstin = gstin || company.gstin;
+    company.gstState = gstState || company.gstState;
+    company.RegistrationType = RegistrationType || company.RegistrationType;
+    company.PeriodicityofGSTReturns =
+      PeriodicityofGSTReturns || company.PeriodicityofGSTReturns;
+    company.GSTUsername = GSTUsername || company.GSTUsername;
+    company.GSTPassword = GSTPassword || company.GSTPassword;
+    company.ewayBillApplicable =
+      ewayBillApplicable || company.ewayBillApplicable;
+    company.EWBBillUsername = EWBBillUsername || company.EWBBillUsername;
+    company.EWBBillPassword = EWBBillPassword || company.EWBBillPassword;
+    company.TANNumber = TANNumber || company.TANNumber;
+    company.TAXDeductionCollectionAcc =
+      TAXDeductionCollectionAcc || company.TAXDeductionCollectionAcc;
+    company.DeductorType = DeductorType || company.DeductorType;
+    company.TDSLoginUsername = TDSLoginUsername || company.TDSLoginUsername;
+    company.TDSLoginPassword = TDSLoginPassword || company.TDSLoginPassword;
+
+    // Logo update logic
+    if (req.file && req.file.path) {
+      // New file uploaded → optionally delete previous local file (if it was local)
+      const wasLocal = company.logo?.startsWith("/uploads/");
+      if (wasLocal) {
+        const prevAbs = path.join(
+          process.cwd(),
+          company.logo.replace(/^\/uploads\//, "uploads/")
+        );
+        safeUnlink(prevAbs);
+      }
+      company.logo = toPublicUrl(req.file.path);
+    } else if (logo !== undefined) {
+      // Allow URL set or clear (null)
+      if (logo === null) {
+        const wasLocal = company.logo?.startsWith("/uploads/");
+        if (wasLocal) {
+          const prevAbs = path.join(
+            process.cwd(),
+            company.logo.replace(/^\/uploads\//, "uploads/")
+          );
+          safeUnlink(prevAbs);
+        }
+        company.logo = null;
+      } else if (typeof logo === "string") {
+        company.logo = logo.trim();
+      }
+    }
 
     // If master admin, allow updating the assigned client
     if (req.user.role === "master" && selectedClient) {
@@ -194,7 +263,6 @@ exports.updateCompany = async (req, res) => {
 
     await company.save();
     res.status(200).json({ message: "Company updated", company });
-
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -211,13 +279,22 @@ exports.deleteCompany = async (req, res) => {
     }
 
     // Allow only owner (client) or master admin
-    if (req.user.role === "client" && company.client.toString() !== req.user.id) {
+    if (
+      req.user.role === "client" &&
+      company.client.toString() !== req.user.id
+    ) {
       return res.status(403).json({ message: "Access denied" });
+    }
+    if (company.logo?.startsWith("/uploads/")) {
+      const prevAbs = path.join(
+        process.cwd(),
+        company.logo.replace(/^\/uploads\//, "uploads/")
+      );
+      safeUnlink(prevAbs);
     }
 
     await Company.findByIdAndDelete(companyId);
     res.status(200).json({ message: "Company deleted successfully" });
-
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -235,12 +312,13 @@ exports.getCompaniesByClientId = async (req, res) => {
       return res.status(403).json({ message: "Access denied" });
     }
 
-    const companies = await Company.find({ client: clientId }).populate("client", "clientUsername email");
+    const companies = await Company.find({ client: clientId }).populate(
+      "client",
+      "clientUsername email"
+    );
 
     res.status(200).json(companies);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
-
-

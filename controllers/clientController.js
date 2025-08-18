@@ -1,10 +1,15 @@
 const Client = require("../models/Client");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const vercelauth = require('../middleware/vercelauth')
+const slugifyUsername = require("../utils/slugify");
+const Permission = require("../models/Permission");
 
 // Create Client (Only Master Admin)
+// Create Client (Only Master Admin)
 exports.createClient = async (req, res) => {
+  const session = await Client.startSession();
+  session.startTransaction();
+
   try {
     const {
       clientUsername,
@@ -12,50 +17,95 @@ exports.createClient = async (req, res) => {
       contactName,
       phone,
       email,
+
+      // If you want to seed Permission doc from request, keep these:
       maxCompanies = 5,
       maxUsers = 10,
       canSendInvoiceEmail = true,
-      canSendInvoiceWhatsapp = false
+      canSendInvoiceWhatsapp = false,
     } = req.body;
 
-    // Check for duplicates
-    const existingUsername = await Client.findOne({ clientUsername });
-    if (existingUsername) {
-      return res.status(400).json({ message: "Username already exists" });
+    const slug = slugifyUsername(clientUsername);
+    if (!slug) {
+      await session.abortTransaction(); session.endSession();
+      return res.status(400).json({ message: "Invalid username/slug" });
     }
 
-    const existingEmail = await Client.findOne({ email });
-    if (existingEmail) {
-      return res.status(400).json({ message: "Email already exists" });
-    }
-
-    const existingPhone = await Client.findOne({ phone });
-    if (existingPhone) {
-      return res.status(400).json({ message: "Phone already exists" });
-    }
+    // Duplicate checks (run outside transaction is also fine, but this is ok)
+    const [existingUsername, existingSlug, existingEmail, existingPhone] = await Promise.all([
+      Client.findOne({ clientUsername }).session(session),
+      Client.findOne({ slug }).session(session),
+      Client.findOne({ email }).session(session),
+      Client.findOne({ phone }).session(session),
+    ]);
+    if (existingUsername) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Username already exists" }); }
+    if (existingSlug)     { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Slug already exists" }); }
+    if (existingPhone)    { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Phone already exists" }); }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const client = new Client({
+    // 1) Create client
+    const client = await Client.create([{
       clientUsername,
+      slug,
       password: hashedPassword,
       contactName,
       phone,
       email,
+
+      // You’re currently storing these on Client too; okay for now,
+      // but consider keeping limits only on Permission to avoid duplication.
       maxCompanies,
       maxUsers,
       canSendInvoiceEmail,
       canSendInvoiceWhatsapp,
-      role: "client",
-      masterAdmin: req.user.id
-    });
 
-    await client.save();
-    res.status(201).json({ message: "Client created successfully", client });
+      role: "client",
+      masterAdmin: req.user.id,
+    }], { session });
+
+    const createdClient = client[0];
+
+    // 2) Create/Upsert default permissions for the new client
+    // Anything you omit here will fall back to schema defaults
+    await Permission.findOneAndUpdate(
+      { client: createdClient._id },
+      {
+        $setOnInsert: {
+          client: createdClient._id,
+          maxCompanies,
+          maxUsers,
+          canSendInvoiceEmail,
+          canSendInvoiceWhatsapp,
+          // The rest will use Permission schema defaults:
+          // canCreateUsers: false,
+          // canCreateInventory: true,
+          // canCreateCustomers: true,
+          // canCreateVendors: true,
+          // maxInventories: 20,
+          // planCode: "FREE",
+        },
+      },
+      {
+        upsert: true,
+        new: true,
+        setDefaultsOnInsert: true,
+        runValidators: true,
+        session,
+      }
+    );
+
+    await session.commitTransaction();
+    session.endSession();
+
+    return res.status(201).json({ message: "Client created successfully", client: createdClient });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    await session.abortTransaction();
+    session.endSession();
+    return res.status(500).json({ error: err.message });
   }
 };
+
 
 
 // Get All Clients (Only Master Admin)
@@ -72,12 +122,18 @@ exports.getClients = async (req, res) => {
 // Client Login
 exports.loginClient = async (req, res) => {
   try {
+    // slug comes from URL: /api/:slug/login
+    const { slug } = req.params;
     const { clientUsername, password } = req.body;
 
-    const client = await Client.findOne({ clientUsername });
+    const client = await Client.findOne({ slug });
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
+
+     if (clientUsername && clientUsername !== client.clientUsername) {
+     return res.status(403).json({ message: "Username mismatch for this tenant" });
+   }
 
     const isMatch = await bcrypt.compare(password, client.password);
     if (!isMatch) {
@@ -85,7 +141,7 @@ exports.loginClient = async (req, res) => {
     }
 
     const token = jwt.sign(
-      { id: client._id, role: "client" },
+      { id: client._id, role: "client", slug: client.slug },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
@@ -96,6 +152,7 @@ exports.loginClient = async (req, res) => {
       client: {
         id: client._id,
         clientUsername: client.clientUsername,
+        slug: client.slug,
         contactName: client.contactName,
         email: client.email,
         phone: client.phone,

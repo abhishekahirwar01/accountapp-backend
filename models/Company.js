@@ -24,7 +24,7 @@ const companySchema = new mongoose.Schema({
   PeriodicityofGSTReturns: { type: String, default: null },
   GSTUsername: { type: String, default: null },
   GSTPassword: { type: String, default: null },
-  ewayBillApplicable: {type:Boolean},
+  ewayBillApplicable: { type: Boolean },
   EWBBillUsername: { type: String, default: null },
   EWBBillPassword: { type: String, default: null },
   TANNumber: { type: String, default: null },
@@ -36,8 +36,8 @@ const companySchema = new mongoose.Schema({
 
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
   // NEW: Assigned client
-  selectedClient: { type: mongoose.Schema.Types.ObjectId, ref: "Client", default: null }
-
+  selectedClient: { type: mongoose.Schema.Types.ObjectId, ref: "Client", default: null },
+  logo: { type: String, default: null }, // URL of the logo
 }, { timestamps: true });
 
 module.exports = mongoose.model("Company", companySchema);
