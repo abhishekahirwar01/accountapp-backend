@@ -10,13 +10,38 @@ const purchaseItemSchema = new mongoose.Schema({
   amount: { type: Number, required: true, min: 0 },
 }, { _id: false });
 
+const purchaseServiceSchema = new mongoose.Schema({
+  serviceName: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
+  amount: { type: Number, required: true, min: 1 },
+  description: { type: String },
+}, { _id: false });
+
 const purchaseSchema = new mongoose.Schema({
   vendor: { type: mongoose.Schema.Types.ObjectId, ref: "Vendor", required: true },
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: true },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
   date: { type: Date, required: true },
-  items: { type: [purchaseItemSchema], required: true, validate: v => v.length > 0 },
+  products: { 
+    type: [purchaseItemSchema], 
+    required: false,
+    validate: {
+      validator: function(v) {
+        return !(this.products.length === 0 && this.services.length === 0);
+      },
+      message: 'At least one product or service is required'
+    }
+  },
+  services: { 
+    type: [purchaseServiceSchema], 
+    required: false,
+    validate: {
+      validator: function(v) {
+        return !(this.products.length === 0 && this.services.length === 0);
+      },
+      message: 'At least one product or service is required'
+    }
+  },
   totalAmount: { type: Number, required: true, min: 0 },
 
   description: { type: String },

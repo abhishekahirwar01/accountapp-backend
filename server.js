@@ -2,6 +2,7 @@ const express = require("express");
 const mongoose = require('mongoose'); // Add this at the top
 const dotenv = require("dotenv");
 const cors = require("cors");
+const path = require("path");
 const connectDB = require("./config/db");
 const masterAdminRoutes = require("./routes/masterAdminRoutes");
 const clientRoutes = require("./routes/clientRoutes");
@@ -16,6 +17,9 @@ const receiptRoutes = require("./routes/receiptRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const journalRoutes = require("./routes/journalRoutes");
 const permissionRoutes = require('./routes/permission.routes')
+const serviceRoutes = require('./routes/serviceRoutes')
+const { loginClient } = require("./controllers/clientController");
+const integrationsRoutes = require("./routes/integrationsRoutes");
 
 dotenv.config();
 connectDB();
@@ -49,6 +53,8 @@ app.use(cors({ origin: "*" }));
 
 app.use(express.json());
 
+app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
+
 app.use(async (req, res, next) => {
   try {
     await connectDB();
@@ -61,8 +67,10 @@ app.use(async (req, res, next) => {
     });
   }
 });
+app.use("/api/integrations", integrationsRoutes);
 
 app.use("/api/master-admin", masterAdminRoutes);
+app.post("/api/clients/:slug/login", loginClient);
 app.use("/api/clients", clientRoutes);
 app.use("/api/companies", companyRoutes);
 app.use("/api/sales", salesRoutes);
@@ -71,10 +79,10 @@ app.use("/api/receipts", receiptRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/journals", journalRoutes);
 app.use("/api/products", productRoutes);
+app.use("/api/services", serviceRoutes);
 app.use("/api/parties", partyRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
-
 app.use("/api", permissionRoutes);
 
 

@@ -2,14 +2,13 @@
 const SalesEntry = require("../models/SalesEntry");
 const Company = require("../models/Company");
 const Party = require("../models/Party");
-const Product = require("../models/Product");
-const { normalizeItems } = require("../utils/normalizeItems");
+const normalizeProducts = require("../utils/normalizeProducts");
+const normalizeServices = require("../utils/normalizeServices");
 
-const { ensurePartyAndProduct } = require("../utils/ensurePartyAndProduct");
 
 exports.createSalesEntry = async (req, res) => {
   try {
-    const { party, company: companyId, date, items, totalAmount, description, referenceNumber, gstPercentage, discountPercentage, invoiceType } = req.body;
+    const { party, company: companyId, date, products, service, totalAmount, description, referenceNumber, gstPercentage, discountPercentage, invoiceType } = req.body;
 
     const company = await Company.findOne({ _id: companyId, client: req.user.id });
     if (!company) return res.status(400).json({ message: "Invalid company selected" });
@@ -17,15 +16,35 @@ exports.createSalesEntry = async (req, res) => {
     const partyDoc = await Party.findOne({ _id: party, createdByClient: req.user.id });
     if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
 
-    const { items: normalized, computedTotal } = await normalizeItems(items, req.user.id);
-    const finalTotal = typeof totalAmount === "number" ? totalAmount : computedTotal;
+    // Normalize products if they exist
+    let normalizedProducts = [];
+    let productsTotal = 0;
+    if (products && products.length > 0) {
+      const result = await normalizeProducts(products, req.user.id);
+      normalizedProducts = result.items;
+      productsTotal = result.computedTotal;
+    }
+
+    // Normalize services if they exist
+    let normalizedServices = [];
+    let servicesTotal = 0;
+    if (service && service.length > 0) {
+      const result = await normalizeServices(service, req.user.id);
+      normalizedServices = result.items;
+      servicesTotal = result.computedTotal;
+    }
+
+    const finalTotal = typeof totalAmount === 'number' 
+      ? totalAmount 
+      : productsTotal + servicesTotal;
 
     const entry = await SalesEntry.create({
       party: partyDoc._id,
       company: company._id,
       client: req.user.id,
       date,
-      items: normalized,
+      products: normalizedProducts,
+      service: normalizedServices,
       totalAmount: finalTotal,
       description,
       referenceNumber,
@@ -46,23 +65,37 @@ exports.createSalesEntry = async (req, res) => {
 // GET Sales Entries (Client or Master Admin)
 exports.getSalesEntries = async (req, res) => {
   try {
-    const filter = {};
+    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
 
-    // If client, restrict to their own sales entries
+    const { companyId, fromDate, toDate, clientId } = req.query;
+
+    // Build filter
+    const filter = {};
     if (req.user.role === "client") {
       filter.client = req.user.id;
+    } else if (clientId) {
+      filter.client = clientId; // optional: for master admin views
+    }
+    if (companyId) filter.company = companyId;
+    if (fromDate || toDate) {
+      filter.date = {};
+      if (fromDate) filter.date.$gte = new Date(fromDate);
+      if (toDate)   filter.date.$lte = new Date(toDate);
     }
 
     const entries = await SalesEntry.find(filter)
       .populate("party", "name")
-      .populate("items.product", "name")          // ✅ nested path
-      .populate("company", "businessName")        // ✅ field name
+      .populate("products.product", "name")     // ✅ matches your saved field
+      .populate("service.serviceName", "name")  // ✅ or "service.service" if you rename the key
+      .populate("company", "businessName")
       .sort({ date: -1 });
 
-    res.status(200).json({ entries });
-
+    return res.status(200).json({ entries });
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch sales entries", error: err.message });
+    console.error("getSalesEntries error:", err);
+    return res
+      .status(500)
+      .json({ message: "Failed to fetch sales entries", error: err.message });
   }
 };
 
@@ -97,23 +130,38 @@ exports.updateSalesEntry = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
-    const body = { ...req.body };
+    const { products, service, ...otherUpdates } = req.body;
 
-    if (body.company) {
-      const company = await Company.findOne({ _id: body.company, client: req.user.id });
+    if (otherUpdates.company) {
+      const company = await Company.findOne({ _id: otherUpdates.company, client: req.user.id });
       if (!company) return res.status(400).json({ message: "Invalid company selected" });
     }
-    if (body.party) {
-      const partyDoc = await Party.findOne({ _id: body.party, createdByClient: req.user.id });
+    if (otherUpdates.party) {
+      const partyDoc = await Party.findOne({ _id: otherUpdates.party, createdByClient: req.user.id });
       if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
     }
-    if (body.items) {
-      const { items: normalized, computedTotal } = await normalizeItems(body.items, req.user.id);
-      body.items = normalized;
-      if (typeof body.totalAmount !== "number") body.totalAmount = computedTotal;
+
+    // Handle products update
+    if (products) {
+      const { items: normalizedProducts, computedTotal: productsTotal } = 
+        await normalizeProducts(products, req.user.id);
+      entry.products = normalizedProducts;
+      if (typeof otherUpdates.totalAmount !== "number") {
+        otherUpdates.totalAmount = (otherUpdates.totalAmount || 0) + productsTotal;
+      }
     }
 
-    Object.assign(entry, body);
+    // Handle services update
+    if (service) {
+      const { items: normalizedServices, computedTotal: servicesTotal } = 
+        await normalizeServices(service, req.user.id);
+      entry.service = normalizedServices;
+      if (typeof otherUpdates.totalAmount !== "number") {
+        otherUpdates.totalAmount = (otherUpdates.totalAmount || 0) + servicesTotal;
+      }
+    }
+
+    Object.assign(entry, otherUpdates);
     await entry.save();
 
     res.json({ message: "Sales entry updated successfully", entry });
@@ -121,7 +169,6 @@ exports.updateSalesEntry = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 
 // GET Sales Entries by clientId (for master admin)
 exports.getSalesEntriesByClient = async (req, res) => {

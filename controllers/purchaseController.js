@@ -1,30 +1,62 @@
 // controllers/purchaseController.js
 const PurchaseEntry = require("../models/PurchaseEntry");
 const Company = require("../models/Company");
-const { ensureVendorAndProduct } = require("../utils/ensurePartyAndProduct");
 const Vendor = require("../models/Vendor");
-const Product = require("../models/Product");
-const { normalizeItems } = require("../utils/normalizeItems");
+const normalizePurchaseProducts = require("../utils/normalizePurchaseProducts");
+const normalizePurchaseServices = require("../utils/normalizePurchaseServices");
 
 exports.createPurchaseEntry = async (req, res) => {
   try {
-    const { vendor, company: companyId, date, items, totalAmount, description, referenceNumber, gstPercentage, invoiceType } = req.body;
+    const { 
+      vendor, 
+      company: companyId, 
+      date, 
+      products, 
+      services, 
+      totalAmount, 
+      description, 
+      referenceNumber, 
+      gstPercentage, 
+      invoiceType 
+    } = req.body;
 
+    // Validate company
     const company = await Company.findOne({ _id: companyId, client: req.user.id });
     if (!company) return res.status(400).json({ message: "Invalid company selected" });
 
+    // Validate vendor
     const vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.user.id });
     if (!vendorDoc) return res.status(400).json({ message: "Vendor not found or unauthorized" });
 
-    const { items: normalized, computedTotal } = await normalizeItems(items, req.user.id);
-    const finalTotal = typeof totalAmount === "number" ? totalAmount : computedTotal;
+    // Normalize products if they exist
+    let normalizedProducts = [];
+    let productsTotal = 0;
+    if (products && products.length > 0) {
+      const result = await normalizePurchaseProducts(products, req.user.id);
+      normalizedProducts = result.items;
+      productsTotal = result.computedTotal;
+    }
+
+    // Normalize services if they exist
+    let normalizedServices = [];
+    let servicesTotal = 0;
+    if (services && services.length > 0) {
+      const result = await normalizePurchaseServices(services, req.user.id);
+      normalizedServices = result.items;
+      servicesTotal = result.computedTotal;
+    }
+
+    const finalTotal = typeof totalAmount === 'number' 
+      ? totalAmount 
+      : productsTotal + servicesTotal;
 
     const entry = await PurchaseEntry.create({
       vendor: vendorDoc._id,
       company: company._id,
       client: req.user.id,
       date,
-      items: normalized,
+      products: normalizedProducts,
+      services: normalizedServices,
       totalAmount: finalTotal,
       description,
       referenceNumber,
@@ -44,21 +76,20 @@ exports.getPurchaseEntries = async (req, res) => {
   try {
     const filter = {};
 
-    // If the user is a client, fetch only their data
+    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
     if (req.user.role === "client") {
       filter.client = req.user.id;
     }
-
-    // If a specific company is selected, filter by it
     if (req.query.companyId) {
-      filter.company = req.query.companyId;
+      filter.company = req.query.companyId; // validate ObjectId if needed
     }
 
     const entries = await PurchaseEntry.find(filter)
       .populate("vendor", "vendorName")
-      .populate("items.product", "name")          // ✅ nested path + correct field
-      .populate("company", "businessName");       // ✅ field name
-
+      .populate("products.product", "name")          // ✅ correct path
+      .populate("services.serviceName", "name")      // ✅ if your service item key is serviceName
+      .populate("company", "businessName")
+      .sort({ date: -1 }); // optional
 
     res.status(200).json(entries);
   } catch (err) {
@@ -66,6 +97,7 @@ exports.getPurchaseEntries = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 // DELETE a purchase entry
@@ -94,23 +126,41 @@ exports.updatePurchaseEntry = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
-    const body = { ...req.body };
+    const { products, services, ...otherUpdates } = req.body;
 
-    if (body.company) {
-      const company = await Company.findOne({ _id: body.company, client: req.user.id });
+    // Validate company if being updated
+    if (otherUpdates.company) {
+      const company = await Company.findOne({ _id: otherUpdates.company, client: req.user.id });
       if (!company) return res.status(400).json({ message: "Invalid company selected" });
     }
-    if (body.vendor) {
-      const vendorDoc = await Vendor.findOne({ _id: body.vendor, createdByClient: req.user.id });
+
+    // Validate vendor if being updated
+    if (otherUpdates.vendor) {
+      const vendorDoc = await Vendor.findOne({ _id: otherUpdates.vendor, createdByClient: req.user.id });
       if (!vendorDoc) return res.status(400).json({ message: "Vendor not found or unauthorized" });
     }
-    if (body.items) {
-      const { items: normalized, computedTotal } = await normalizeItems(body.items, req.user.id);
-      body.items = normalized;
-      if (typeof body.totalAmount !== "number") body.totalAmount = computedTotal;
+
+    // Handle products update
+    if (products) {
+      const { items: normalizedProducts, computedTotal: productsTotal } = 
+        await normalizePurchaseProducts(products, req.user.id);
+      entry.products = normalizedProducts;
+      if (typeof otherUpdates.totalAmount !== "number") {
+        otherUpdates.totalAmount = (otherUpdates.totalAmount || 0) + productsTotal;
+      }
     }
 
-    Object.assign(entry, body);
+    // Handle services update
+    if (services) {
+      const { items: normalizedServices, computedTotal: servicesTotal } = 
+        await normalizePurchaseServices(services, req.user.id);
+      entry.services = normalizedServices;
+      if (typeof otherUpdates.totalAmount !== "number") {
+        otherUpdates.totalAmount = (otherUpdates.totalAmount || 0) + servicesTotal;
+      }
+    }
+
+    Object.assign(entry, otherUpdates);
     await entry.save();
 
     res.json({ message: "Purchase entry updated successfully", entry });
