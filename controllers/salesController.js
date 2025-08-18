@@ -135,6 +135,7 @@ exports.deleteSalesEntry = async (req, res) => {
 };
 
 // UPDATE a sales entry
+// UPDATE a sales entry
 exports.updateSalesEntry = async (req, res) => {
   try {
     const entry = await SalesEntry.findById(req.params.id);
@@ -145,40 +146,67 @@ exports.updateSalesEntry = async (req, res) => {
 
     const { products, service, ...otherUpdates } = req.body;
 
+    // Validate company if being updated
     if (otherUpdates.company) {
       const company = await Company.findOne({ _id: otherUpdates.company, client: req.user.id });
       if (!company) return res.status(400).json({ message: "Invalid company selected" });
     }
+
+    // Validate party if being updated
     if (otherUpdates.party) {
       const partyDoc = await Party.findOne({ _id: otherUpdates.party, createdByClient: req.user.id });
       if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
     }
 
+    let productsTotal = 0;
+    let servicesTotal = 0;
+
     // Handle products update
     if (products) {
-      const { items: normalizedProducts, computedTotal: productsTotal } =
-        await normalizeProducts(products, req.user.id);
-      entry.products = normalizedProducts;
-      if (typeof otherUpdates.totalAmount !== "number") {
-        otherUpdates.totalAmount = (otherUpdates.totalAmount || 0) + productsTotal;
+      try {
+        const { items: normalizedProducts, computedTotal } = await normalizeProducts(products, req.user.id);
+        entry.products = normalizedProducts;
+        productsTotal = computedTotal;
+      } catch (err) {
+        return res.status(400).json({ message: `Invalid products data: ${err.message}` });
       }
     }
 
     // Handle services update
     if (service) {
-      const { items: normalizedServices, computedTotal: servicesTotal } =
-        await normalizeServices(service, req.user.id);
-      entry.service = normalizedServices;
-      if (typeof otherUpdates.totalAmount !== "number") {
-        otherUpdates.totalAmount = (otherUpdates.totalAmount || 0) + servicesTotal;
+      try {
+        const { items: normalizedServices, computedTotal } = await normalizeServices(service, req.user.id);
+        entry.service = normalizedServices;
+        servicesTotal = computedTotal;
+      } catch (err) {
+        return res.status(400).json({ message: `Invalid service data: ${err.message}` });
       }
     }
 
-    Object.assign(entry, otherUpdates);
+    // Apply updates
+    const { totalAmount, ...rest } = otherUpdates;
+    Object.assign(entry, rest);
+
+    // Calculate total amount
+    if (typeof totalAmount === 'number') {
+      entry.totalAmount = totalAmount;
+    } else {
+      const sumProducts = productsTotal || entry.products.reduce((sum, item) => sum + (item.amount || 0), 0);
+      const sumServices = servicesTotal || entry.service.reduce((sum, item) => sum + (item.amount || 0), 0);
+      entry.totalAmount = sumProducts + sumServices;
+    }
+
     await entry.save();
+
+    // Send invoice email asynchronously
+    setImmediate(() => {
+      sendSalesInvoiceEmail({ clientId: req.user.id, saleId: entry._id })
+        .catch(err => console.error("Failed to send invoice email:", err));
+    });
 
     res.json({ message: "Sales entry updated successfully", entry });
   } catch (err) {
+    console.error("Error updating sales entry:", err);
     res.status(500).json({ error: err.message });
   }
 };
