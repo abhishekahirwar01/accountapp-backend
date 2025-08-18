@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+const { uploadLogo } = require("../middleware/uploadLogo");
 const {
   createCompany,
   getClientCompanies,
@@ -14,7 +15,7 @@ const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
 const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
 
 // Client creates company
-router.post("/", verifyClientOrAdmin, createCompany);
+router.post("/", verifyClientOrAdmin,uploadLogo, createCompany);
 
 // // Client views own companies
 router.get("/my", verifyClientOrAdmin, getClientCompanies);
@@ -25,7 +26,7 @@ router.get("/all", verifyMasterAdmin, getAllCompanies);
 // router.get("/", verifyClientOrAdmin, getCompanies);
 
 // Update company (client or master)
-router.put("/:id", verifyClientOrAdmin, updateCompany);
+router.put("/:id", verifyClientOrAdmin,uploadLogo, updateCompany);
 
 // Delete company (client or master)
 router.delete("/:id", verifyClientOrAdmin, deleteCompany);
