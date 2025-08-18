@@ -18,10 +18,12 @@
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "fs": "^0.0.1-security",
+    "google-auth-library": "^10.2.1",
     "googleapis": "^156.0.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.17.0",
     "multer": "^2.0.2",
+    "nodemailer": "^7.0.5",
     "path": "^0.12.7",
     "zod": "^4.0.17"
   },
