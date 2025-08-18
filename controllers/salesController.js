@@ -4,6 +4,7 @@ const Company = require("../models/Company");
 const Party = require("../models/Party");
 const normalizeProducts = require("../utils/normalizeProducts");
 const normalizeServices = require("../utils/normalizeServices");
+const { sendSalesInvoiceEmail } = require("../services/invoiceEmail");
 
 
 exports.createSalesEntry = async (req, res) => {
@@ -34,8 +35,8 @@ exports.createSalesEntry = async (req, res) => {
       servicesTotal = result.computedTotal;
     }
 
-    const finalTotal = typeof totalAmount === 'number' 
-      ? totalAmount 
+    const finalTotal = typeof totalAmount === 'number'
+      ? totalAmount
       : productsTotal + servicesTotal;
 
     const entry = await SalesEntry.create({
@@ -52,6 +53,18 @@ exports.createSalesEntry = async (req, res) => {
       discountPercentage,
       invoiceType,
       gstin: company.gstin || null,
+    });
+
+    // ✅ then send the email in the background (don’t block the request)
+    setImmediate(() => {
+      sendSalesInvoiceEmail({
+        clientId: req.user.id,
+        sale: entry.toObject ? entry.toObject() : entry,
+        partyId: partyDoc._id,
+        companyId: company._id,
+      })
+        .then(() => console.log(`Invoice email sent to ${partyDoc.email} for sale ${entry._id}`))
+        .catch((err) => console.error(`Invoice email failed for sale ${entry._id}:`, err.message));
     });
 
     res.status(201).json({ message: "Sales entry created successfully", entry });
@@ -80,7 +93,7 @@ exports.getSalesEntries = async (req, res) => {
     if (fromDate || toDate) {
       filter.date = {};
       if (fromDate) filter.date.$gte = new Date(fromDate);
-      if (toDate)   filter.date.$lte = new Date(toDate);
+      if (toDate) filter.date.$lte = new Date(toDate);
     }
 
     const entries = await SalesEntry.find(filter)
@@ -143,7 +156,7 @@ exports.updateSalesEntry = async (req, res) => {
 
     // Handle products update
     if (products) {
-      const { items: normalizedProducts, computedTotal: productsTotal } = 
+      const { items: normalizedProducts, computedTotal: productsTotal } =
         await normalizeProducts(products, req.user.id);
       entry.products = normalizedProducts;
       if (typeof otherUpdates.totalAmount !== "number") {
@@ -153,7 +166,7 @@ exports.updateSalesEntry = async (req, res) => {
 
     // Handle services update
     if (service) {
-      const { items: normalizedServices, computedTotal: servicesTotal } = 
+      const { items: normalizedServices, computedTotal: servicesTotal } =
         await normalizeServices(service, req.user.id);
       entry.service = normalizedServices;
       if (typeof otherUpdates.totalAmount !== "number") {
