@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { createClient, getClients, loginClient, updateClient, deleteClient, resetPassword , getClientById, setUserLimit} = require("../controllers/clientController");
 const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
-
+const verifyClient = require("../middleware/verifyClient")
 // Create a client
 router.post("/", verifyMasterAdmin, createClient);
 
@@ -27,7 +27,8 @@ router.get("/:id", verifyMasterAdmin, getClientById);
 router.put("/:clientId/user-limit",verifyMasterAdmin, setUserLimit)
 
 //client login
-router.post("/login", loginClient);
+// PUBLIC: no middleware here
+router.post("/:slug/login", loginClient);
 
 // router.post('/login-debug', loginClient);
 module.exports = router;

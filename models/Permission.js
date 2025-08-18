@@ -12,7 +12,8 @@ const permissionSchema = new mongoose.Schema(
     },
 
     // Feature flags
-    canCreateUsers: { type: Boolean, default: false },
+    canCreateUsers: { type: Boolean, default: true },
+    canCreateInventory: {type: Boolean, default: true},
 
     // Split products & inventory
     canCreateProducts: { type: Boolean, default: true },
