@@ -23,6 +23,8 @@ exports.createClient = async (req, res) => {
       maxUsers = 10,
       canSendInvoiceEmail = true,
       canSendInvoiceWhatsapp = false,
+      canCreateCompanies = false,  // Add default value
+      canUpdateCompanies = false     // Add default value
     } = req.body;
 
     const slug = slugifyUsername(clientUsername);
@@ -39,8 +41,8 @@ exports.createClient = async (req, res) => {
       Client.findOne({ phone }).session(session),
     ]);
     if (existingUsername) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Username already exists" }); }
-    if (existingSlug)     { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Slug already exists" }); }
-    if (existingPhone)    { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Phone already exists" }); }
+    if (existingSlug) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Slug already exists" }); }
+    if (existingPhone) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Phone already exists" }); }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
@@ -84,6 +86,8 @@ exports.createClient = async (req, res) => {
           // canCreateVendors: true,
           // maxInventories: 20,
           // planCode: "FREE",
+          canCreateCompanies,  // Add this
+          canUpdateCompanies,     // Add this
         },
       },
       {
@@ -131,9 +135,9 @@ exports.loginClient = async (req, res) => {
       return res.status(404).json({ message: "Client not found" });
     }
 
-     if (clientUsername && clientUsername !== client.clientUsername) {
-     return res.status(403).json({ message: "Username mismatch for this tenant" });
-   }
+    if (clientUsername && clientUsername !== client.clientUsername) {
+      return res.status(403).json({ message: "Username mismatch for this tenant" });
+    }
 
     const isMatch = await bcrypt.compare(password, client.password);
     if (!isMatch) {
