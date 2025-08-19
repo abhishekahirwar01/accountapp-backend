@@ -8,20 +8,22 @@ const pickAllowed = (payload = {}) => {
   const allowed = [
     "canCreateUsers",
     "canCreateProducts",
-    "canCreateCustomers",
+    "canCreateCustomers", 
     "canCreateVendors",
     "canSendInvoiceEmail",
     "canSendInvoiceWhatsapp",
     "maxCompanies",
-    "maxInventories",
+    "maxInventories", 
     "maxUsers",
     "planCode",
+    "canCreateCompanies",
+    "canUpdateCompanies", // Make sure this is included
+    "canCreateInventory" // You seem to have this in model but not in pickAllowed
   ];
   return Object.fromEntries(
     Object.entries(payload).filter(([k]) => allowed.includes(k))
   );
 };
-
 exports.getClientPermissions = async (req, res) => {
   try {
     const { clientId } = req.params;
@@ -84,11 +86,13 @@ exports.patchClientPermissions = async (req, res) => {
 
     const exists = await Client.exists({ _id: clientId });
     if (!exists) return res.status(404).json({ message: "Client not found" });
+    console.log('Incoming payload:', req.body); // Add this
 
     const update = {
       ...pickAllowed(req.validated ?? req.body),
       updatedBy: byUser || undefined,
     };
+     console.log('Filtered update:', update); // Add this
 
     const doc = await Permission.findOneAndUpdate(
       { client: clientId },
