@@ -73,8 +73,6 @@ exports.createSalesEntry = async (req, res) => {
   }
 };
 
-
-
 // GET Sales Entries (Client or Master Admin)
 exports.getSalesEntries = async (req, res) => {
   try {

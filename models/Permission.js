@@ -13,13 +13,16 @@ const permissionSchema = new mongoose.Schema(
 
     // Feature flags
     canCreateUsers: { type: Boolean, default: true },
-    canCreateInventory: {type: Boolean, default: true},
+    canCreateInventory: { type: Boolean, default: true },
 
     // Split products & inventory
     canCreateProducts: { type: Boolean, default: true },
     // Parties / Customers & Vendors
     canCreateCustomers: { type: Boolean, default: true },   // ✅ new
-    canCreateVendors: { type: Boolean, default: true },     // ✅ new
+    canCreateVendors: { type: Boolean, default: true },
+
+    canCreateCompanies: { type: Boolean, default: false },
+    canUpdateCompanies: { type: Boolean, default: false },
 
     canSendInvoiceEmail: { type: Boolean, default: true },
     canSendInvoiceWhatsapp: { type: Boolean, default: false },
