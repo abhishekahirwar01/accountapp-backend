@@ -20,6 +20,7 @@ const permissionRoutes = require('./routes/permission.routes')
 const serviceRoutes = require('./routes/serviceRoutes')
 const { loginClient } = require("./controllers/clientController");
 const integrationsRoutes = require("./routes/integrationsRoutes");
+const AccountValidityRoutes = require("./routes/accountValidityRoutes");
 
 dotenv.config();
 connectDB();
@@ -84,6 +85,8 @@ app.use("/api/parties", partyRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api", permissionRoutes);
+app.use("/api/account", AccountValidityRoutes);
+
 
 
 // Test endpoints with better error handling
