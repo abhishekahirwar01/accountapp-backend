@@ -24,7 +24,7 @@ const permissionSchema = new mongoose.Schema(
     canCreateCompanies: { type: Boolean, default: false },
     canUpdateCompanies: { type: Boolean, default: false },
 
-    canSendInvoiceEmail: { type: Boolean, default: true },
+    canSendInvoiceEmail: { type: Boolean, default: false },
     canSendInvoiceWhatsapp: { type: Boolean, default: false },
 
     // Usage limits

@@ -3,13 +3,23 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const slugifyUsername = require("../utils/slugify");
 const Permission = require("../models/Permission");
+const AccountValidity = require("../models/AccountValidity");
+const { computeExpiry } = require("../utils/validity");
+
 
 // Create Client (Only Master Admin)
-// Create Client (Only Master Admin)
+// controllers/clientController.js
+
+function addToDate(d, amount, unit) {
+  const date = new Date(d);
+  if (unit === "days")   date.setDate(date.getDate() + Number(amount || 0));
+  if (unit === "months") date.setMonth(date.getMonth() + Number(amount || 0));
+  if (unit === "years")  date.setFullYear(date.getFullYear() + Number(amount || 0));
+  return date;
+}
+
+
 exports.createClient = async (req, res) => {
-  const session = await Client.startSession();
-  session.startTransaction();
-
   try {
     const {
       clientUsername,
@@ -17,98 +27,98 @@ exports.createClient = async (req, res) => {
       contactName,
       phone,
       email,
-
-      // If you want to seed Permission doc from request, keep these:
       maxCompanies = 5,
       maxUsers = 10,
-      canSendInvoiceEmail = true,
+      canSendInvoiceEmail = false,
       canSendInvoiceWhatsapp = false,
-      canCreateCompanies = false,  // Add default value
-      canUpdateCompanies = false     // Add default value
+      canCreateCompanies = false,
+      canUpdateCompanies = false,
+      validity,
     } = req.body;
 
+    // 1) Normalize + validate BEFORE any session/transaction
     const slug = slugifyUsername(clientUsername);
-    if (!slug) {
-      await session.abortTransaction(); session.endSession();
+    const normalizedUsername = String(clientUsername || "").trim().toLowerCase();
+    if (!slug || !normalizedUsername) {
       return res.status(400).json({ message: "Invalid username/slug" });
     }
 
-    // Duplicate checks (run outside transaction is also fine, but this is ok)
+    // 2) Duplicate checks OUTSIDE a transaction (no session here)
     const [existingUsername, existingSlug, existingEmail, existingPhone] = await Promise.all([
-      Client.findOne({ clientUsername }).session(session),
-      Client.findOne({ slug }).session(session),
-      Client.findOne({ email }).session(session),
-      Client.findOne({ phone }).session(session),
+      Client.findOne({ clientUsername: normalizedUsername }).lean(),
+      Client.findOne({ slug }).lean(),
+      Client.findOne({ email }).lean(),
+      Client.findOne({ phone }).lean(),
     ]);
-    if (existingUsername) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Username already exists" }); }
-    if (existingSlug) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Slug already exists" }); }
-    if (existingPhone) { await session.abortTransaction(); session.endSession(); return res.status(400).json({ message: "Phone already exists" }); }
+    if (existingUsername) return res.status(409).json({ message: "Username already exists" });
+    if (existingSlug) return res.status(409).json({ message: "Slug already exists" });
+    if (existingPhone) return res.status(409).json({ message: "Phone already exists" });
+    if (existingEmail) return res.status(409).json({ message: "Email already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // 1) Create client
-    const client = await Client.create([{
-      clientUsername,
-      slug,
-      password: hashedPassword,
-      contactName,
-      phone,
-      email,
+    // 3) Start a session ONLY for the writes
+    const session = await Client.startSession();
+    try {
+      session.startTransaction();
 
-      // You’re currently storing these on Client too; okay for now,
-      // but consider keeping limits only on Permission to avoid duplication.
-      maxCompanies,
-      maxUsers,
-      canSendInvoiceEmail,
-      canSendInvoiceWhatsapp,
+      const [createdClient] = await Client.create([{
+        clientUsername: normalizedUsername,
+        slug,
+        password: hashedPassword,
+        contactName,
+        phone,
+        email,
+        maxCompanies,
+        maxUsers,
+        canSendInvoiceEmail,
+        canSendInvoiceWhatsapp,
+        role: "client",
+        masterAdmin: req.user.id,
+      }], { session });
 
-      role: "client",
-      masterAdmin: req.user.id,
-    }], { session });
-
-    const createdClient = client[0];
-
-    // 2) Create/Upsert default permissions for the new client
-    // Anything you omit here will fall back to schema defaults
-    await Permission.findOneAndUpdate(
-      { client: createdClient._id },
-      {
-        $setOnInsert: {
-          client: createdClient._id,
-          maxCompanies,
-          maxUsers,
-          canSendInvoiceEmail,
-          canSendInvoiceWhatsapp,
-          // The rest will use Permission schema defaults:
-          // canCreateUsers: false,
-          // canCreateInventory: true,
-          // canCreateCustomers: true,
-          // canCreateVendors: true,
-          // maxInventories: 20,
-          // planCode: "FREE",
-          canCreateCompanies,  // Add this
-          canUpdateCompanies,     // Add this
+      await Permission.findOneAndUpdate(
+        { client: createdClient._id },
+        {
+          $setOnInsert: {
+            client: createdClient._id,
+            maxCompanies,
+            maxUsers,
+            canSendInvoiceEmail,
+            canSendInvoiceWhatsapp,
+            canCreateCompanies,
+            canUpdateCompanies,
+          },
         },
-      },
-      {
-        upsert: true,
-        new: true,
-        setDefaultsOnInsert: true,
-        runValidators: true,
-        session,
-      }
-    );
+        { upsert: true, new: true, setDefaultsOnInsert: true, runValidators: true, session }
+      );
 
-    await session.commitTransaction();
-    session.endSession();
+      // >>> NEW: create validity in the same txn
+      const amount = Number(validity?.amount ?? 30);
+      const unit   = String(validity?.unit ?? "days"); // "days" | "months" | "years"
+      const now = new Date();
+      const expiresAt = addToDate(now, amount, unit);
 
-    return res.status(201).json({ message: "Client created successfully", client: createdClient });
+      await AccountValidity.create([{
+        client: createdClient._id,
+        startsAt: now,
+        expiresAt,
+        isDisabled: false,
+      }], { session });
+
+      await session.commitTransaction();
+      return res.status(201).json({ message: "Client created successfully", client: createdClient });
+    } catch (err) {
+      await session.abortTransaction();
+      return res.status(500).json({ error: err.message });
+    } finally {
+      session.endSession(); // end exactly once
+    }
   } catch (err) {
-    await session.abortTransaction();
-    session.endSession();
     return res.status(500).json({ error: err.message });
   }
 };
+
 
 
 
@@ -134,6 +144,23 @@ exports.loginClient = async (req, res) => {
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
+    // 🔒 Account validity gate
+    const validity = await AccountValidity.findOne({ client: client._id });
+    if (!validity) {
+      return res.status(403).json({ message: "Account validity not set. Contact support." });
+    }
+    if (validity.status === "disabled") {
+      return res.status(403).json({ message: "Account disabled. Contact support." });
+    }
+    if (new Date() >= new Date(validity.expiresAt)) {
+      // (optional) mark as expired asynchronously
+      AccountValidity.updateOne(
+        { _id: validity._id },
+        { $set: { status: "expired" } }
+      ).catch(() => { });
+      return res.status(403).json({ message: "Account validity expired. Contact support." });
+    }
+
 
     if (clientUsername && clientUsername !== client.clientUsername) {
       return res.status(403).json({ message: "Username mismatch for this tenant" });
@@ -300,3 +327,87 @@ exports.setUserLimit = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
+
+
+// GET /api/clients/check-username?username=...&excludeId=...&base=...
+exports.checkUsername = async (req, res) => {
+  try {
+    let { username = "", excludeId = "", base = "" } = req.query;
+    username = String(username).trim().toLowerCase();
+    base = String(base).trim();
+
+    const normalized = slugifyUsername(username);
+    if (!normalized) {
+      return res.status(400).json({ ok: false, available: false, reason: "invalid_username" });
+    }
+
+    const query = excludeId
+      ? { clientUsername: normalized, _id: { $ne: excludeId } }
+      : { clientUsername: normalized };
+
+    const exists = await Client.exists(query);
+
+    // Build suggestions (server side) based on `base` (contactName) or `username`
+    const suggestions = await suggestUsernames(base || username, excludeId, normalized);
+
+    // Optional: no caching
+    res.set("Cache-Control", "no-store");
+
+    return res.json({
+      ok: true,
+      username: normalized,
+      available: !exists,
+      suggestions, // array of up to ~6
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+};
+
+// --- helpers ---
+
+function baseHandle(s) {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .slice(0, 20) || "user";
+}
+
+async function suggestUsernames(seed, excludeId, alreadyTried) {
+  const core = baseHandle(seed);
+  const year = new Date().getFullYear().toString();
+  const seeds = [
+    core,
+    `${core}1`,
+    `${core}123`,
+    `${core}${year.slice(-2)}`,
+    `${core}${year}`,
+    `${core}_official`,
+    `${core}_hq`,
+    `real${core}`,
+    `${core}_co`,
+    `${core}_app`,
+    `${core}_${Math.floor(Math.random() * 90 + 10)}`, // 2-digit random
+  ];
+
+  // Normalize & unique
+  const candidates = Array.from(
+    new Set(seeds.map(s => s.toLowerCase().replace(/[^a-z0-9_\.]/g, "").slice(0, 24)))
+  ).filter(Boolean);
+
+  // Remove the username that the user already tried
+  const toCheck = candidates.filter(c => c !== alreadyTried);
+
+  // Check which candidates are free
+  const taken = await Client.find(
+    excludeId
+      ? { clientUsername: { $in: toCheck }, _id: { $ne: excludeId } }
+      : { clientUsername: { $in: toCheck } },
+  ).select("clientUsername").lean();
+
+  const takenSet = new Set(taken.map(t => t.clientUsername));
+  const available = toCheck.filter(c => !takenSet.has(c));
+
+  return available.slice(0, 6);
+}
