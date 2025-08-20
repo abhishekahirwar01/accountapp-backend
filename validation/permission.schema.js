@@ -5,24 +5,21 @@ const bool = z.coerce.boolean().optional();
 const nonNegInt = z.coerce.number().int().min(0).optional();
 
 const base = z.object({
-  // feature flags
-  canCreateUsers: bool,
-  canCreateProducts: bool,
-  canCreateCustomers: bool,     // ✅ add
-  canCreateVendors: bool,       // ✅ add
-
-  // messaging
-  canSendInvoiceEmail: bool,
-  canSendInvoiceWhatsapp: bool,
-
-  // limits
-  maxCompanies: nonNegInt,
-  maxUsers: nonNegInt,
-  maxInventories: nonNegInt,    // ✅ add
-
-  // plan
-  planCode: z.string().max(50).optional(),
-}).strict(); // keep strict to block unknown keys
+  maxCompanies: z.number().int().min(0).optional(),
+  maxUsers: z.number().int().min(0).optional(),
+  maxInventories: z.number().int().min(0).optional(),
+  canSendInvoiceEmail: z.boolean().optional(),
+  canSendInvoiceWhatsapp: z.boolean().optional(),
+  canCreateUsers: z.boolean().optional(),
+  canCreateCustomers: z.boolean().optional(),
+  canCreateVendors: z.boolean().optional(),
+  canCreateProducts: z.boolean().optional(),
+  canCreateInventory: z.boolean().optional(),
+  // ⬇️ add these
+  canCreateCompanies: z.boolean().optional(),
+  canUpdateCompanies: z.boolean().optional(),
+  planCode: z.string().optional(),
+}).strict(); // or .passthrough() if you want to allow unknowns
 
 exports.putPermissionsSchema = base;
 exports.patchPermissionsSchema = base.partial();
