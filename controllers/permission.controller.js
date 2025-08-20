@@ -8,17 +8,17 @@ const pickAllowed = (payload = {}) => {
   const allowed = [
     "canCreateUsers",
     "canCreateProducts",
-    "canCreateCustomers", 
+    "canCreateCustomers",
     "canCreateVendors",
     "canSendInvoiceEmail",
     "canSendInvoiceWhatsapp",
     "maxCompanies",
-    "maxInventories", 
+    "maxInventories",
     "maxUsers",
     "planCode",
     "canCreateCompanies",
     "canUpdateCompanies", // Make sure this is included
-    "canCreateInventory" // You seem to have this in model but not in pickAllowed
+    "canCreateInventory", // You seem to have this in model but not in pickAllowed
   ];
   return Object.fromEntries(
     Object.entries(payload).filter(([k]) => allowed.includes(k))
@@ -41,7 +41,9 @@ exports.getClientPermissions = async (req, res) => {
     return res.json(doc);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Server error", detail: err.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", detail: err.message });
   }
 };
 
@@ -57,8 +59,14 @@ exports.upsertClientPermissions = async (req, res) => {
     const exists = await Client.exists({ _id: clientId });
     if (!exists) return res.status(404).json({ message: "Client not found" });
 
+    // AFTER — merge validated over body, so missing keys from the validator aren’t dropped
+    const source =
+      req.validated && Object.keys(req.validated).length
+        ? { ...req.body, ...req.validated }
+        : req.body;
+
     const update = {
-      ...pickAllowed(req.validated ?? req.body),
+      ...pickAllowed(source),
       updatedBy: byUser || undefined,
     };
 
@@ -71,7 +79,9 @@ exports.upsertClientPermissions = async (req, res) => {
     return res.json(doc);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Server error", detail: err.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", detail: err.message });
   }
 };
 
@@ -86,13 +96,13 @@ exports.patchClientPermissions = async (req, res) => {
 
     const exists = await Client.exists({ _id: clientId });
     if (!exists) return res.status(404).json({ message: "Client not found" });
-    console.log('Incoming payload:', req.body); // Add this
+    console.log("Incoming payload:", req.body); // Add this
 
     const update = {
       ...pickAllowed(req.validated ?? req.body),
       updatedBy: byUser || undefined,
     };
-     console.log('Filtered update:', update); // Add this
+    console.log("Filtered update:", update); // Add this
 
     const doc = await Permission.findOneAndUpdate(
       { client: clientId },
@@ -108,7 +118,9 @@ exports.patchClientPermissions = async (req, res) => {
     return res.json(doc);
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Server error", detail: err.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", detail: err.message });
   }
 };
 
@@ -124,6 +136,8 @@ exports.deleteClientPermissions = async (req, res) => {
     return res.json({ success: true });
   } catch (err) {
     console.error(err);
-    return res.status(500).json({ message: "Server error", detail: err.message });
+    return res
+      .status(500)
+      .json({ message: "Server error", detail: err.message });
   }
 };
