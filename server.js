@@ -20,7 +20,11 @@ const permissionRoutes = require('./routes/permission.routes')
 const serviceRoutes = require('./routes/serviceRoutes')
 const { loginClient } = require("./controllers/clientController");
 const integrationsRoutes = require("./routes/integrationsRoutes");
+
 const invoiceNumberRoutes = require("./routes/invoiceNumberRoutes")
+
+const AccountValidityRoutes = require("./routes/accountValidityRoutes");
+
 
 dotenv.config();
 connectDB();
@@ -73,7 +77,11 @@ app.use("/api/parties", partyRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api", permissionRoutes);
+
 app.use("/api/invoices", invoiceNumberRoutes)
+
+app.use("/api/account", AccountValidityRoutes);
+
 
 
 app.get('/api/db-status', async (req, res) => {

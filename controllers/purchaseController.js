@@ -1,11 +1,16 @@
 // controllers/purchaseController.js
+const mongoose = require("mongoose");
 const PurchaseEntry = require("../models/PurchaseEntry");
 const Company = require("../models/Company");
 const Vendor = require("../models/Vendor");
+const Product = require("../models/Product");
 const normalizePurchaseProducts = require("../utils/normalizePurchaseProducts");
 const normalizePurchaseServices = require("../utils/normalizePurchaseServices");
 
+
 exports.createPurchaseEntry = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
   try {
     const { 
       vendor, 
@@ -50,7 +55,8 @@ exports.createPurchaseEntry = async (req, res) => {
       ? totalAmount 
       : productsTotal + servicesTotal;
 
-    const entry = await PurchaseEntry.create({
+    // 1) Create entry
+    const entry = await PurchaseEntry.create([{
       vendor: vendorDoc._id,
       company: company._id,
       client: req.user.id,
@@ -63,11 +69,53 @@ exports.createPurchaseEntry = async (req, res) => {
       gstPercentage,
       invoiceType,
       gstin: company.gstin || null,
-    });
+    }], { session });
+
+    // 2) Auto-increment stocks for existing products
+    if (normalizedProducts.length > 0) {
+      const ops = [];
+      const productUpdates = [];
+
+      for (const item of normalizedProducts) {
+        const qty = Number(item.quantity) || 0;
+        if (qty <= 0) continue;
+
+        if (item.product) {  // Changed from item.productId to item.product
+          ops.push({
+            updateOne: {
+              filter: { _id: item.product, createdByClient: req.user.id },
+              update: { $inc: { stocks: qty } }
+            }
+          });
+          productUpdates.push({ id: item.product, qty });
+        } else if (item.name) {
+          ops.push({
+            updateOne: {
+              filter: { name: String(item.name).toLowerCase().trim(), createdByClient: req.user.id },
+              update: { $inc: { stocks: qty } }
+            }
+          });
+        }
+      }
+
+      if (ops.length > 0) {
+        const bulkWriteResult = await Product.bulkWrite(ops, { session });
+        console.log('Stock update result:', bulkWriteResult);
+      }
+    }
+
+    await session.commitTransaction();
+    session.endSession();
 
     res.status(201).json({ message: "Purchase entry created successfully", entry });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    await session.abortTransaction();
+    session.endSession();
+    console.error('Error in createPurchaseEntry:', err);
+    res.status(500).json({ 
+      error: err.message,
+      message: "Failed to create purchase entry"
+    });
   }
 };
 

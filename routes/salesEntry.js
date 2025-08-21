@@ -15,14 +15,4 @@ router.put("/:id", verifyClientOrAdmin, salesController.updateSalesEntry);
 router.get("/by-client/:clientId",verifyClientOrAdmin , salesController.getSalesEntriesByClient);
 
 
-
-// // Get Sales Entry by ID
-// router.get("/:id", verifyClientOrMaster, salesController.getSalesEntryById);
-
-// // Update Sales Entry
-// router.put("/:id", verifyClientOrMaster, salesController.updateSalesEntry);
-
-// // Delete Sales Entry
-// router.delete("/:id", verifyClientOrMaster, salesController.deleteSalesEntry);
-
 module.exports = router;
