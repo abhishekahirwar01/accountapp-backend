@@ -20,7 +20,11 @@ const permissionRoutes = require('./routes/permission.routes')
 const serviceRoutes = require('./routes/serviceRoutes')
 const { loginClient } = require("./controllers/clientController");
 const integrationsRoutes = require("./routes/integrationsRoutes");
+
+const invoiceNumberRoutes = require("./routes/invoiceNumberRoutes")
+
 const AccountValidityRoutes = require("./routes/accountValidityRoutes");
+
 
 dotenv.config();
 connectDB();
@@ -36,18 +40,6 @@ const allowedOrigins = [
    'http://localhost:8678'
 ];
 
-// app.use(cors({
-//   origin: function(origin, callback) {
-//     if (!origin || allowedOrigins.includes(origin)) {
-//       callback(null, true);
-//     } else {
-//       console.log('CORS blocked for origin:', origin);
-//       callback(new Error('Not allowed by CORS'));
-//     }
-//   },
-//   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-//   credentials: true
-// }));
 
 
 app.use(cors({ origin: "*" }));
@@ -85,18 +77,12 @@ app.use("/api/parties", partyRoutes);
 app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api", permissionRoutes);
+
+app.use("/api/invoices", invoiceNumberRoutes)
+
 app.use("/api/account", AccountValidityRoutes);
 
 
-
-// Test endpoints with better error handling
-app.get("/api/test-env", (req, res) => {
-  res.json({
-    MONGO_URI: process.env.MONGO_URI ? 'exists' : 'missing',
-    JWT_SECRET: process.env.JWT_SECRET ? 'exists' : 'missing',
-    NODE_ENV: process.env.NODE_ENV
-  });
-});
 
 app.get('/api/db-status', async (req, res) => {
   try {
@@ -125,52 +111,10 @@ app.get('/api/db-status', async (req, res) => {
   }
 });
 
-app.get('/api/check-collections', async (req, res) => {
-  try {
-    const db = mongoose.connection.db;
-    const collections = await db.listCollections().toArray();
-    res.json({
-      exists: collections.some(c => c.name === 'clients'), // Change to your collection name
-      allCollections: collections.map(c => c.name)
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
-// Add this test endpoint
-app.get('/api/check-data', async (req, res) => {
-  try {
-    const collections = await mongoose.connection.db.listCollections().toArray();
-    const collectionCounts = {};
-    
-    for (const coll of collections) {
-      collectionCounts[coll.name] = await mongoose.connection.db
-        .collection(coll.name)
-        .countDocuments();
-    }
-    
-    res.json({
-      counts: collectionCounts,
-      sampleClients: await mongoose.connection.db.collection('clients').find().limit(2).toArray()
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 
-// server.js
-app.get('/api/debug/clients', async (req, res) => {
-  try {
-    const clients = await mongoose.connection.db.collection('clients').find().limit(5).toArray();
-    res.json({
-      count: await mongoose.connection.db.collection('clients').countDocuments(),
-      sampleClients: clients
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+
+
 // const PORT = process.env.PORT || 5000;
 // app.listen(PORT, () => {
 //   console.log(`🚀 Server running on http://localhost:${PORT}`);
