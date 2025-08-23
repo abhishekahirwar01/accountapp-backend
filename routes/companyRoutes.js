@@ -7,18 +7,21 @@ const {
   getAllCompanies,
     updateCompany,
     deleteCompany,
-    getCompaniesByClientId
+    getCompaniesByClientId,
+    getMyCompanies 
 } = require("../controllers/companyController");
 
 const verifyClient = require("../middleware/verifyClient");
 const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
 const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
 
+const requireRole = require("../middleware/requireRole");
+
 // Client creates company
 router.post("/", verifyClientOrAdmin,uploadLogo, createCompany);
 
 // // Client views own companies
-router.get("/my", verifyClientOrAdmin, getClientCompanies);
+// router.get("/my", verifyClientOrAdmin, getClientCompanies);
 
 
 // // Master Admin views all companies
@@ -33,6 +36,13 @@ router.delete("/:id", verifyClientOrAdmin, deleteCompany);
 
 router.get("/by-client/:clientId", verifyClientOrAdmin, getCompaniesByClientId);
 
+
+// ✅ NEW: role-agnostic “my companies”
+router.get(
+  "/my",
+  requireRole(["user", "admin", "master", "client", "customer"]),
+  getMyCompanies
+);
 
 
 module.exports = router;

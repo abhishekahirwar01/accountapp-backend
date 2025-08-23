@@ -4,136 +4,95 @@ const EmailIntegration = require("../models/EmailIntegration");
 const Party = require("../models/Party");
 const Company = require("../models/Company");
 
-// // very simple HTML; replace with your template later
-// function renderInvoiceHtml({ sale, party, company }) {
-//   const productRows = (sale.products || [])
-//     .map((it) => {
-//       const name =
-//         (it.product && (it.product.name || it.product.productName)) ||
-//         it.description ||
-//         "Item";
-//       const qty = it.quantity ?? "";
-//       const price = it.pricePerUnit ?? "";
-//       const amt = it.amount ?? 0;
-//       return `<tr><td>${name}</td><td>${qty}</td><td>${price}</td><td style="text-align:right">${amt}</td></tr>`;
-//     })
-//     .join("");
-
-//   const serviceRows = (sale.service || [])
-//     .map((it) => {
-//       const name =
-//         (it.service && (it.service.serviceName || it.service.name)) ||
-//         it.description ||
-//         "Service";
-//       const amt = it.amount ?? 0;
-//       return `<tr><td>${name}</td><td></td><td></td><td style="text-align:right">${amt}</td></tr>`;
-//     })
-//     .join("");
-
-//   const rows = productRows + serviceRows;
-
-//   return `
-//   <div style="font-family:system-ui,Segoe UI,Arial,sans-serif">
-//     <h2 style="margin:0 0 6px">${company?.businessName || "Your Business"}</h2>
-//     <p style="margin:0 0 12px;color:#666">Invoice ${sale.referenceNumber || sale._id}</p>
-//     <p>Hello ${party?.name || "Customer"},</p>
-//     <p>Thank you for your business. Please find your invoice details below.</p>
-//     <table width="100%" cellpadding="6" cellspacing="0" style="border-collapse:collapse;border:1px solid #eee">
-//       <thead>
-//         <tr style="background:#fafafa">
-//           <th align="left">Item</th><th>Qty</th><th>Price</th><th align="right">Amount</th>
-//         </tr>
-//       </thead>
-//       <tbody>${rows}</tbody>
-//       <tfoot>
-//         <tr>
-//           <td colspan="3" align="right" style="border-top:1px solid #eee"><b>Total</b></td>
-//           <td align="right" style="border-top:1px solid #eee"><b>${sale.totalAmount ?? sale.amount}</b></td>
-//         </tr>
-//       </tfoot>
-//     </table>
-//     <p style="color:#666">If you have any questions, just reply to this email.</p>
-//   </div>`;
-// }
-
 
 // ---- invoice email template (email-safe) ----
 const INR = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR" });
 const money = (n, cur = INR) => cur.format(Number(n || 0));
 const pad2 = (n) => String(n).padStart(2, "0");
 const fmtDate = (d) => {
-    const dt = d ? new Date(d) : new Date();
-    return `${pad2(dt.getDate())} ${dt.toLocaleString("en-US", { month: "short" })} ${dt.getFullYear()}`;
+  const dt = d ? new Date(d) : new Date();
+  return `${pad2(dt.getDate())} ${dt.toLocaleString("en-US", { month: "short" })} ${dt.getFullYear()}`;
 };
 const rn = (n) => Math.round((Number(n || 0) + Number.EPSILON) * 100) / 100;
 
 const invNo = (sale) =>
-    sale?.referenceNumber?.trim()
-        ? sale.referenceNumber
-        : `INV-${String(sale?._id || "").slice(-6).toUpperCase()}`;
+  sale?.referenceNumber?.trim()
+    ? sale.referenceNumber
+    : `INV-${String(sale?._id || "").slice(-6).toUpperCase()}`;
 
 // Defensive name/code helpers for different doc shapes
-const productName = (p) => (p && typeof p === "object" ? (p.name || p.productName || "Item") : "Item");
-const productCode = (p) => (p && typeof p === "object" ? (p.hsn || p.code || p.sku || "") : "");
-const serviceName = (row) => {
-    // supports: { service: {...} } OR { serviceName: ObjectId|string, description }
-    if (row?.service && typeof row.service === "object") return row.service.serviceName || row.service.name || "Service";
-    if (row?.serviceName && typeof row.serviceName === "object") return row.serviceName.serviceName || row.serviceName.name || "Service";
-    if (typeof row?.serviceName === "string") return row.description || "Service";
-    return row?.description || "Service";
-};
-const serviceCode = (row) => {
-    if (row?.service && typeof row.service === "object") return row.service.sac || "";
-    if (row?.serviceName && typeof row.serviceName === "object") return row.serviceName.sac || "";
-    return "";
+// Replace these functions in your invoice template
+const productName = (item) => {
+  if (item?.product && typeof item.product === "object") {
+    return item.product.name || item.product.productName || "Item";
+  }
+  return item?.name || item?.productName || "Item";
 };
 
+const productCode = (item) => {
+  if (item?.product && typeof item.product === "object") {
+    return item.product.hsn || item.product.code || item.product.sku || "";
+  }
+  return item?.hsn || item?.code || item?.sku || "";
+};
+
+const serviceName = (item) => {
+  if (item?.service && typeof item.service === "object") {
+    return item.service.serviceName || item.service.name || item.description || "Service";
+  }
+  return item?.serviceName || item?.description || "Service";
+};
+
+const serviceCode = (item) => {
+  if (item?.service && typeof item.service === "object") {
+    return item.service.sac || "";
+  }
+  return item?.sac || "";
+};
 
 function renderInvoiceHtml({ sale, party, company, currency = "INR", logoUrl, heroUrl }) {
-    // 1) Merge product + service lines
-    const lines = [];
-
-    (sale.products || []).forEach((it) => {
-        const p = it.product;
-        lines.push({
-            type: "product",
-            name: productName(p),
-            code: productCode(p),
-            unit: it.unitType || "",
-            qty: it.quantity ?? "",
-            rate: it.pricePerUnit ?? "",
-            amount: it.amount ?? 0,
-            desc: it.description || "",
-        });
+  // 1) Merge product + service lines
+  const lines = [];
+  // Update the item processing section
+  (sale.products || []).forEach((item) => {
+    lines.push({
+      type: "product",
+      name: productName(item),
+      code: productCode(item),
+      unit: item.unitType || "",
+      qty: item.quantity ?? "",
+      rate: item.pricePerUnit ?? "",
+      amount: item.amount ?? 0,
+      desc: item.description || "",
     });
+  });
 
-    (sale.service || []).forEach((it) => {
-        lines.push({
-            type: "service",
-            name: serviceName(it),
-            code: serviceCode(it),
-            unit: "",
-            qty: "",
-            rate: "",
-            amount: it.amount ?? 0,
-            desc: it.description || "",
-        });
+  (sale.service || []).forEach((item) => {
+    lines.push({
+      type: "service",
+      name: serviceName(item),
+      code: serviceCode(item),
+      unit: "",
+      qty: "",
+      rate: "",
+      amount: item.amount ?? 0,
+      desc: item.description || "",
     });
+  });
+  // 2) Totals (subtotal → discount → GST → grand total)
+  const subTotal = rn(lines.reduce((a, b) => a + Number(b.amount || 0), 0));
+  const discountPct = Number(sale.discountPercentage || 0);
+  const discountAmt = rn(subTotal * (discountPct / 100));
+  const taxable = rn(subTotal - discountAmt);
+  const gstPct = Number(sale.gstPercentage || 0);
+  const gstAmt = rn(taxable * (gstPct / 100));
+  const grandTotal = sale.totalAmount != null ? rn(sale.totalAmount) : rn(taxable + gstAmt);
 
-    // 2) Totals (subtotal → discount → GST → grand total)
-    const subTotal = rn(lines.reduce((a, b) => a + Number(b.amount || 0), 0));
-    const discountPct = Number(sale.discountPercentage || 0);
-    const discountAmt = rn(subTotal * (discountPct / 100));
-    const taxable = rn(subTotal - discountAmt);
-    const gstPct = Number(sale.gstPercentage || 0);
-    const gstAmt = rn(taxable * (gstPct / 100));
-    const grandTotal = sale.totalAmount != null ? rn(sale.totalAmount) : rn(taxable + gstAmt);
+  const issuedOn = fmtDate(sale.date);
+  const dueOn = sale.dueDate ? fmtDate(sale.dueDate) : fmtDate(new Date(new Date(sale.date || Date.now()).getTime() + 30 * 24 * 3600 * 1000));
 
-    const issuedOn = fmtDate(sale.date);
-    const dueOn = sale.dueDate ? fmtDate(sale.dueDate) : fmtDate(new Date(new Date(sale.date || Date.now()).getTime() + 30 * 24 * 3600 * 1000));
-
-    // 3) Build table rows
-    const rowsHtml = lines.map((l, i) => `
+  // 3) Build table rows
+  const rowsHtml = lines.map((l, i) => `
       <tr>
         <td style="padding:8px;border:1px solid #e5e7eb;">${i + 1}</td>
         <td style="padding:8px;border:1px solid #e5e7eb;">
@@ -148,8 +107,8 @@ function renderInvoiceHtml({ sale, party, company, currency = "INR", logoUrl, he
       </tr>
   `).join("");
 
-    // 4) HTML (email-safe, no external fonts, mostly inline CSS)
-    return `<!doctype html>
+  // 4) HTML (email-safe, no external fonts, mostly inline CSS)
+  return `<!doctype html>
 <html>
   <body style="margin:0;padding:0;background:#f8fafc;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111827;">
     <div style="max-width:720px;margin:0 auto;padding:24px;">
@@ -250,31 +209,31 @@ function renderInvoiceHtml({ sale, party, company, currency = "INR", logoUrl, he
  * Throws only if you call it directly; in controllers, call inside setImmediate to avoid blocking.
  */
 async function sendSalesInvoiceEmail({ clientId, sale, partyId, companyId }) {
-    // ensure client actually connected Gmail
-    const integ = await EmailIntegration.findOne({ client: clientId, connected: true }).lean();
-    if (!integ?.refreshToken) {
-        throw new Error("Client has not connected Gmail");
-    }
+  // ensure client actually connected Gmail
+  const integ = await EmailIntegration.findOne({ client: clientId, connected: true }).lean();
+  if (!integ?.refreshToken) {
+    throw new Error("Client has not connected Gmail");
+  }
 
-    // fetch party & company info (or you can pass them in if you already have them)
-    const [party, company] = await Promise.all([
-        Party.findById(partyId || sale.party).lean(),
-        Company.findById(companyId || sale.company).lean(),
-    ]);
+  // fetch party & company info (or you can pass them in if you already have them)
+  const [party, company] = await Promise.all([
+    Party.findById(partyId || sale.party).lean(),
+    Company.findById(companyId || sale.company).lean(),
+  ]);
 
-    if (!party?.email) throw new Error("Party has no email");
+  if (!party?.email) throw new Error("Party has no email");
 
-    const subject = `Invoice ${sale.referenceNumber || sale._id} - ${company?.businessName || "Invoice"}`;
-    const html = renderInvoiceHtml({ sale, party, company });
+  const subject = `Invoice ${sale.referenceNumber || sale._id} - ${company?.businessName || "Invoice"}`;
+  const html = renderInvoiceHtml({ sale, party, company });
 
-    await _internal.sendWithClientGmail({
-        clientId,
-        fromName: company?.businessName || undefined,
-        to: party.email,
-        subject,
-        html,
-        // attachments: [{ filename: 'Invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
-    });
+  await _internal.sendWithClientGmail({
+    clientId,
+    fromName: company?.businessName || undefined,
+    to: party.email,
+    subject,
+    html,
+    // attachments: [{ filename: 'Invoice.pdf', content: pdfBuffer, contentType: 'application/pdf' }]
+  });
 }
 
 module.exports = { sendSalesInvoiceEmail };
