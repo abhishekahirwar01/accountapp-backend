@@ -322,3 +322,42 @@ exports.getCompaniesByClientId = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+
+// NEW: unified "my" endpoint for all roles
+exports.getMyCompanies = async (req, res) => {
+  try {
+    const { role, companies = [], createdByClient } = req.user || {};
+    let query = {};
+
+    if (role === "user") {
+      // employee sees only explicitly assigned companies
+      if (!Array.isArray(companies) || companies.length === 0) {
+        return res.json([]);
+      }
+      query = { _id: { $in: companies } };
+    } else if (role === "client" || role === "customer") {
+      // client sees companies they own
+      query = { client: req.user.id };
+    } else if (role === "admin") {
+      // tenant admin: usually scoped to their client/tenant
+      if (createdByClient) {
+        query = { client: createdByClient };
+      } else {
+        // fallback – no tenant info, return none
+        return res.json([]);
+      }
+    } else if (role === "master") {
+      // master: see everything (or restrict by createdByClient if you prefer)
+      query = {}; // or { client: createdByClient } if you want tenant-only
+    } else {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const list = await Company.find(query).lean();
+    return res.json(list);
+  } catch (err) {
+    console.error("getMyCompanies error:", err);
+    res.status(500).json({ message: "Failed to load companies" });
+  }
+};
