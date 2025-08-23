@@ -2,10 +2,37 @@ const User = require("../models/User");
 const Company = require("../models/Company");
 const bcrypt = require("bcryptjs");
 const Client = require("../models/Client");
-
-const mongoose = require("mongoose");   
+const jwt = require("jsonwebtoken");
+const mongoose = require("mongoose");
+// 👇 NEW
+const Role = require("../models/Role");
 // already there
 const ALL_ROLES = User.schema.path("role").enumValues; // ["admin","manager","user"]
+
+
+async function getActorRoleDoc(req) {
+  if (req.user?.roleId && mongoose.Types.ObjectId.isValid(req.user.roleId)) {
+    const r = await Role.findById(req.user.roleId);
+    if (r) return r;
+  }
+  if (req.user?.role) {
+    const r = await Role.findOne({ name: String(req.user.role).toLowerCase() });
+    if (r) return r;
+  }
+  return null;
+}
+
+// Default rule: actor can assign any role with lower rank
+// (or use actor.canAssign override if you add that field)
+function canAssignRole(actorRoleDoc, targetRoleDoc) {
+  if (!actorRoleDoc || !targetRoleDoc) return false;
+  // If you later add canAssign override:
+  // if (Array.isArray(actorRoleDoc.canAssign) && actorRoleDoc.canAssign.length) {
+  //   return actorRoleDoc.canAssign.some(id => String(id) === String(targetRoleDoc._id));
+  // }
+  return (targetRoleDoc.rank || 0) < (actorRoleDoc.rank || 0);
+}
+
 
 // NEW: map whoever is logged in to an effective role for assignment checks
 async function getEffectiveActorRole(req) {
@@ -21,7 +48,7 @@ async function getEffectiveActorRole(req) {
   // Fallback: does a Client with this id exist? If yes, treat as admin.
   try {
     if (req.user?.id && await Client.exists({ _id: req.user.id })) return "admin";
-  } catch (_) {}
+  } catch (_) { }
 
   return "user";
 }
@@ -41,56 +68,59 @@ exports.createUser = async (req, res) => {
       password,
       contactNumber,
       address,
-      companies ,
-       role = "user"  
+      companies = [],
+      roleId,        // 👈 prefer this from UI
+      roleName,      // or this (e.g., "user")
+      permissions = []
     } = req.body;
 
-    if (!ALL_ROLES.includes(role)) {
+    // 1) resolve target role
+    let targetRole = null;
+    if (roleId && mongoose.Types.ObjectId.isValid(roleId)) {
+      targetRole = await Role.findById(roleId);
+    } else if (roleName) {
+      targetRole = await Role.findOne({ name: String(roleName).toLowerCase() });
+    }
+    if (!targetRole) {
       return res.status(400).json({ message: "Invalid role" });
     }
-     const actorRole = await getEffectiveActorRole(req);
-   const allowedRoles = assignableRolesFor(actorRole);
-    if (!allowedRoles.includes(role)) {
+
+    // 2) check actor can assign
+    const actorRole = await getActorRoleDoc(req);
+    if (!canAssignRole(actorRole, targetRole)) {
       return res.status(403).json({ message: "Not allowed to assign this role" });
     }
-    const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Verify companies are valid and belong to the client
-    const validCompanies = await Company.find({
-      _id: { $in: companies },
-      client: req.user.id
-    });
-
-    if (validCompanies.length !== companies.length) {
+    // 3) companies belong to same tenant
+    const clientId = req.user.createdByClient || req.user.id; // works for client/admin tokens
+    const validCompanies = await Company.find({ _id: { $in: companies }, client: clientId });
+    if ((companies?.length || 0) !== validCompanies.length) {
       return res.status(400).json({ message: "Invalid companies selected" });
     }
 
-      // ✅ Step 2: Fetch Client to get userLimit
-    const client = await Client.findById(req.user.id);
-    if (!client) {
-      return res.status(404).json({ message: "Client not found" });
-    }
+    // 4) user limit
+    const client = await Client.findById(clientId);
+    if (!client) return res.status(404).json({ message: "Client not found" });
 
-    // ✅ Step 3: Count existing users created by this client
-    const userCount = await User.countDocuments({ createdByClient: req.user.id });
-
-    // ✅ Step 4: Check against limit
+    const userCount = await User.countDocuments({ createdByClient: clientId });
     if (userCount >= client.userLimit) {
       return res.status(403).json({ message: "User creation limit reached. Please contact admin." });
     }
 
-    const newUser = new User({
+    // 5) create
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    const newUser = await User.create({
       userName,
       userId,
       password: hashedPassword,
       contactNumber,
       address,
+      role: targetRole._id,     // 👈 store role ref
+      permissions,              // optional per-user grants
       companies,
-      createdByClient: req.user.id,
-       role  
+      createdByClient: clientId
     });
-
-    await newUser.save();
 
     res.status(201).json({ message: "User created", user: newUser });
   } catch (err) {
@@ -101,79 +131,81 @@ exports.createUser = async (req, res) => {
   }
 };
 
+
 exports.getUsers = async (req, res) => {
   try {
-    const query =
-      req.user.role === "admin"
-        ? {}
-        : { createdByClient: req.user.id };
+    const actorRoleName = String(req.user.role || "").toLowerCase();
+    const clientId = req.user.createdByClient || req.user.id;
 
-    const users = await User.find(query).populate("companies");
+    const query =
+      actorRoleName === "admin" || actorRoleName === "master"
+        ? { createdByClient: clientId } // or {} if you want admin to see all tenants
+        : { createdByClient: clientId };
+
+    const users = await User.find(query).populate("companies").populate("role");
 
     res.status(200).json(users);
   } catch (err) {
-     console.error("🔥 Error in /api/users:", err);
+    console.error("🔥 Error in /api/users:", err);
     res.status(500).json({ error: err.message });
   }
 };
 
 
+
 exports.updateUser = async (req, res) => {
   try {
-    const { userName, contactNumber, address, companies, password ,role} = req.body;
+    const { userName, contactNumber, address, companies, password, roleId, roleName, permissions } = req.body;
     const userId = req.params.id;
 
-    const user = await User.findById(userId);
-    const actorRole = await getEffectiveActorRole(req);
+    const doc = await User.findById(userId);
+    if (!doc) return res.status(404).json({ message: "User not found" });
 
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const actorRole = await getActorRoleDoc(req);
+    const clientId = req.user.createdByClient || req.user.id;
 
-    // Only allow updates by the same client or admin
-    if (actorRole !== "admin" && user.createdByClient.toString() !== req.user.id) {
+    // Only allow updates by same client or high-privileged roles as you wish
+    if (String(doc.createdByClient) !== String(clientId) &&
+        (String(req.user.role).toLowerCase() !== "admin" && String(req.user.role).toLowerCase() !== "master")) {
       return res.status(403).json({ message: "Not authorized to update this user" });
     }
 
-     // ✅ If role change requested, validate and block escalation
-    if (typeof role !== "undefined") {
-      if (!ALL_ROLES.includes(role)) {
-        return res.status(400).json({ message: "Invalid role" });
+    // Role change
+    if (roleId || roleName) {
+      let targetRole = null;
+      if (roleId && mongoose.Types.ObjectId.isValid(roleId)) {
+        targetRole = await Role.findById(roleId);
+      } else if (roleName) {
+        targetRole = await Role.findOne({ name: String(roleName).toLowerCase() });
       }
-      // Non-admins cannot modify an admin user's role
-      if (user.role === "admin" && actorRole !== "admin") {
-        return res.status(403).json({ message: "Cannot change role of an admin user" });
-      }
-      const allowedRoles = assignableRolesFor(actorRole);
-      if (!allowedRoles.includes(role)) {
+      if (!targetRole) return res.status(400).json({ message: "Invalid role" });
+
+      if (!canAssignRole(actorRole, targetRole)) {
         return res.status(403).json({ message: "Not allowed to assign this role" });
       }
-      user.role = role;
+      doc.role = targetRole._id;
     }
 
-    // Validate companies belong to the same client
-    if (companies && companies.length > 0) {
-      const validCompanies = await Company.find({
-        _id: { $in: companies },
-        client: req.user.id
-      });
-
+    // Companies validation
+    if (Array.isArray(companies)) {
+      const validCompanies = await Company.find({ _id: { $in: companies }, client: clientId });
       if (validCompanies.length !== companies.length) {
         return res.status(400).json({ message: "Invalid companies selected" });
       }
-
-      user.companies = companies;
+      doc.companies = companies;
     }
 
-    if (userName) user.userName = userName;
-    if (contactNumber) user.contactNumber = contactNumber;
-    if (address) user.address = address;
+    if (typeof userName === "string") doc.userName = userName;
+    if (typeof contactNumber === "string") doc.contactNumber = contactNumber;
+    if (typeof address === "string") doc.address = address;
+    if (Array.isArray(permissions)) doc.permissions = permissions;
 
     if (password) {
-      user.password = await bcrypt.hash(password, 10);
+      doc.password = await bcrypt.hash(password, 10);
     }
 
-    await user.save();
-
-    res.status(200).json({ message: "User updated", user });
+    await doc.save();
+    res.status(200).json({ message: "User updated", user: doc });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -183,22 +215,26 @@ exports.updateUser = async (req, res) => {
 exports.deleteUser = async (req, res) => {
   try {
     const userId = req.params.id;
+    const doc = await User.findById(userId);
+    if (!doc) return res.status(404).json({ message: "User not found" });
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    const actorRoleName = String(req.user.role || "").toLowerCase();
+    const clientId = req.user.createdByClient || req.user.id;
 
-    // Only allow deletion by the same client or admin
-    if (req.user.role !== "admin" && user.createdByClient.toString() !== req.user.id) {
+    const isSameTenant = String(doc.createdByClient) === String(clientId);
+    const isPrivileged = actorRoleName === "admin" || actorRoleName === "master";
+
+    if (!isSameTenant && !isPrivileged) {
       return res.status(403).json({ message: "Not authorized to delete this user" });
     }
 
-    await user.deleteOne();
-
+    await doc.deleteOne();
     res.status(200).json({ message: "User deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 exports.resetPassword = async (req, res) => {
@@ -232,29 +268,74 @@ exports.resetPassword = async (req, res) => {
 exports.getUsersByClient = async (req, res) => {
   try {
     const { clientId } = req.params;
-
-    // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(clientId)) {
       return res.status(400).json({ message: "Invalid client id" });
     }
 
-    // AuthZ: admins can query any client; non-admins only their own
-    if (req.user.role !== "admin" && req.user.id !== clientId) {
+    const actorRoleName = String(req.user.role || "").toLowerCase();
+    const myTenant = req.user.createdByClient || req.user.id;
+
+    if (actorRoleName !== "admin" && actorRoleName !== "master" && String(myTenant) !== String(clientId)) {
       return res.status(403).json({ message: "Not authorized to view users for this client" });
     }
 
-    // Optional: ensure client exists
     const clientExists = await Client.exists({ _id: clientId });
     if (!clientExists) return res.status(404).json({ message: "Client not found" });
 
-    // Fetch users created by this client
     const users = await User.find({ createdByClient: clientId })
-      .populate({ path: "companies", select: "_id name" }) // adjust fields as needed
+      .populate({ path: "companies", select: "_id businessName" })
+      .populate("role")
       .lean();
 
     return res.status(200).json(users);
   } catch (err) {
     console.error("getUsersByClient error:", err);
     return res.status(500).json({ message: "Server error" });
+  }
+};
+
+
+
+
+exports.loginUser = async (req, res) => {
+  try {
+    const { userId, password } = req.body;
+
+    const user = await User.findOne({ userId })
+      .populate("companies")
+      .populate("role"); // 👈 important
+
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
+
+    // permissions = role.permissions ∪ user.permissions
+    const perms = Array.from(new Set([...(user.role?.permissions || []), ...(user.permissions || [])]));
+
+    const token = jwt.sign(
+      {
+        id: user._id,
+        role: user.role?.name || "user",      // 👈 role NAME for convenience
+        roleId: user.role?._id,               // 👈 role id
+        perms,                                // 👈 capabilities
+        companies: user.companies.map(c => c._id),
+        createdByClient: user.createdByClient
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: "8h" }
+    );
+
+    res.json({
+      token,
+      user: {
+        _id: user._id,
+        userName: user.userName,
+        role: user.role?.name || "user",     // 👈 send name, not ObjectId
+        companies: user.companies,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };

@@ -1,114 +1,156 @@
 // controllers/salesController.js
+const mongoose = require("mongoose");
 const SalesEntry = require("../models/SalesEntry");
 const Company = require("../models/Company");
 const Party = require("../models/Party");
 const normalizeProducts = require("../utils/normalizeProducts");
 const normalizeServices = require("../utils/normalizeServices");
 const { sendSalesInvoiceEmail } = require("../services/invoiceEmail");
+const { issueInvoiceNumber } = require("../services/invoiceIssuer");
 
 
 exports.createSalesEntry = async (req, res) => {
+  const session = await mongoose.startSession();
+
+  // declare OUTSIDE; we'll assign INSIDE the transaction
+  let entry;
+  let companyDoc;
+  let partyDoc;
+
   try {
-    const { party, company: companyId, date, products, service, totalAmount, description, referenceNumber, gstPercentage, discountPercentage, invoiceType } = req.body;
+    await session.withTransaction(async () => {
+      const {
+        party,
+        company: companyId,
+        date,
+        products,
+        service,
+        totalAmount,
+        description,
+        referenceNumber,
+        gstPercentage,
+        discountPercentage,
+        invoiceType,
+      } = req.body;
 
-    const company = await Company.findOne({ _id: companyId, client: req.user.id });
-    if (!company) return res.status(400).json({ message: "Invalid company selected" });
+      // use the SAME session and DO NOT re-declare with const
+      companyDoc = await Company.findOne({ _id: companyId, client: req.user.id })
+        .session(session);
+      if (!companyDoc) throw new Error("Invalid company selected");
 
-    const partyDoc = await Party.findOne({ _id: party, createdByClient: req.user.id });
-    if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
+      partyDoc = await Party.findOne({ _id: party, createdByClient: req.user.id })
+        .session(session);
+      if (!partyDoc) throw new Error("Customer not found or unauthorized");
 
-    // Normalize products if they exist
-    let normalizedProducts = [];
-    let productsTotal = 0;
-    if (products && products.length > 0) {
-      const result = await normalizeProducts(products, req.user.id);
-      normalizedProducts = result.items;
-      productsTotal = result.computedTotal;
-    }
+      // normalize line items
+      let normalizedProducts = [], productsTotal = 0;
+      if (Array.isArray(products) && products.length > 0) {
+        const { items, computedTotal } = await normalizeProducts(products, req.user.id);
+        normalizedProducts = items; productsTotal = computedTotal;
+      }
 
-    // Normalize services if they exist
-    let normalizedServices = [];
-    let servicesTotal = 0;
-    if (service && service.length > 0) {
-      const result = await normalizeServices(service, req.user.id);
-      normalizedServices = result.items;
-      servicesTotal = result.computedTotal;
-    }
+      let normalizedServices = [], servicesTotal = 0;
+      if (Array.isArray(service) && service.length > 0) {
+        const { items, computedTotal } = await normalizeServices(service, req.user.id);
+        normalizedServices = items; servicesTotal = computedTotal;
+      }
 
-    const finalTotal = typeof totalAmount === 'number'
-      ? totalAmount
-      : productsTotal + servicesTotal;
+      const finalTotal = (typeof totalAmount === "number")
+        ? totalAmount
+        : (productsTotal + servicesTotal);
 
-    const entry = await SalesEntry.create({
-      party: partyDoc._id,
-      company: company._id,
-      client: req.user.id,
-      date,
-      products: normalizedProducts,
-      service: normalizedServices,
-      totalAmount: finalTotal,
-      description,
-      referenceNumber,
-      gstPercentage,
-      discountPercentage,
-      invoiceType,
-      gstin: company.gstin || null,
-    });
+      // get invoice number INSIDE the same transaction
+      const atDate = date ? new Date(date) : new Date();
+      const { invoiceNumber, yearYY } = await issueInvoiceNumber(
+        companyId,
+        atDate,
+        { session, series: "sales" }   // <— add series explicitly
+      );
 
-    // ✅ then send the email in the background (don’t block the request)
+
+      // create the sale (assign to outer 'entry')
+      const docs = await SalesEntry.create([{
+        party: partyDoc._id,
+        company: companyDoc._id,
+        client: req.user.id,
+        date,
+        products: normalizedProducts,
+        service: normalizedServices,
+        totalAmount: finalTotal,
+        description,
+        referenceNumber,
+        gstPercentage,
+        discountPercentage,
+        invoiceType,
+        gstin: companyDoc.gstin || null,
+
+        // persist generated number
+        invoiceNumber,
+        invoiceYearYY: yearYY,
+      }], { session });
+      console.log('Created Sales Entry:', docs);
+      entry = docs[0];
+    }); // auto-committed/aborted by withTransaction
+
+    // after commit, fire-and-forget email
     setImmediate(() => {
       sendSalesInvoiceEmail({
         clientId: req.user.id,
         sale: entry.toObject ? entry.toObject() : entry,
         partyId: partyDoc._id,
-        companyId: company._id,
-      })
-        .then(() => console.log(`Invoice email sent to ${partyDoc.email} for sale ${entry._id}`))
-        .catch((err) => console.error(`Invoice email failed for sale ${entry._id}:`, err.message));
+        companyId: companyDoc._id,
+      }).catch(err => console.error("Invoice email failed:", err.message));
     });
 
-    res.status(201).json({ message: "Sales entry created successfully", entry });
+    return res.status(201).json({ message: "Sales entry created successfully", entry });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("createSalesEntry error:", err);
+    return res.status(500).json({ message: "Something went wrong", error: err.message });
+  } finally {
+    session.endSession(); // always end the session
   }
 };
 
+
+
+
 // GET Sales Entries (Client or Master Admin)
+// In your getSalesEntries controller
 exports.getSalesEntries = async (req, res) => {
   try {
-    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
-
-    const { companyId, fromDate, toDate, clientId } = req.query;
-
-    // Build filter
     const filter = {};
+    
+    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
     if (req.user.role === "client") {
       filter.client = req.user.id;
-    } else if (clientId) {
-      filter.client = clientId; // optional: for master admin views
     }
-    if (companyId) filter.company = companyId;
-    if (fromDate || toDate) {
-      filter.date = {};
-      if (fromDate) filter.date.$gte = new Date(fromDate);
-      if (toDate) filter.date.$lte = new Date(toDate);
+    if (req.query.companyId) {
+      filter.company = req.query.companyId;
     }
 
     const entries = await SalesEntry.find(filter)
       .populate("party", "name")
-      .populate("products.product", "name")     // ✅ matches your saved field
-      .populate("service.serviceName", "name")  // ✅ or "service.service" if you rename the key
+      .populate("products.product", "name")
+      .populate("service.serviceName", "name")
       .populate("company", "businessName")
       .sort({ date: -1 });
 
-    return res.status(200).json({ entries });
+    // Return consistent format
+    res.status(200).json({
+      success: true,
+      count: entries.length,
+      data: entries  // Use consistent key
+    });
+
   } catch (err) {
-    console.error("getSalesEntries error:", err);
-    return res
-      .status(500)
-      .json({ message: "Failed to fetch sales entries", error: err.message });
+    console.error("Error fetching sales entries:", err.message);
+    res.status(500).json({ 
+      success: false, 
+      error: err.message 
+    });
   }
 };
+
 
 
 // DELETE a sales entry
@@ -152,8 +194,11 @@ exports.updateSalesEntry = async (req, res) => {
 
     // Validate party if being updated
     if (otherUpdates.party) {
-      const partyDoc = await Party.findOne({ _id: otherUpdates.party, createdByClient: req.user.id });
-      if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
+      partyDoc = await Party.findOne({ _id: party, createdByClient: req.user.id })
+        .session(session);
+
+      if (!partyDoc) throw new Error("Customer not found or unauthorized");
+
     }
 
     let productsTotal = 0;

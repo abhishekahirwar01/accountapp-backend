@@ -44,11 +44,6 @@ exports.acceptTerms = async (req, res) => {
   }
 };
 
-/**
- * GET /api/integrations/gmail/connect?redirect=<url>
- * Kicks off OAuth by redirecting to Google's consent + account chooser.
- * Authentication: token allowed in query (?token=) since it opens in a new tab.
- */
 exports.connectStart = async (req, res) => {
   try {
     const clientId = req.user.id;
@@ -135,6 +130,25 @@ exports.connectCallback = async (req, res) => {
 
     if (!email) return res.status(400).send("Could not determine Gmail address");
 
+    // We want to persist only refreshToken + email
+    const existing = await EmailIntegration.findOne({ client: clientId }).lean();
+
+    const update = {
+      provider: "gmail",
+      connected: true,
+      email,
+    };
+
+    // Only set refreshToken if Google sent a new one **OR** we don't have one yet
+    if (tokens.refresh_token) {
+      update.refreshToken = tokens.refresh_token;
+    } else if (!existing?.refreshToken) {
+      // Sometimes Google doesn't send refresh_token on re-consent.
+      // If we don't already have one, ask user to fully re-connect:
+      // (tell them to remove app access in Google Account -> Security -> Third-party access)
+      return res.status(400).send("No refresh token received. Please remove app access from your Google Account and reconnect.");
+    }
+
     // Persist
     await EmailIntegration.findOneAndUpdate(
       { client: clientId },
@@ -167,28 +181,27 @@ exports.connectCallback = async (req, res) => {
  * Utility: send email via the client's Gmail using refresh_token.
  * Use this from your Sales/Purchase flows.
  */
+/**
+ * Utility: send email via the client's Gmail using refresh_token only.
+ */
 async function sendWithClientGmail({ clientId, fromName, to, subject, html, attachments = [] }) {
-  const integ = await EmailIntegration.findOne({ client: clientId, connected: true });
-  if (!integ || !integ.refreshToken) {
-    throw new Error("Client has not connected Gmail or refresh token missing");
+  const integ = await EmailIntegration.findOne({ client: clientId, connected: true }).lean();
+  if (!integ?.refreshToken || !integ?.email) {
+    throw new Error("Client has not connected Gmail or refresh token/email missing");
   }
 
   const oauth2 = buildOAuthClient();
-  oauth2.setCredentials({
-    refresh_token: integ.refreshToken,
-    access_token: integ.accessToken || undefined,
-    expiry_date: integ.expiryDate ? integ.expiryDate.getTime() : undefined,
-  });
+  // IMPORTANT: refresh-only; do not set access_token/expiry
+  oauth2.setCredentials({ refresh_token: integ.refreshToken });
 
   const gmail = google.gmail({ version: "v1", auth: oauth2 });
 
-  // build MIME using nodemailer MailComposer
   const mail = new MailComposer({
     from: fromName ? `${fromName} <${integ.email}>` : integ.email,
     to,
     subject,
     html,
-    attachments, // [{ filename, content (Buffer|String|Stream), contentType }]
+    attachments, // [{ filename, content, contentType }]
   }).compile();
 
   const raw = (await mail.build())
@@ -197,11 +210,25 @@ async function sendWithClientGmail({ clientId, fromName, to, subject, html, atta
     .replace(/\//g, "_")
     .replace(/=+$/, "");
 
-  await gmail.users.messages.send({
-    userId: "me",
-    requestBody: { raw },
-  });
+  try {
+    await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
+  } catch (err) {
+    // If the refresh token is revoked/invalid, mark disconnected so UI can prompt re-connect
+    const isAuthErr =
+      err?.code === 401 ||
+      /invalid_grant|unauthorized|not authorized|permission/i.test(err?.message || "");
+
+    if (isAuthErr) {
+      await EmailIntegration.updateOne(
+        { client: clientId },
+        { $set: { connected: false, refreshToken: null } }
+      );
+      throw new Error("Gmail access was revoked. Please reconnect Gmail.");
+    }
+    throw err;
+  }
 }
+
 
 // Example endpoint: POST /api/integrations/gmail/send-test { to }
 exports.sendTest = async (req, res) => {
@@ -233,7 +260,7 @@ exports.disconnect = async (req, res) => {
 
     await EmailIntegration.updateOne(
       { client: clientId },
-      { $set: { connected: false, accessToken: null, refreshToken: null, scope: null, tokenType: null, expiryDate: null } }
+      { $set: { connected: false, refreshToken: null } }
     );
     res.json({ ok: true });
   } catch (e) {

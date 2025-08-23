@@ -50,7 +50,7 @@ exports.authenticateToken = async (req, res, next) => {
 
     // 3. Attach user to request
     req.user = decoded;
-    console.log(`🔑 Authenticated as ${decoded.role} (ID: ${decoded.id})`);
+    // console.log(`🔑 Authenticated as ${decoded.role} (ID: ${decoded.id})`);
     next();
 
   } catch (err) {
