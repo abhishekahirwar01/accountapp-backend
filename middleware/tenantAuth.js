@@ -1,3 +1,6 @@
+
+//for client specific login
+
 const jwt = require("jsonwebtoken");
 
 module.exports = function tenantAuth(req, res, next) {

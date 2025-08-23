@@ -1,53 +1,29 @@
+// models/User.js
 const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema(
   {
-    userName: {
-      type: String,
-      required: true,
-      trim: true
-    },
-    userId: {
-      type: String,
-      required: true,
-      unique: true,
-      lowercase: true,
-      trim: true
-    },
-    password: {
-      type: String,
-      required: true
-    },
-    contactNumber: {
-      type: String,
-      trim: true
-    },
-    address: {
-      type: String,
-      trim: true
-    },
-    role: {
-      type: String,
-      enum: ["admin", "manager","user"],
-      default: "user"
-    },
-    permissions: {
-      type: [String], 
-      default: []
-    },
-    companies: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Company"
-      }
-    ],
-    createdByClient: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Client",
-      required: true
-    }
+    userName: { type: String, required: true, trim: true },
+    userId: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    password: { type: String, required: true },
+    contactNumber: { type: String, trim: true },
+    address: { type: String, trim: true },
+
+    // 👇 changed
+    role: { type: mongoose.Schema.Types.ObjectId, ref: "Role", required: true }, // reference
+
+    // per-user extra perms (optional grants)
+    permissions: { type: [String], default: [] },
+
+    companies: [{ type: mongoose.Schema.Types.ObjectId, ref: "Company" }],
+    createdByClient: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
   },
   { timestamps: true }
 );
+
+// (Optional) derived roleName to not break old code immediately
+userSchema.virtual("roleName").get(function () {
+  return this._roleName || (this.role && this.role.name) || undefined;
+});
 
 module.exports = mongoose.model("User", userSchema);

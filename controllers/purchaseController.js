@@ -6,31 +6,37 @@ const Vendor = require("../models/Vendor");
 const Product = require("../models/Product");
 const normalizePurchaseProducts = require("../utils/normalizePurchaseProducts");
 const normalizePurchaseServices = require("../utils/normalizePurchaseServices");
+const { issueInvoiceNumber } = require("../services/invoiceIssuer");
+
 
 
 exports.createPurchaseEntry = async (req, res) => {
   const session = await mongoose.startSession();
-  session.startTransaction();
+  session.startTransaction({
+    maxTimeMS: 30000, // 30 seconds timeout
+    readConcern: { level: 'snapshot' },
+    writeConcern: { w: 'majority' }
+  });
   try {
-    const { 
-      vendor, 
-      company: companyId, 
-      date, 
-      products, 
-      services, 
-      totalAmount, 
-      description, 
-      referenceNumber, 
-      gstPercentage, 
-      invoiceType 
+    const {
+      vendor,
+      company: companyId,
+      date,
+      products,
+      services,
+      totalAmount,
+      description,
+      referenceNumber,
+      gstPercentage,
+      invoiceType
     } = req.body;
 
     // Validate company
-    const company = await Company.findOne({ _id: companyId, client: req.user.id });
+    const company = await Company.findOne({ _id: companyId, client: req.user.id }).session(session);
     if (!company) return res.status(400).json({ message: "Invalid company selected" });
 
     // Validate vendor
-    const vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.user.id });
+    const vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.user.id }).session(session);
     if (!vendorDoc) return res.status(400).json({ message: "Vendor not found or unauthorized" });
 
     // Normalize products if they exist
@@ -51,9 +57,19 @@ exports.createPurchaseEntry = async (req, res) => {
       servicesTotal = result.computedTotal;
     }
 
-    const finalTotal = typeof totalAmount === 'number' 
-      ? totalAmount 
+    const finalTotal = typeof totalAmount === 'number'
+      ? totalAmount
       : productsTotal + servicesTotal;
+
+    // Issue FY-wise invoice number for PURCHASE series, inside the same txn
+    // Issue FY-wise invoice number for PURCHASE series, inside the same txn
+    const atDate = date ? new Date(date) : new Date();
+    const { invoiceNumber, yearYY } = await issueInvoiceNumber(
+      company._id,                  // or companyId, either works
+      atDate,
+      { session, series: "purchase" }
+    );
+
 
     // 1) Create entry
     const entry = await PurchaseEntry.create([{
@@ -69,6 +85,9 @@ exports.createPurchaseEntry = async (req, res) => {
       gstPercentage,
       invoiceType,
       gstin: company.gstin || null,
+      invoiceNumber,           // e.g. "25-000123"
+      invoiceYearYY: yearYY,   // e.g. 25
+
     }], { session });
 
     // 2) Auto-increment stocks for existing products
@@ -112,7 +131,7 @@ exports.createPurchaseEntry = async (req, res) => {
     await session.abortTransaction();
     session.endSession();
     console.error('Error in createPurchaseEntry:', err);
-    res.status(500).json({ 
+    res.status(500).json({
       error: err.message,
       message: "Failed to create purchase entry"
     });
@@ -134,9 +153,10 @@ exports.getPurchaseEntries = async (req, res) => {
 
     const entries = await PurchaseEntry.find(filter)
       .populate("vendor", "vendorName")
-      .populate("products.product", "name")          // ✅ correct path
-      .populate("services.serviceName", "name")      // ✅ if your service item key is serviceName
+      .populate("products.product", "name") // ✅ correct path
+      .populate("services.serviceName", "name") // ✅ or "service.service" if you rename the key
       .populate("company", "businessName")
+
       .sort({ date: -1 }); // optional
 
     res.status(200).json(entries);
@@ -190,7 +210,7 @@ exports.updatePurchaseEntry = async (req, res) => {
 
     // Handle products update
     if (products) {
-      const { items: normalizedProducts, computedTotal: productsTotal } = 
+      const { items: normalizedProducts, computedTotal: productsTotal } =
         await normalizePurchaseProducts(products, req.user.id);
       entry.products = normalizedProducts;
       if (typeof otherUpdates.totalAmount !== "number") {
@@ -200,7 +220,7 @@ exports.updatePurchaseEntry = async (req, res) => {
 
     // Handle services update
     if (services) {
-      const { items: normalizedServices, computedTotal: servicesTotal } = 
+      const { items: normalizedServices, computedTotal: servicesTotal } =
         await normalizePurchaseServices(services, req.user.id);
       entry.services = normalizedServices;
       if (typeof otherUpdates.totalAmount !== "number") {

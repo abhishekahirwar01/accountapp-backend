@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 
-const UNIT_TYPES = ["Kg","Litre","Piece","Box","Meter","Dozen","Pack","Other"];
+const UNIT_TYPES = ["Kg", "Litre", "Piece", "Box", "Meter", "Dozen", "Pack", "Other"];
 
 const purchaseItemSchema = new mongoose.Schema({
   product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
@@ -22,21 +22,21 @@ const purchaseSchema = new mongoose.Schema({
   client: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
   date: { type: Date, required: true },
-  products: { 
-    type: [purchaseItemSchema], 
+  products: {
+    type: [purchaseItemSchema],
     required: false,
     validate: {
-      validator: function(v) {
+      validator: function (v) {
         return !(this.products.length === 0 && this.services.length === 0);
       },
       message: 'At least one product or service is required'
     }
   },
-  services: { 
-    type: [purchaseServiceSchema], 
+  services: {
+    type: [purchaseServiceSchema],
     required: false,
     validate: {
-      validator: function(v) {
+      validator: function (v) {
         return !(this.products.length === 0 && this.services.length === 0);
       },
       message: 'At least one product or service is required'
@@ -50,6 +50,8 @@ const purchaseSchema = new mongoose.Schema({
   gstPercentage: { type: Number },
   invoiceType: { type: String, enum: ["Tax", "Invoice"] },
   gstin: { type: String },
+  invoiceNumber: { type: String, index: true },   // e.g. "25-000123"
+  invoiceYearYY: { type: Number, index: true },   // e.g. 25
 }, { timestamps: true });
 
 module.exports = mongoose.model("PurchaseEntry", purchaseSchema);
