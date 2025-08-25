@@ -6,18 +6,67 @@ const Party = require("../models/Party");
 const normalizeProducts = require("../utils/normalizeProducts");
 const normalizeServices = require("../utils/normalizeServices");
 const { sendSalesInvoiceEmail } = require("../services/invoiceEmail");
-const { issueInvoiceNumber } = require("../services/invoiceIssuer");
+const { issueSalesInvoiceNumber } = require("../services/invoiceIssuer");
+
+
+// at top of controllers/salesController.js
+const { getEffectivePermissions } = require("../services/effectivePermissions");
+
+const PRIV_ROLES = new Set(["master", "client" , "admin"]);
+
+async function ensureAuthCaps(req) {
+  // Normalize: support old middlewares that used req.user
+  if (!req.auth && req.user) req.auth = {
+    clientId: req.user.id,
+    userId: req.user.userId || req.user.id,
+    role: req.user.role,
+    caps: req.user.caps,
+    allowedCompanies: req.user.allowedCompanies,
+  };
+
+  if (!req.auth) throw new Error("Unauthorized (no auth context)");
+
+  // If caps/allowedCompanies missing, load them
+  if (!req.auth.caps || !Array.isArray(req.auth.allowedCompanies)) {
+    const { caps, allowedCompanies } = await getEffectivePermissions({
+      clientId: req.auth.clientId,
+      userId: req.auth.userId,
+    });
+    req.auth.caps = req.auth.caps || caps;
+    req.auth.allowedCompanies = req.auth.allowedCompanies || allowedCompanies;
+  }
+}
+
+function userIsPriv(req) {
+  return PRIV_ROLES.has(req.auth.role);
+}
+
+function companyAllowedForUser(req, companyId) {
+  if (userIsPriv(req)) return true;
+  const allowed = Array.isArray(req.auth.allowedCompanies)
+    ? req.auth.allowedCompanies.map(String)
+    : [];
+  return allowed.length === 0 || allowed.includes(String(companyId));
+}
+
 
 
 exports.createSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
-
-  // declare OUTSIDE; we'll assign INSIDE the transaction
-  let entry;
-  let companyDoc;
-  let partyDoc;
+  let entry, companyDoc, partyDoc;
 
   try {
+    await ensureAuthCaps(req);
+
+    if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
+      return res.status(403).json({ message: "Not allowed to create sales entries" });
+    }
+
+    const { company: companyId } = req.body;
+    if (!companyAllowedForUser(req, companyId)) {
+      return res.status(403).json({ message: "You are not allowed to use this company" });
+    }
+
     await session.withTransaction(async () => {
       const {
         party,
@@ -33,25 +82,21 @@ exports.createSalesEntry = async (req, res) => {
         invoiceType,
       } = req.body;
 
-      // use the SAME session and DO NOT re-declare with const
-      companyDoc = await Company.findOne({ _id: companyId, client: req.user.id })
-        .session(session);
+      companyDoc = await Company.findOne({ _id: companyId, client: req.auth.clientId }).session(session);
       if (!companyDoc) throw new Error("Invalid company selected");
 
-      partyDoc = await Party.findOne({ _id: party, createdByClient: req.user.id })
-        .session(session);
+      partyDoc = await Party.findOne({ _id: party, createdByClient: req.auth.clientId }).session(session);
       if (!partyDoc) throw new Error("Customer not found or unauthorized");
 
-      // normalize line items
       let normalizedProducts = [], productsTotal = 0;
       if (Array.isArray(products) && products.length > 0) {
-        const { items, computedTotal } = await normalizeProducts(products, req.user.id);
+        const { items, computedTotal } = await normalizeProducts(products, req.auth.clientId);
         normalizedProducts = items; productsTotal = computedTotal;
       }
 
       let normalizedServices = [], servicesTotal = 0;
       if (Array.isArray(service) && service.length > 0) {
-        const { items, computedTotal } = await normalizeServices(service, req.user.id);
+        const { items, computedTotal } = await normalizeServices(service, req.auth.clientId);
         normalizedServices = items; servicesTotal = computedTotal;
       }
 
@@ -59,20 +104,17 @@ exports.createSalesEntry = async (req, res) => {
         ? totalAmount
         : (productsTotal + servicesTotal);
 
-      // get invoice number INSIDE the same transaction
       const atDate = date ? new Date(date) : new Date();
-      const { invoiceNumber, yearYY } = await issueInvoiceNumber(
+      const { invoiceNumber, yearYY } = await issueSalesInvoiceNumber(
         companyId,
         atDate,
-        { session, series: "sales" }   // <— add series explicitly
+        { session, series: "sales" }
       );
 
-
-      // create the sale (assign to outer 'entry')
       const docs = await SalesEntry.create([{
         party: partyDoc._id,
         company: companyDoc._id,
-        client: req.user.id,
+        client: req.auth.clientId,
         date,
         products: normalizedProducts,
         service: normalizedServices,
@@ -83,22 +125,20 @@ exports.createSalesEntry = async (req, res) => {
         discountPercentage,
         invoiceType,
         gstin: companyDoc.gstin || null,
-
-        // persist generated number
         invoiceNumber,
         invoiceYearYY: yearYY,
+        createdByUser: req.auth.userId,
       }], { session });
-      console.log('Created Sales Entry:', docs);
-      entry = docs[0];
-    }); // auto-committed/aborted by withTransaction
 
-    // after commit, fire-and-forget email
+      entry = docs[0];
+    });
+
     setImmediate(() => {
       sendSalesInvoiceEmail({
-        clientId: req.user.id,
+        clientId: req.auth.clientId,
         sale: entry.toObject ? entry.toObject() : entry,
-        partyId: partyDoc._id,
-        companyId: companyDoc._id,
+        partyId: entry.party,
+        companyId: entry.company,
       }).catch(err => console.error("Invoice email failed:", err.message));
     });
 
@@ -107,9 +147,10 @@ exports.createSalesEntry = async (req, res) => {
     console.error("createSalesEntry error:", err);
     return res.status(500).json({ message: "Something went wrong", error: err.message });
   } finally {
-    session.endSession(); // always end the session
+    session.endSession();
   }
 };
+
 
 
 
@@ -119,7 +160,7 @@ exports.createSalesEntry = async (req, res) => {
 exports.getSalesEntries = async (req, res) => {
   try {
     const filter = {};
-    
+
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
     if (req.user.role === "client") {
       filter.client = req.user.id;
@@ -144,9 +185,9 @@ exports.getSalesEntries = async (req, res) => {
 
   } catch (err) {
     console.error("Error fetching sales entries:", err.message);
-    res.status(500).json({ 
-      success: false, 
-      error: err.message 
+    res.status(500).json({
+      success: false,
+      error: err.message
     });
   }
 };
@@ -174,76 +215,92 @@ exports.deleteSalesEntry = async (req, res) => {
   }
 };
 
-// UPDATE a sales entry
-// UPDATE a sales entry
+// UPDATE a sales entry (replace your current function)
 exports.updateSalesEntry = async (req, res) => {
   try {
+    // Make sure req.auth.caps and allowedCompanies exist
+    await ensureAuthCaps(req);
+
     const entry = await SalesEntry.findById(req.params.id);
     if (!entry) return res.status(404).json({ message: "Sales entry not found" });
-    if (req.user.role === "client" && entry.client.toString() !== req.user.id) {
+
+    // Tenant auth: allow privileged roles or same tenant only
+    if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
     const { products, service, ...otherUpdates } = req.body;
 
-    // Validate company if being updated
+    // If company is being changed, check permission + existence
     if (otherUpdates.company) {
-      const company = await Company.findOne({ _id: otherUpdates.company, client: req.user.id });
-      if (!company) return res.status(400).json({ message: "Invalid company selected" });
+      if (!companyAllowedForUser(req, otherUpdates.company)) {
+        return res.status(403).json({ message: "You are not allowed to use this company" });
+      }
+      const company = await Company.findOne({
+        _id: otherUpdates.company,
+        client: req.auth.clientId,
+      });
+      if (!company) {
+        return res.status(400).json({ message: "Invalid company selected" });
+      }
     }
 
-    // Validate party if being updated
+    // If party is being changed, validate it belongs to the same tenant
     if (otherUpdates.party) {
-      partyDoc = await Party.findOne({ _id: party, createdByClient: req.user.id })
-        .session(session);
-
-      if (!partyDoc) throw new Error("Customer not found or unauthorized");
-
+      const party = await Party.findOne({
+        _id: otherUpdates.party,
+        createdByClient: req.auth.clientId,
+      });
+      if (!party) {
+        return res.status(400).json({ message: "Customer not found or unauthorized" });
+      }
     }
 
     let productsTotal = 0;
     let servicesTotal = 0;
 
-    // Handle products update
-    if (products) {
-      try {
-        const { items: normalizedProducts, computedTotal } = await normalizeProducts(products, req.user.id);
-        entry.products = normalizedProducts;
-        productsTotal = computedTotal;
-      } catch (err) {
-        return res.status(400).json({ message: `Invalid products data: ${err.message}` });
-      }
+    // Normalize product lines only if provided (Array.isArray allows clearing with [])
+    if (Array.isArray(products)) {
+      const { items: normalizedProducts, computedTotal } =
+        await normalizeProducts(products, req.auth.clientId);
+      entry.products = normalizedProducts;
+      productsTotal = computedTotal;
     }
 
-    // Handle services update
-    if (service) {
-      try {
-        const { items: normalizedServices, computedTotal } = await normalizeServices(service, req.user.id);
-        entry.service = normalizedServices;
-        servicesTotal = computedTotal;
-      } catch (err) {
-        return res.status(400).json({ message: `Invalid service data: ${err.message}` });
-      }
+    // Normalize service lines only if provided (Array.isArray allows clearing with [])
+    if (Array.isArray(service)) {
+      const { items: normalizedServices, computedTotal } =
+        await normalizeServices(service, req.auth.clientId);
+      entry.service = normalizedServices;
+      servicesTotal = computedTotal;
     }
 
-    // Apply updates
-    const { totalAmount, ...rest } = otherUpdates;
+    // Don’t allow changing invoiceNumber/year from payload
+    const { totalAmount, invoiceNumber, invoiceYearYY, ...rest } = otherUpdates;
     Object.assign(entry, rest);
 
-    // Calculate total amount
-    if (typeof totalAmount === 'number') {
+    // Recalculate total if not explicitly provided
+    if (typeof totalAmount === "number") {
       entry.totalAmount = totalAmount;
     } else {
-      const sumProducts = productsTotal || entry.products.reduce((sum, item) => sum + (item.amount || 0), 0);
-      const sumServices = servicesTotal || entry.service.reduce((sum, item) => sum + (item.amount || 0), 0);
+      const sumProducts =
+        productsTotal ||
+        (Array.isArray(entry.products)
+          ? entry.products.reduce((s, it) => s + (Number(it.amount) || 0), 0)
+          : 0);
+      const sumServices =
+        servicesTotal ||
+        (Array.isArray(entry.service)
+          ? entry.service.reduce((s, it) => s + (Number(it.amount) || 0), 0)
+          : 0);
       entry.totalAmount = sumProducts + sumServices;
     }
 
     await entry.save();
 
-    // Send invoice email asynchronously
+    // optional: keep your async email
     setImmediate(() => {
-      sendSalesInvoiceEmail({ clientId: req.user.id, saleId: entry._id })
+      sendSalesInvoiceEmail({ clientId: req.auth.clientId, saleId: entry._id })
         .catch(err => console.error("Failed to send invoice email:", err));
     });
 
@@ -253,6 +310,7 @@ exports.updateSalesEntry = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // GET Sales Entries by clientId (for master admin)
 exports.getSalesEntriesByClient = async (req, res) => {
