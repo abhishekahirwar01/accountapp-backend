@@ -1,21 +1,16 @@
+// controllers/vendor.controller.js
 const Vendor = require("../models/Vendor");
+
+const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
 exports.createVendor = async (req, res) => {
   try {
-    const {
-      vendorName,
-      contactNumber,
-      email,
-      address,
-      city,
-      state,
-      gstin,
-      gstRegistrationType,
-      pan,
-      isTDSApplicable
-    } = req.body;
+    // permission gate (non-privileged must have explicit capability)
+    if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateVendors) {
+      return res.status(403).json({ message: "Not allowed to create vendors" });
+    }
 
-    const vendor = new Vendor({
+    const {
       vendorName,
       contactNumber,
       email,
@@ -26,39 +21,9 @@ exports.createVendor = async (req, res) => {
       gstRegistrationType,
       pan,
       isTDSApplicable,
-      createdByClient: req.user.id,
-    });
+    } = req.body;
 
-    await vendor.save();
-    res.status(201).json({ message: "Vendor created", vendor });
-
-  } catch (err) {
-    if (err.code === 11000) {
-      return res.status(400).json({ message: "Vendor already exists for this client (duplicate name or contact/email)" });
-    }
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-};
-
-
-exports.getVendors = async (req, res) => {
-  try {
-    const filter = req.user.role === "admin"
-      ? {} // admin sees all
-      : { createdByClient: req.user.id }; // client sees only their vendors
-
-    const vendors = await Vendor.find(filter).sort({ createdAt: -1 });
-
-    res.status(200).json({ vendors });
-  } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
-  }
-};
-
-exports.updateVendor = async (req, res) => {
-  try {
-    const vendorId = req.params.id;
-    const {
+    const vendor = await Vendor.create({
       vendorName,
       contactNumber,
       email,
@@ -68,32 +33,79 @@ exports.updateVendor = async (req, res) => {
       gstin,
       gstRegistrationType,
       pan,
-      isTDSApplicable
-    } = req.body;
+      isTDSApplicable,
+      createdByClient: req.auth.clientId,   // ✅ tenant
+      createdByUser: req.auth.userId,       // optional
+    });
 
-    const vendor = await Vendor.findById(vendorId);
-    if (!vendor) {
-      return res.status(404).json({ message: "Vendor not found" });
+    res.status(201).json({ message: "Vendor created", vendor });
+  } catch (err) {
+    if (err.code === 11000) {
+      return res
+        .status(400)
+        .json({ message: "Vendor already exists for this client" });
+    }
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+exports.getVendors = async (req, res) => {
+  try {
+    const {
+      q,
+      page = 1,
+      limit = 100,
+    } = req.query;
+
+    const where = { createdByClient: req.auth.clientId };
+
+    if (q) {
+      // search by name / email / phone
+      where.$or = [
+        { vendorName: { $regex: String(q), $options: "i" } },
+        { email: { $regex: String(q), $options: "i" } },
+        { contactNumber: { $regex: String(q), $options: "i" } },
+      ];
     }
 
-    // Authorization: only creator client or admin
-    if (req.user.role !== "admin" && vendor.createdByClient.toString() !== req.user.id) {
-      return res.status(403).json({ message: "Not authorized to update this vendor" });
+    const perPage = Math.min(Number(limit) || 100, 500);
+    const skip = (Number(page) - 1) * perPage;
+
+    const [vendors, total] = await Promise.all([
+      Vendor.find(where).sort({ createdAt: -1 }).skip(skip).limit(perPage).lean(),
+      Vendor.countDocuments(where),
+    ]);
+
+    res.json({ vendors, total, page: Number(page), limit: perPage });
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+exports.updateVendor = async (req, res) => {
+  try {
+    const doc = await Vendor.findById(req.params.id);
+    if (!doc) return res.status(404).json({ message: "Vendor not found" });
+
+    const sameTenant = String(doc.createdByClient) === req.auth.clientId;
+    if (!PRIV_ROLES.has(req.auth.role) && !sameTenant) {
+      return res.status(403).json({ message: "Not authorized" });
     }
 
-    if (vendorName) vendor.vendorName = vendorName;
-    if (contactNumber) vendor.contactNumber = contactNumber;
-    if (email) vendor.email = email;
-    if (address) vendor.address = address;
-    if (city) vendor.city = city;
-    if (state) vendor.state = state;
-    if (gstin) vendor.gstin = gstin;
-    if (gstRegistrationType) vendor.gstRegistrationType = gstRegistrationType;
-    if (pan) vendor.pan = pan;
-    if (typeof isTDSApplicable === 'boolean') vendor.isTDSApplicable = isTDSApplicable;
+    const up = req.body;
+    if (up.vendorName != null) doc.vendorName = up.vendorName;
+    if (up.contactNumber != null) doc.contactNumber = up.contactNumber;
+    if (up.email != null) doc.email = up.email;
+    if (up.address != null) doc.address = up.address;
+    if (up.city != null) doc.city = up.city;
+    if (up.state != null) doc.state = up.state;
+    if (up.gstin != null) doc.gstin = up.gstin;
+    if (up.gstRegistrationType != null) doc.gstRegistrationType = up.gstRegistrationType;
+    if (up.pan != null) doc.pan = up.pan;
+    if (typeof up.isTDSApplicable === "boolean") doc.isTDSApplicable = up.isTDSApplicable;
 
-    await vendor.save();
-    res.status(200).json({ message: "Vendor updated", vendor });
+    await doc.save();
+    res.json({ message: "Vendor updated", vendor: doc });
   } catch (err) {
     if (err.code === 11000) {
       return res.status(400).json({ message: "Duplicate vendor details" });
@@ -102,25 +114,19 @@ exports.updateVendor = async (req, res) => {
   }
 };
 
-
 exports.deleteVendor = async (req, res) => {
   try {
-    const vendorId = req.params.id;
+    const doc = await Vendor.findById(req.params.id);
+    if (!doc) return res.status(404).json({ message: "Vendor not found" });
 
-    const vendor = await Vendor.findById(vendorId);
-    if (!vendor) {
-      return res.status(404).json({ message: "Vendor not found" });
+    const sameTenant = String(doc.createdByClient) === req.auth.clientId;
+    if (!PRIV_ROLES.has(req.auth.role) && !sameTenant) {
+      return res.status(403).json({ message: "Not authorized" });
     }
 
-    // Authorization check
-    if (req.user.role !== "admin" && vendor.createdByClient.toString() !== req.user.id) {
-      return res.status(403).json({ message: "Not authorized to delete this vendor" });
-    }
-
-    await vendor.deleteOne();
-    res.status(200).json({ message: "Vendor deleted successfully" });
+    await doc.deleteOne();
+    res.json({ message: "Vendor deleted successfully" });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-

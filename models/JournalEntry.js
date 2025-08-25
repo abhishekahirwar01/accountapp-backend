@@ -8,6 +8,7 @@ const journalSchema = new mongoose.Schema({
   narration: { type: String },
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: false },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: false },
+  createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   type: { type: String, enum: ["journal"], default: "journal" }
 }, { timestamps: true });
 

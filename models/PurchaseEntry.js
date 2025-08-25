@@ -20,38 +20,35 @@ const purchaseSchema = new mongoose.Schema({
   vendor: { type: mongoose.Schema.Types.ObjectId, ref: "Vendor", required: true },
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: true },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-
+  createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   date: { type: Date, required: true },
   products: {
     type: [purchaseItemSchema],
-    required: false,
-    validate: {
-      validator: function (v) {
-        return !(this.products.length === 0 && this.services.length === 0);
-      },
-      message: 'At least one product or service is required'
-    }
+    required: false
   },
   services: {
     type: [purchaseServiceSchema],
-    required: false,
-    validate: {
-      validator: function (v) {
-        return !(this.products.length === 0 && this.services.length === 0);
-      },
-      message: 'At least one product or service is required'
-    }
+    required: false
   },
   totalAmount: { type: Number, required: true, min: 0 },
-
   description: { type: String },
   referenceNumber: { type: String },
-
   gstPercentage: { type: Number },
   invoiceType: { type: String, enum: ["Tax", "Invoice"] },
   gstin: { type: String },
-  invoiceNumber: { type: String, index: true },   // e.g. "25-000123"
-  invoiceYearYY: { type: Number, index: true },   // e.g. 25
-}, { timestamps: true });
+  invoiceNumber: { type: String, index: true },
+  invoiceYearYY: { type: Number, index: true },
+}, {
+  timestamps: true,
+  // Add document-level validation here
+  validate: {
+    validator: function () {
+      const p = Array.isArray(this.products) ? this.products.length : 0;
+      const s = Array.isArray(this.services) ? this.services.length : 0;
+      return p + s > 0;
+    },
+    message: 'At least one product or service is required'
+  }
+});
 
 module.exports = mongoose.model("PurchaseEntry", purchaseSchema);
