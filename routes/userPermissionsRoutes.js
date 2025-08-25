@@ -7,6 +7,7 @@ const {
   getEffectivePermissions,
 } = require("../services/effectivePermissions");
 const verifyUser = require("../middleware/verifyUser");
+const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
 
 const router = express.Router();
 
@@ -47,7 +48,7 @@ async function validateCompanyScope(clientId, ids = []) {
 
 // 🔒 All routes require user to be verified. Also create a tiny shim so legacy code can read req.user.*
 router.use(
-  verifyUser,
+  verifyClientOrAdmin,
   (req, _res, next) => {
     if (!req.user) {
       const a = req.auth || {};
@@ -62,7 +63,7 @@ router.use(
 );
 
 /** ✔️ NEW: current user's EFFECTIVE permissions (caps + limits) */
-router.get("/me/effective", async (req, res) => {
+router.get("/me/effective",verifyUser, async (req, res) => {
   try {
     const clientId = req.auth.clientId;
     const userId = req.auth.id;
@@ -88,7 +89,7 @@ router.get("/me", async (req, res) => {
 });
 
 /** GET: read overrides for a user (raw overrides, not effective) */
-router.get("/:userId", async (req, res) => {
+router.get("/:userId",verifyClientOrAdmin, async (req, res) => {
   try {
     const clientId = req.user.createdByClient || req.user.id;
     const { userId } = req.params;
@@ -151,7 +152,7 @@ router.post("/", async (req, res) => {
 });
 
 /** PATCH: update overrides for a user (partial) */
-router.patch("/:userId", async (req, res) => {
+router.patch("/:userId",verifyClientOrAdmin, async (req, res) => {
   try {
     const clientId = req.user.createdByClient || req.user.id;
     const { userId } = req.params;
