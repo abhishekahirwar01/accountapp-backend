@@ -21,6 +21,7 @@ const vendorSchema = new mongoose.Schema(
       ref: "Client",
       required: true,
     },
+     createdByUser:   { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   },
   { timestamps: true }
 );

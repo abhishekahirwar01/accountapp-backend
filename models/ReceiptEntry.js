@@ -8,6 +8,7 @@ const receiptSchema = new mongoose.Schema({
   referenceNumber: { type: String },  // optional UTR/Cheque/Transaction ID
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: false },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: false },
+  createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   type: { type: String, enum: ["receipt"], default: "receipt" }
 }, { timestamps: true });
 

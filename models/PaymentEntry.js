@@ -9,6 +9,7 @@ const paymentSchema = new mongoose.Schema({
   referenceNumber: { type: String },
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: false },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: false },
+   createdByUser:   { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   type: { type: String, enum: ["payment"], default: "payment" }
 }, { timestamps: true });
 
