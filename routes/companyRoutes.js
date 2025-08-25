@@ -11,11 +11,10 @@ const {
     getMyCompanies 
 } = require("../controllers/companyController");
 
-const verifyClient = require("../middleware/verifyClient");
 const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
 const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
 
-const requireRole = require("../middleware/requireRole");
+
 
 // Client creates company
 router.post("/", verifyClientOrAdmin,uploadLogo, createCompany);
@@ -38,11 +37,13 @@ router.get("/by-client/:clientId", verifyClientOrAdmin, getCompaniesByClientId);
 
 
 // ✅ NEW: role-agnostic “my companies”
+// Usage
 router.get(
   "/my",
-  requireRole(["user", "admin", "master", "client", "customer"]),
+  verifyClientOrAdmin,
   getMyCompanies
 );
+
 
 
 module.exports = router;
