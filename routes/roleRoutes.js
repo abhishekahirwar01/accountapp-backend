@@ -17,19 +17,21 @@ router.post("/", async (req, res) => {
     if (!rawName) return res.status(400).json({ message: "name is required" });
 
     const name = rawName.toLowerCase().trim();
-    if (name === "master" || name === "master-admin" || name === "superadmin") {
+    if (["master", "master-admin", "superadmin"].includes(name)) {
       return res.status(403).json({ message: "Creating 'master' is not allowed" });
     }
 
-    const { label, rank = 10, permissions = [] } = req.body;
-    if (!label) return res.status(400).json({ message: "label is required" });
+    const defaultPermissions = Array.isArray(req.body.defaultPermissions)
+      ? req.body.defaultPermissions
+      : [];
 
-    const role = await Role.create({ name, label: label.trim(), rank, permissions });
+    const role = await Role.create({ name, defaultPermissions });
     res.status(201).json(role);
   } catch (e) {
     if (e.code === 11000) return res.status(400).json({ message: "Role name already exists" });
     res.status(500).json({ message: e.message });
   }
 });
+
 
 module.exports = router;
