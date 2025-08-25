@@ -2,7 +2,7 @@ const Product = require("../models/Product");
 
 exports.createProduct = async (req, res) => {
   try {
-    const { name , stocks } = req.body;
+    const { name, stocks } = req.body;
 
     const product = new Product({
       name,
@@ -21,16 +21,39 @@ exports.createProduct = async (req, res) => {
   }
 };
 
-
+// GET /api/products
 exports.getProducts = async (req, res) => {
   try {
-    const products = await Product.find({ createdByClient: req.user.id });
-    res.json(products);
-  } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message })
-  }
+    const { id, role, createdByClient } = req.user || {};
+    let clientId = null;
 
-}
+    // Determine tenant scope
+    if (role === "client" || role === "customer") {
+      // client token: its own id is the tenant id
+      clientId = id;
+    } else {
+      // employee/admin token under a tenant
+      clientId = createdByClient || null;
+    }
+
+    // Last resort: read from DB if token didn’t include createdByClient
+    if (!clientId) {
+      const u = await User.findById(id).select("createdByClient").lean();
+      clientId = u?.createdByClient || null;
+    }
+
+    if (!clientId) {
+      return res.status(401).json({ message: "No client/tenant on token" });
+    }
+
+    const products = await Product.find({ createdByClient: clientId }).lean();
+    console.log(`Found ${products.length} products for client ${clientId}`);
+    return res.json(products);
+  } catch (err) {
+    console.error("getProducts error:", err);
+    return res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
 
 exports.updateProducts = async (req, res) => {
   try {

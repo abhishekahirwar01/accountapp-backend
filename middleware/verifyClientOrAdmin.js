@@ -7,7 +7,7 @@ const verifyClientOrAdmin = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    if (decoded.role !== "client" && decoded.role !== "master") {
+    if (decoded.role !== "client" && decoded.role !== "master" && decoded.role !== "user" && decoded.role !== "manager" && decoded.role !== "admin") {
       return res.status(403).json({ message: "Access denied" });
     }
 

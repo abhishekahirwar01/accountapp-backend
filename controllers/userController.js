@@ -6,8 +6,8 @@ const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
 // 👇 NEW
 const Role = require("../models/Role");
-// already there
-const ALL_ROLES = User.schema.path("role").enumValues; // ["admin","manager","user"]
+const UserPermission = require("../models/UserPermission");
+const { CAP_KEYS } = require("../services/effectivePermissions");
 
 
 async function getActorRoleDoc(req) {
@@ -26,38 +26,40 @@ async function getActorRoleDoc(req) {
 // (or use actor.canAssign override if you add that field)
 function canAssignRole(actorRoleDoc, targetRoleDoc) {
   if (!actorRoleDoc || !targetRoleDoc) return false;
-  // If you later add canAssign override:
-  // if (Array.isArray(actorRoleDoc.canAssign) && actorRoleDoc.canAssign.length) {
-  //   return actorRoleDoc.canAssign.some(id => String(id) === String(targetRoleDoc._id));
-  // }
-  return (targetRoleDoc.rank || 0) < (actorRoleDoc.rank || 0);
+  // allow everything except assigning a reserved 'master' role
+  return targetRoleDoc.name !== "master";
 }
 
-
-// NEW: map whoever is logged in to an effective role for assignment checks
-async function getEffectiveActorRole(req) {
-  // If the token has a valid app role, use it
-  if (req.user && ALL_ROLES.includes(req.user.role)) return req.user.role;
-
-  // If this token is for a Client (tenant owner), treat as admin
-  // (adjust these checks to match your auth payload)
-  if (req.user && (req.user.accountType === "client" || req.user.isClientOwner === true || req.user.type === "client")) {
-    return "admin";
+function pickOverrideFlags(input) {
+  const out = {};
+  for (const k of CAP_KEYS || []) {
+    if (Object.prototype.hasOwnProperty.call(input || {}, k)) {
+      const v = input[k];
+      if (v === true || v === false || v === null) out[k] = v; // null means "inherit"
+    }
   }
-
-  // Fallback: does a Client with this id exist? If yes, treat as admin.
-  try {
-    if (req.user?.id && await Client.exists({ _id: req.user.id })) return "admin";
-  } catch (_) { }
-
-  return "user";
+  return out;
 }
 
-function assignableRolesFor(currentRole) {
-  if (currentRole === "admin") return ALL_ROLES;
-  if (currentRole === "manager") return ["user"]; // or ["manager","user"] if you prefer
-  return ["user"];
+
+function seedFromRole(roleDoc) {
+  const list = Array.isArray(roleDoc?.defaultPermissions)
+    ? roleDoc.defaultPermissions
+    : [];
+
+  // "*" means all caps are granted
+  const grantsAll = list.includes("*");
+  const seed = {};
+
+  for (const key of CAP_KEYS) {
+    if (grantsAll || list.includes(key)) {
+      seed[key] = true;     // set granted caps to true
+    }
+    // don’t set anything for other keys -> they will remain schema default (null)
+  }
+  return seed;
 }
+
 
 
 exports.createUser = async (req, res) => {
@@ -69,67 +71,87 @@ exports.createUser = async (req, res) => {
       contactNumber,
       address,
       companies = [],
-      roleId,        // 👈 prefer this from UI
-      roleName,      // or this (e.g., "user")
-      permissions = []
+      roleId,
+      roleName,
+      permissions = [], // optional array of capability keys to force true
+      overrides,        // optional object of {capKey: true|false|null}
     } = req.body;
 
-    // 1) resolve target role
+    // 1) resolve role
     let targetRole = null;
     if (roleId && mongoose.Types.ObjectId.isValid(roleId)) {
       targetRole = await Role.findById(roleId);
     } else if (roleName) {
       targetRole = await Role.findOne({ name: String(roleName).toLowerCase() });
     }
-    if (!targetRole) {
-      return res.status(400).json({ message: "Invalid role" });
-    }
+    if (!targetRole) return res.status(400).json({ message: "Invalid role" });
 
-    // 2) check actor can assign
-    const actorRole = await getActorRoleDoc(req);
-    if (!canAssignRole(actorRole, targetRole)) {
-      return res.status(403).json({ message: "Not allowed to assign this role" });
-    }
-
-    // 3) companies belong to same tenant
-    const clientId = req.user.createdByClient || req.user.id; // works for client/admin tokens
-    const validCompanies = await Company.find({ _id: { $in: companies }, client: clientId });
+    // 2) tenant/company validations
+    const clientId = req.user.createdByClient || req.user.id;
+    const validCompanies = await Company.find({
+      _id: { $in: companies },
+      client: clientId,
+    });
     if ((companies?.length || 0) !== validCompanies.length) {
       return res.status(400).json({ message: "Invalid companies selected" });
     }
 
-    // 4) user limit
+    // 3) user limit
     const client = await Client.findById(clientId);
     if (!client) return res.status(404).json({ message: "Client not found" });
-
     const userCount = await User.countDocuments({ createdByClient: clientId });
     if (userCount >= client.userLimit) {
-      return res.status(403).json({ message: "User creation limit reached. Please contact admin." });
+      return res
+        .status(403)
+        .json({ message: "User creation limit reached. Please contact admin." });
     }
 
-    // 5) create
+    // 4) create user
     const hashedPassword = await bcrypt.hash(password, 10);
-
     const newUser = await User.create({
       userName,
       userId,
       password: hashedPassword,
       contactNumber,
       address,
-      role: targetRole._id,     // 👈 store role ref
-      permissions,              // optional per-user grants
+      role: targetRole._id, // Role ref
       companies,
-      createdByClient: clientId
+      createdByClient: clientId,
     });
 
-    res.status(201).json({ message: "User created", user: newUser });
+    // 5) seed UserPermission from role defaults + merge any incoming overrides
+    const seed = seedFromRole(targetRole);               // <-- define seed here
+    const extra = {};                                    // from client request
+    if (overrides) Object.assign(extra, pickOverrideFlags(overrides));
+    if (Array.isArray(permissions) && permissions.length && CAP_KEYS) {
+      for (const k of permissions) if (CAP_KEYS.includes(k)) extra[k] = true;
+    }
+    const finalSet = { ...seed, ...extra, updatedBy: req.user._id };
+
+    let userPermission = await UserPermission.findOneAndUpdate(
+      { client: clientId, user: newUser._id },
+      {
+        $setOnInsert: {
+          client: clientId,
+          user: newUser._id,
+          allowedCompanies: companies, // optional
+        },
+        $set: finalSet,
+      },
+      { upsert: true, new: true }
+    );
+
+    return res
+      .status(201)
+      .json({ message: "User created", user: newUser, userPermission });
   } catch (err) {
     if (err.code === 11000) {
       return res.status(400).json({ message: "User ID already exists" });
     }
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 };
+
 
 
 exports.getUsers = async (req, res) => {
@@ -166,7 +188,7 @@ exports.updateUser = async (req, res) => {
 
     // Only allow updates by same client or high-privileged roles as you wish
     if (String(doc.createdByClient) !== String(clientId) &&
-        (String(req.user.role).toLowerCase() !== "admin" && String(req.user.role).toLowerCase() !== "master")) {
+      (String(req.user.role).toLowerCase() !== "admin" && String(req.user.role).toLowerCase() !== "master")) {
       return res.status(403).json({ message: "Not authorized to update this user" });
     }
 
