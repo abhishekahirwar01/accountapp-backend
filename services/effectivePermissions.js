@@ -1,11 +1,14 @@
 // services/effectivePermissions.js
-const Permission = require("../models/Permission");        // tenant defaults
-const UserPermission = require("../models/UserPermission"); // per-user overrides
-const Role = require("../models/Role");
+const Permission = require("../models/Permission");
+const UserPermission = require("../models/UserPermission");
+const Company = require("../models/Company");
 
+// All capability keys your UI/back-end care about.
+// (Some exist only on tenant Permission, some also on UserPermission.)
 const CAP_KEYS = [
+  "canCreateUsers",             // tenant-only
   "canCreateInventory",
-  "canCreateProducts",
+  "canCreateProducts",          // tenant-only
   "canCreateCustomers",
   "canCreateVendors",
   "canCreateCompanies",
@@ -19,47 +22,85 @@ const CAP_KEYS = [
   "canCreatePaymentEntries",
 ];
 
-function tri(userVal, baseVal) {
-  // userVal: true | false | null/undefined (inherit)
-  if (userVal === true)  return true;
-  if (userVal === false) return false;
-  return baseVal;
-}
+// keys that are allowed to be overridden at the user level
+const USER_OVERRIDE_KEYS = new Set([
+  "canCreateInventory",
+  "canCreateCustomers",
+  "canCreateVendors",
+  "canCreateCompanies",
+  "canUpdateCompanies",
+  "canSendInvoiceEmail",
+  "canSendInvoiceWhatsapp",
+  "canCreateSaleEntries",
+  "canCreatePurchaseEntries",
+  "canCreateJournalEntries",
+  "canCreateReceiptEntries",
+  "canCreatePaymentEntries",
+]);
 
-async function getEffectivePermissions({ clientId, userId, roleName, rolePerms }) {
-  const [clientPerm, userPerm, roleDoc] = await Promise.all([
+/**
+ * Merge order:
+ *   base = tenant Permission (booleans)
+ *   override = UserPermission[key] (true|false|null)
+ *   effective = base && (override == null ? true : override)
+ * I.e., tenant flags are the ceiling: when tenant=false → effective=false.
+ */
+async function getEffectivePermissions({ clientId, userId }) {
+  const [tenant, userPerm] = await Promise.all([
     Permission.findOne({ client: clientId }).lean(),
     UserPermission.findOne({ client: clientId, user: userId }).lean(),
-    rolePerms ? null : (roleName ? Role.findOne({ name: String(roleName).toLowerCase() }).lean() : null),
   ]);
 
-  // 1) Tenant caps (hard upper bound)
-  const tenantCaps = Object.fromEntries(CAP_KEYS.map(k => [k, !!clientPerm?.[k]]));
-
-  // 2) Role defaults (array of cap keys or "*")
-  const roleList = rolePerms || roleDoc?.defaultPermissions || [];
-  const grantsAll = Array.isArray(roleList) && roleList.includes("*");
-  const roleCaps = Object.fromEntries(
-    CAP_KEYS.map(k => [k, grantsAll || roleList.includes(k)])
-  );
-
-  // Base = tenant allows AND role grants
-  const base = Object.fromEntries(
-    CAP_KEYS.map(k => [k, tenantCaps[k] && !!roleCaps[k]])
-  );
-
-  // 3) User overrides (final)
   const caps = {};
-  for (const k of CAP_KEYS) {
-    // If tenant disabled, nothing can enable it
-    caps[k] = tenantCaps[k] ? tri(userPerm?.[k], base[k]) : false;
+  for (const key of CAP_KEYS) {
+    const base = tenant?.[key];
+    const override = USER_OVERRIDE_KEYS.has(key) ? userPerm?.[key] : undefined;
+
+    // If tenant base is explicitly false → effective false
+    if (base === false) {
+      caps[key] = false;
+      continue;
+    }
+    // If tenant base is true or undefined (treat undefined as false-safe)
+    if (base === true) {
+      // null/undefined = inherit; otherwise use explicit override
+      caps[key] = (override == null) ? true : !!override;
+    } else {
+      // tenant didn't define this flag; default to false unless override true is allowed
+      // but since tenant is the ceiling, leave false
+      caps[key] = false;
+    }
   }
 
-  return {
-    caps,
-    allowedCompanies: userPerm?.allowedCompanies || null,
-    planCode: clientPerm?.planCode || "FREE",
+  const limits = {
+    planCode: tenant?.planCode || "FREE",
+    maxCompanies: tenant?.maxCompanies ?? 1,
+    maxUsers: tenant?.maxUsers ?? 1,
+    maxInventories: tenant?.maxInventories ?? 0,
   };
+
+  const allowedCompanies = Array.isArray(userPerm?.allowedCompanies)
+    ? userPerm.allowedCompanies.map(String)
+    : [];
+
+  return { caps, limits, allowedCompanies, clientId, userId };
 }
 
-module.exports = { getEffectivePermissions, CAP_KEYS };
+/**
+ * Validates that provided company ids belong to this tenant.
+ * Returns sanitized array of ObjectIds (as strings).
+ */
+async function sanitizeAllowedCompanies(clientId, companyIds = []) {
+  if (!Array.isArray(companyIds) || companyIds.length === 0) return [];
+  const rows = await Company.find({ client: clientId, _id: { $in: companyIds } })
+    .select("_id")
+    .lean();
+  return rows.map((r) => String(r._id));
+}
+
+module.exports = {
+  CAP_KEYS,
+  USER_OVERRIDE_KEYS,
+  getEffectivePermissions,
+  sanitizeAllowedCompanies,
+};

@@ -11,14 +11,12 @@ const userPermissionSchema = new mongoose.Schema(
 
     // --- capability flags (null = inherit from client Permission) ---
     canCreateInventory:       { type: Boolean, default: null },
-    canCreateProducts:        { type: Boolean, default: null },
     canCreateCustomers:       { type: Boolean, default: null },
     canCreateVendors:         { type: Boolean, default: null },
     canCreateCompanies:       { type: Boolean, default: null },
     canUpdateCompanies:       { type: Boolean, default: null },
     canSendInvoiceEmail:      { type: Boolean, default: null },
     canSendInvoiceWhatsapp:   { type: Boolean, default: null },
-
     canCreateSaleEntries:     { type: Boolean, default: null },
     canCreatePurchaseEntries: { type: Boolean, default: null },
     canCreateJournalEntries:  { type: Boolean, default: null },

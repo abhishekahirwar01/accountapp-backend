@@ -23,6 +23,7 @@ const integrationsRoutes = require("./routes/integrationsRoutes");
 const invoiceNumberRoutes = require("./routes/invoiceNumberRoutes")
 const AccountValidityRoutes = require("./routes/accountValidityRoutes");
 const roleRoutes = require('./routes/roleRoutes')
+const userPermissionsRoutes = require("./routes/userPermissionsRoutes");
 
 dotenv.config();
 connectDB();
@@ -35,7 +36,7 @@ const app = express();
 const allowedOrigins = [
   'https://accountapp-theta.vercel.app',
   'http://localhost:3000',
-   'http://localhost:8678'
+  'http://localhost:8678'
 ];
 
 
@@ -52,7 +53,7 @@ app.use(async (req, res, next) => {
     next();
   } catch (err) {
     console.error("Database middleware error:", err);
-    res.status(500).json({ 
+    res.status(500).json({
       error: "Database connection failed",
       details: process.env.NODE_ENV === 'development' ? err.message : undefined
     });
@@ -76,10 +77,9 @@ app.use("/api/vendors", vendorRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api", permissionRoutes);
 app.use("/api/roles", roleRoutes);
-
 app.use("/api/invoices", invoiceNumberRoutes)
-
 app.use("/api/account", AccountValidityRoutes);
+app.use("/api/user-permissions", userPermissionsRoutes);
 
 
 
@@ -87,7 +87,7 @@ app.get('/api/db-status', async (req, res) => {
   try {
     const db = mongoose.connection.db;
     if (!db) throw new Error('Database not initialized');
-    
+
     const status = {
       readyState: mongoose.connection.readyState,
       state: ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState],
@@ -96,7 +96,7 @@ app.get('/api/db-status', async (req, res) => {
       models: mongoose.modelNames(),
       ping: await db.command({ ping: 1 })
     };
-    
+
     res.json(status);
   } catch (error) {
     res.status(500).json({

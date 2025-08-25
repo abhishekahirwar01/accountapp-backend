@@ -1,4 +1,3 @@
-// models/Role.js
 const mongoose = require("mongoose");
 
 const CAP_KEYS = [
@@ -19,7 +18,7 @@ const CAP_KEYS = [
 
 const roleSchema = new mongoose.Schema(
   {
-    // e.g. "master", "admin", "client", "user", "auditor"
+    // machine name/slug: "admin", "client", "user", "auditor", etc.
     name: { type: String, required: true, unique: true, trim: true, lowercase: true },
 
     // store capability keys (or "*" to grant all caps)
@@ -28,7 +27,7 @@ const roleSchema = new mongoose.Schema(
       default: [],
       validate: {
         validator(vals) {
-          return vals.every(v => v === "*" || CAP_KEYS.includes(v));
+          return vals.every((v) => v === "*" || CAP_KEYS.includes(v));
         },
         message: "defaultPermissions contains unknown capability key",
       },
@@ -36,13 +35,6 @@ const roleSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
-
-// Helper: return array of allowed caps (strings)
-roleSchema.statics.getPermissions = async function (roleName) {
-  if (!roleName) return [];
-  const doc = await this.findOne({ name: String(roleName).toLowerCase() }).lean();
-  return doc?.defaultPermissions || [];
-};
 
 module.exports = mongoose.model("Role", roleSchema);
 module.exports.CAP_KEYS = CAP_KEYS;
