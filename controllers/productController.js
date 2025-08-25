@@ -1,113 +1,96 @@
 const Product = require("../models/Product");
 
+// POST /api/products
 exports.createProduct = async (req, res) => {
   try {
     const { name, stocks } = req.body;
 
-    const product = new Product({
+    // ✅ ALWAYS use tenant from token and also track the actor
+    const product = await Product.create({
       name,
       stocks,
-      createdByClient: req.user.id
+      createdByClient: req.auth.clientId, // tenant id
+      createdByUser:   req.auth.userId,   // who created it
     });
 
-    await product.save();
-    res.status(201).json({ message: "Product created", product });
-
+    return res.status(201).json({ message: "Product created", product });
   } catch (err) {
     if (err.code === 11000) {
+      // because of compound unique {createdByClient, name}
       return res.status(400).json({ message: "Product already exists for this client" });
     }
-    res.status(500).json({ message: "Server error", error: err.message });
+    return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
 
 // GET /api/products
 exports.getProducts = async (req, res) => {
   try {
-    const { id, role, createdByClient } = req.user || {};
-    let clientId = null;
+    // ✅ scope by tenant
+    const clientId = req.auth.clientId;
 
-    // Determine tenant scope
-    if (role === "client" || role === "customer") {
-      // client token: its own id is the tenant id
-      clientId = id;
-    } else {
-      // employee/admin token under a tenant
-      clientId = createdByClient || null;
-    }
+    const products = await Product.find({ createdByClient: clientId })
+      .sort({ createdAt: -1 })
+      .lean();
 
-    // Last resort: read from DB if token didn’t include createdByClient
-    if (!clientId) {
-      const u = await User.findById(id).select("createdByClient").lean();
-      clientId = u?.createdByClient || null;
-    }
-
-    if (!clientId) {
-      return res.status(401).json({ message: "No client/tenant on token" });
-    }
-
-    const products = await Product.find({ createdByClient: clientId }).lean();
-    console.log(`Found ${products.length} products for client ${clientId}`);
     return res.json(products);
   } catch (err) {
-    console.error("getProducts error:", err);
     return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
 
+// PATCH /api/products/:id
 exports.updateProducts = async (req, res) => {
   try {
     const productId = req.params.id;
     const { name, stocks } = req.body;
 
     const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({ message: "Product not found" });
-    }
+    if (!product) return res.status(404).json({ message: "Product not found" });
 
-    // Authorization check
-    if (req.user.role !== "admin" && product.createdByClient.toString() !== req.user.id) {
+    // ✅ authorize by tenant (optionally allow privileged roles)
+    const sameTenant = product.createdByClient.toString() === req.auth.clientId;
+    const privileged = ["master", "client", "admin"].includes(req.auth.role);
+    if (!sameTenant && !privileged) {
       return res.status(403).json({ message: "Not authorized to update this product" });
     }
 
     if (name) product.name = name;
-    if (typeof stocks === "number" && stocks >= 0) product.stocks = stocks; // ✅ Update stocks only if valid
+    if (typeof stocks === "number" && stocks >= 0) product.stocks = stocks;
 
     await product.save();
-    res.status(200).json({ message: "Product updated", product });
+    return res.status(200).json({ message: "Product updated", product });
   } catch (err) {
     if (err.code === 11000) {
       return res.status(400).json({ message: "Duplicate product details" });
     }
-    res.status(500).json({ message: "Server error", error: err.message });
+    return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
 
-
+// DELETE /api/products/:id
 exports.deleteProducts = async (req, res) => {
   try {
     const productId = req.params.id;
 
     const product = await Product.findById(productId);
-    if (!product) {
-      return res.status(404).json({ message: "Party not found" });
-    }
+    if (!product) return res.status(404).json({ message: "Product not found" });
 
-    // Authorization check
-    if (req.user.role !== "admin" && product.createdByClient.toString() !== req.user.id) {
+    // ✅ authorize by tenant (optionally allow privileged roles)
+    const sameTenant = product.createdByClient.toString() === req.auth.clientId;
+    const privileged = ["master", "client", "admin"].includes(req.auth.role);
+    if (!sameTenant && !privileged) {
       return res.status(403).json({ message: "Not authorized to delete this product" });
     }
 
     await product.deleteOne();
-    res.status(200).json({ message: "product deleted successfully" });
+    return res.status(200).json({ message: "Product deleted successfully" });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
 
-
-
-
+// POST /api/products/update-stock-bulk
 exports.updateStockBulk = async (req, res) => {
   try {
     const { items = [], action = "decrease" } = req.body;
@@ -126,14 +109,14 @@ exports.updateStockBulk = async (req, res) => {
       qtyById.set(productId, (qtyById.get(productId) || 0) + qty);
     }
 
-    // fetch only this client's products
+    // ✅ fetch only this tenant's products
     const ids = [...qtyById.keys()];
     const products = await Product.find({
       _id: { $in: ids },
-      createdByClient: req.user.id,
+      createdByClient: req.auth.clientId,
     });
 
-    // existence & authorization checks
+    // ensure all requested ids belong to this tenant
     const productMap = new Map(products.map(p => [String(p._id), p]));
     for (const id of ids) {
       if (!productMap.has(id)) {
@@ -141,7 +124,7 @@ exports.updateStockBulk = async (req, res) => {
       }
     }
 
-    // compute new stocks and validate (no negative results)
+    // compute new stocks and validate (no negatives)
     const sign = action === "increase" ? 1 : -1;
     for (const [id, qty] of qtyById.entries()) {
       const p = productMap.get(id);
@@ -161,11 +144,11 @@ exports.updateStockBulk = async (req, res) => {
     }));
     await Product.bulkWrite(ops, { ordered: true });
 
-    res.json({
+    return res.json({
       message: "Stock updated",
       updated: products.map(p => ({ id: p._id, name: p.name, stocks: p.stocks })),
     });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    return res.status(500).json({ message: "Server error", error: err.message });
   }
 };

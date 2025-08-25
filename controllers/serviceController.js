@@ -1,14 +1,16 @@
 const Service = require("../models/Service");
+const { resolveClientId } = require("./common/tenant");
 
 // Create
 exports.createService = async (req, res) => {
   try {
     const { serviceName, amount, description } = req.body;
-    const service = new Service({
+    const service = await Service.create({
       serviceName,
       amount,
       description,
-      createdByClient: req.user.id
+      createdByClient: req.auth.clientId,  // TENANT
+      createdByUser: req.auth.userId,    // ACTOR (remove if not in schema)
     });
 
     await service.save();
@@ -24,10 +26,40 @@ exports.createService = async (req, res) => {
 // Get all
 exports.getServices = async (req, res) => {
   try {
-    const services = await Service.find({ createdByClient: req.user.id });
-    res.json(services);
+    const clientId = req.auth.clientId;
+
+    const {
+      q,
+      companyId,
+      page = 1,
+      limit = 100,
+    } = req.query;
+
+    const where = { createdByClient: clientId };
+
+    if (q) {
+      where.serviceName = { $regex: String(q), $options: "i" };
+    }
+    if (companyId) {
+      where.company = companyId; // only if your schema has a `company` field
+    }
+
+    const perPage = Math.min(Number(limit) || 100, 500);
+    const skip = (Number(page) - 1) * perPage;
+
+    const [items, total] = await Promise.all([
+      Service.find(where).sort({ createdAt: -1 }).skip(skip).limit(perPage).lean(),
+      Service.countDocuments(where),
+    ]);
+
+    return res.json({
+      services: items,
+      total,
+      page: Number(page),
+      limit: perPage,
+    });
   } catch (err) {
-    res.status(500).json({ message: "Server error", error: err.message });
+    return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
 
@@ -37,7 +69,9 @@ exports.updateService = async (req, res) => {
     const service = await Service.findById(req.params.id);
     if (!service) return res.status(404).json({ message: "Service not found" });
 
-    if (req.user.role !== "admin" && String(service.createdByClient) !== req.user.id) {
+    const privileged = ["master", "client", "admin"].includes(req.auth.role);
+    const sameTenant = String(service.createdByClient) === req.auth.clientId;
+    if (!privileged && !sameTenant) {
       return res.status(403).json({ message: "Not authorized" });
     }
 
@@ -62,7 +96,9 @@ exports.deleteService = async (req, res) => {
     const service = await Service.findById(req.params.id);
     if (!service) return res.status(404).json({ message: "Service not found" });
 
-    if (req.user.role !== "admin" && String(service.createdByClient) !== req.user.id) {
+    const privileged = ["master", "client", "admin"].includes(req.auth.role);
+    const sameTenant = String(service.createdByClient) === req.auth.clientId;
+    if (!privileged && !sameTenant) {
       return res.status(403).json({ message: "Not authorized" });
     }
 
@@ -78,7 +114,7 @@ exports.getServiceById = async (req, res) => {
   try {
     const doc = await Service.findOne({
       _id: req.params.id,
-      createdByClient: req.user.id,
+      createdByClient: req.auth.clientId,
     });
     if (!doc) return res.status(404).json({ message: "Service not found" });
 

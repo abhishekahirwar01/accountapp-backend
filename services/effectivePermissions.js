@@ -5,10 +5,8 @@ const Company = require("../models/Company");
 
 // All capability keys your UI/back-end care about.
 // (Some exist only on tenant Permission, some also on UserPermission.)
-const CAP_KEYS = [
-  "canCreateUsers",             // tenant-only
-  "canCreateInventory",
-  "canCreateProducts",          // tenant-only
+const CAP_KEYS = [           // tenant-only
+  "canCreateInventory",          // tenant-only
   "canCreateCustomers",
   "canCreateVendors",
   "canCreateCompanies",
@@ -47,7 +45,7 @@ const USER_OVERRIDE_KEYS = new Set([
  */
 async function getEffectivePermissions({ clientId, userId }) {
   const [tenant, userPerm] = await Promise.all([
-    Permission.findOne({ client: clientId }).lean(),
+    // Permission.findOne({ client: clientId }).lean(),
     UserPermission.findOne({ client: clientId, user: userId }).lean(),
   ]);
 
