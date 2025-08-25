@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const partySchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, lowercase: true, trim: true },
+    name: { type: String, required: true,  trim: true },
     address: { type: String, trim: true },
     city: { type: String, trim: true },
     state: { type: String, trim: true },

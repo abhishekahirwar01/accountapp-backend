@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const vendorSchema = new mongoose.Schema(
   {
-    vendorName: { type: String, required: true, lowercase: true, trim: true },
+    vendorName: { type: String, required: true, trim: true },
     address: { type: String, trim: true },
     city: { type: String, trim: true },
     state: { type: String, trim: true },
@@ -26,6 +26,6 @@ const vendorSchema = new mongoose.Schema(
 );
 
 // Ensure vendorName + client combo is unique
-vendorSchema.index({ vendorName: 1, createdByClient: 1 }, { unique: true });
+vendorSchema.index({ vendorName: 1, createdByClient: 1 }, { unique: true, collation: { locale: "en", strength: 2 } });
 
 module.exports = mongoose.model("Vendor", vendorSchema);
