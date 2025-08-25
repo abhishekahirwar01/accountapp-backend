@@ -1,7 +1,7 @@
 const mongoose = require("mongoose");
 const productSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true, lowercase: true, trim: true },
+    name: { type: String, required: true,  trim: true },
     stocks: { type: Number, default: 0, min: 0 },
     createdByClient: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
     createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
@@ -11,7 +11,7 @@ const productSchema = new mongoose.Schema(
 
 // ❌ remove global unique on name
 // ✅ add compound unique per tenant
-productSchema.index({ createdByClient: 1, name: 1 }, { unique: true });
+productSchema.index({ createdByClient: 1, name: 1 }, { unique: true, collation: { locale: "en", strength: 2 } });
 
 module.exports = mongoose.model("Product", productSchema);
 
