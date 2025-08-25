@@ -34,6 +34,6 @@ const partySchema = new mongoose.Schema(
 );
 
 // Unique party name per client
-partySchema.index({ name: 1, createdByClient: 1 }, { unique: true });
+partySchema.index({ name: 1, createdByClient: 1 }, { unique: true, collation: { locale: "en", strength: 2 } });
 
 module.exports = mongoose.model("Party", partySchema);
