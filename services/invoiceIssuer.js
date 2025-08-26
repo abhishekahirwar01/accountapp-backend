@@ -122,7 +122,15 @@ async function issueNumberCore(companyId, atDate, { session, series, base }) {
 
   let counter;
   try {
-    counter = await InvoiceCounter.findOneAndUpdate(filter, update, opts);
+     counter = await InvoiceCounter.findOneAndUpdate(
+      filter,
+      [
+        { $set: { company: companyId, series, yearYY } },
+        { $set: { seq: { $add: [ { $ifNull: ["$seq", base - 2] }, 2 ] } } },
+      ],
+      { upsert: true, new: true, session, returnDocument: "after" }
+    );
+  
   } catch (e) {
     if (e && e.code === 11000) {
       // Another writer inserted the doc in parallel; increment again without upsert.
