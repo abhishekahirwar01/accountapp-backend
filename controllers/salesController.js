@@ -8,7 +8,6 @@ const normalizeServices = require("../utils/normalizeServices");
 const { sendSalesInvoiceEmail } = require("../services/invoiceEmail");
 const { issueSalesInvoiceNumber } = require("../services/invoiceIssuer");
 
-
 // at top of controllers/salesController.js
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 
@@ -16,13 +15,14 @@ const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
 async function ensureAuthCaps(req) {
   // Normalize: support old middlewares that used req.user
-  if (!req.auth && req.user) req.auth = {
-    clientId: req.user.id,
-    userId: req.user.userId || req.user.id,
-    role: req.user.role,
-    caps: req.user.caps,
-    allowedCompanies: req.user.allowedCompanies,
-  };
+  if (!req.auth && req.user)
+    req.auth = {
+      clientId: req.user.id,
+      userId: req.user.userId || req.user.id,
+      role: req.user.role,
+      caps: req.user.caps,
+      allowedCompanies: req.user.allowedCompanies,
+    };
 
   if (!req.auth) throw new Error("Unauthorized (no auth context)");
 
@@ -49,8 +49,6 @@ function companyAllowedForUser(req, companyId) {
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
 
-
-
 exports.createSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
   let entry, companyDoc, partyDoc;
@@ -59,12 +57,16 @@ exports.createSalesEntry = async (req, res) => {
     await ensureAuthCaps(req);
 
     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
-      return res.status(403).json({ message: "Not allowed to create sales entries" });
+      return res
+        .status(403)
+        .json({ message: "Not allowed to create sales entries" });
     }
 
     const { company: companyId } = req.body;
     if (!companyAllowedForUser(req, companyId)) {
-      return res.status(403).json({ message: "You are not allowed to use this company" });
+      return res
+        .status(403)
+        .json({ message: "You are not allowed to use this company" });
     }
 
     await session.withTransaction(async () => {
@@ -78,35 +80,51 @@ exports.createSalesEntry = async (req, res) => {
         description,
         referenceNumber,
         gstPercentage,
+        gstRate,
         discountPercentage,
         invoiceType,
       } = req.body;
 
-      companyDoc = await Company.findOne({ _id: companyId, client: req.auth.clientId }).session(session);
+      companyDoc = await Company.findOne({
+        _id: companyId,
+        client: req.auth.clientId,
+      }).session(session);
       if (!companyDoc) throw new Error("Invalid company selected");
 
-      partyDoc = await Party.findOne({ _id: party, createdByClient: req.auth.clientId }).session(session);
+      partyDoc = await Party.findOne({
+        _id: party,
+        createdByClient: req.auth.clientId,
+      }).session(session);
       if (!partyDoc) throw new Error("Customer not found or unauthorized");
 
-      let normalizedProducts = [], productsTotal = 0;
+      let normalizedProducts = [],
+        productsTotal = 0;
       if (Array.isArray(products) && products.length > 0) {
-        const { items, computedTotal } = await normalizeProducts(products, req.auth.clientId);
-        normalizedProducts = items; productsTotal = computedTotal;
+        const { items, computedTotal } = await normalizeProducts(
+          products,
+          req.auth.clientId
+        );
+        normalizedProducts = items;
+        productsTotal = computedTotal;
       }
+
 
       let normalizedServices = [], servicesTotal = 0;
       if (Array.isArray(services) && services.length > 0) {
         const { items, computedTotal } = await normalizeServices(services, req.auth.clientId /* pass session if needed */);
         normalizedServices = items; servicesTotal = computedTotal;
+
       }
 
-      const finalTotal = (typeof totalAmount === "number")
-        ? totalAmount
-        : (productsTotal + servicesTotal);
+      const finalTotal =
+        typeof totalAmount === "number"
+          ? totalAmount
+          : productsTotal + servicesTotal;
 
       const atDate = date ? new Date(date) : new Date();
       const { invoiceNumber, yearYY } =
         await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
+
 
       const docs = await SalesEntry.create([{
         party: partyDoc._id,
@@ -127,6 +145,7 @@ exports.createSalesEntry = async (req, res) => {
         createdByUser: req.auth.userId,
       }], { session });
 
+
       entry = docs[0];
     });
 
@@ -136,21 +155,21 @@ exports.createSalesEntry = async (req, res) => {
         sale: entry.toObject ? entry.toObject() : entry,
         partyId: entry.party,
         companyId: entry.company,
-      }).catch(err => console.error("Invoice email failed:", err.message));
+      }).catch((err) => console.error("Invoice email failed:", err.message));
     });
 
-    return res.status(201).json({ message: "Sales entry created successfully", entry });
+    return res
+      .status(201)
+      .json({ message: "Sales entry created successfully", entry });
   } catch (err) {
     console.error("createSalesEntry error:", err);
-    return res.status(500).json({ message: "Something went wrong", error: err.message });
+    return res
+      .status(500)
+      .json({ message: "Something went wrong", error: err.message });
   } finally {
     session.endSession();
   }
 };
-
-
-
-
 
 // GET Sales Entries (Client or Master Admin)
 // In your getSalesEntries controller
@@ -177,19 +196,16 @@ exports.getSalesEntries = async (req, res) => {
     res.status(200).json({
       success: true,
       count: entries.length,
-      data: entries  // Use consistent key
+      data: entries, // Use consistent key
     });
-
   } catch (err) {
     console.error("Error fetching sales entries:", err.message);
     res.status(500).json({
       success: false,
-      error: err.message
+      error: err.message,
     });
   }
 };
-
-
 
 // DELETE a sales entry
 exports.deleteSalesEntry = async (req, res) => {
@@ -219,7 +235,8 @@ exports.updateSalesEntry = async (req, res) => {
     await ensureAuthCaps(req);
 
     const entry = await SalesEntry.findById(req.params.id);
-    if (!entry) return res.status(404).json({ message: "Sales entry not found" });
+    if (!entry)
+      return res.status(404).json({ message: "Sales entry not found" });
 
     // Tenant auth: allow privileged roles or same tenant only
     if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
@@ -231,7 +248,9 @@ exports.updateSalesEntry = async (req, res) => {
     // If company is being changed, check permission + existence
     if (otherUpdates.company) {
       if (!companyAllowedForUser(req, otherUpdates.company)) {
-        return res.status(403).json({ message: "You are not allowed to use this company" });
+        return res
+          .status(403)
+          .json({ message: "You are not allowed to use this company" });
       }
       const company = await Company.findOne({
         _id: otherUpdates.company,
@@ -249,7 +268,9 @@ exports.updateSalesEntry = async (req, res) => {
         createdByClient: req.auth.clientId,
       });
       if (!party) {
-        return res.status(400).json({ message: "Customer not found or unauthorized" });
+        return res
+          .status(400)
+          .json({ message: "Customer not found or unauthorized" });
       }
     }
 
@@ -273,7 +294,11 @@ exports.updateSalesEntry = async (req, res) => {
     }
 
     // Don’t allow changing invoiceNumber/year from payload
-    const { totalAmount, invoiceNumber, invoiceYearYY, ...rest } = otherUpdates;
+    const { totalAmount, invoiceNumber, invoiceYearYY, gstRate, ...rest } =
+      otherUpdates;
+    if (typeof gstRate === "number") {
+      entry.gstPercentage = gstRate;
+    }
     Object.assign(entry, rest);
 
     // Recalculate total if not explicitly provided
@@ -297,8 +322,10 @@ exports.updateSalesEntry = async (req, res) => {
 
     // optional: keep your async email
     setImmediate(() => {
-      sendSalesInvoiceEmail({ clientId: req.auth.clientId, saleId: entry._id })
-        .catch(err => console.error("Failed to send invoice email:", err));
+      sendSalesInvoiceEmail({
+        clientId: req.auth.clientId,
+        saleId: entry._id,
+      }).catch((err) => console.error("Failed to send invoice email:", err));
     });
 
     res.json({ message: "Sales entry updated successfully", entry });
@@ -308,7 +335,6 @@ exports.updateSalesEntry = async (req, res) => {
   }
 };
 
-
 // GET Sales Entries by clientId (for master admin)
 exports.getSalesEntriesByClient = async (req, res) => {
   try {
@@ -316,13 +342,14 @@ exports.getSalesEntriesByClient = async (req, res) => {
 
     const entries = await SalesEntry.find({ client: clientId })
       .populate("party", "name")
-      .populate("items.product", "name")          // ✅ nested path
-      .populate("company", "businessName")        // ✅ field name
+      .populate("items.product", "name") // ✅ nested path
+      .populate("company", "businessName") // ✅ field name
       .sort({ date: -1 });
-
 
     res.status(200).json({ entries });
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch entries", error: err.message });
+    res
+      .status(500)
+      .json({ message: "Failed to fetch entries", error: err.message });
   }
 };
