@@ -10,14 +10,27 @@ module.exports = async (rawServices = [], clientId) => {
   let computedTotal = 0;
 
   for (const item of rawServices) {
-    const service = await Service.findOne({ _id: item.serviceName, createdByClient: clientId });
-    if (!service) throw new Error(`Service not found or unauthorized: ${item.serviceName}`);
+    // Check both service and serviceName for compatibility
+    const serviceId = item.service || item.serviceName;
+    
+    if (!serviceId) {
+      throw new Error("Service ID is required for each service item");
+    }
 
-    const amount = Number(item.amount ?? service.cost); // Using cost for purchased services
+    const service = await Service.findOne({ 
+      _id: serviceId, 
+      createdByClient: clientId 
+    });
+    
+    if (!service) {
+      throw new Error(`Service not found or unauthorized: ${serviceId}`);
+    }
+
+    const amount = Number(item.amount ?? service.amount ?? 0);
     if (isNaN(amount)) throw new Error("Invalid amount");
     
     items.push({
-      serviceName: service._id,
+      serviceName: service._id, // Store reference to service
       amount,
       description: item.description || service.description || ""
     });
