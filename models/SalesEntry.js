@@ -11,7 +11,7 @@ const salesItemSchema = new mongoose.Schema({
 }, { _id: false });
 
 const salesServiceSchema = new mongoose.Schema({
-  serviceName: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
+  services: { type: mongoose.Schema.Types.ObjectId, ref: "Services", required: true },
   amount: { type: Number, required: true, min: 1 },
   description: { type: String },
 }, { _id: false });
@@ -28,17 +28,17 @@ const salesSchema = new mongoose.Schema({
     required: false,
     validate: {
       validator: function (v) {
-        return !(this.products.length === 0 && this.service.length === 0);
+        return !((this.products?.length ?? 0) === 0 && (this.services?.length ?? 0) === 0);
       },
       message: 'At least one product or service is required'
     }
   },
-  service: {
+  services: {
     type: [salesServiceSchema],
     required: false,
     validate: {
       validator: function (v) {
-        return !(this.products.length === 0 && this.service.length === 0);
+        return !((this.products?.length ?? 0) === 0 && (this.services?.length ?? 0) === 0);
       },
       message: 'At least one product or service is required'
     }

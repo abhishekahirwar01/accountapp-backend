@@ -5,7 +5,8 @@ const Vendor = require("../models/Vendor");
 const Product = require("../models/Product");
 const normalizePurchaseProducts = require("../utils/normalizePurchaseProducts");
 const normalizePurchaseServices = require("../utils/normalizePurchaseServices");
-const { issuePurchaseInvoiceNumber } = require("../services/invoiceIssuer");
+
+// ⛔ removed: const { issuePurchaseInvoiceNumber } = require("../services/invoiceIssuer");
 
 // load effective caps if middleware didn’t attach them
 const { getEffectivePermissions } = require("../services/effectivePermissions");
@@ -56,13 +57,13 @@ function companyAllowedForUser(req, companyId) {
 
 // --- CREATE ------------------------------------------------------
 
-// controllers/purchaseController.js (your createPurchaseEntry)
+// controllers/purchaseController.js (createPurchaseEntry without any invoice numbering)
 exports.createPurchaseEntry = async (req, res) => {
   const session = await mongoose.startSession();
   const txnOpts = {
-    readPreference: 'primary',
-    readConcern: { level: 'snapshot' },
-    writeConcern: { w: 'majority' },
+    readPreference: "primary",
+    readConcern: { level: "snapshot" },
+    writeConcern: { w: "majority" },
   };
 
   try {
@@ -92,24 +93,29 @@ exports.createPurchaseEntry = async (req, res) => {
 
           let normalizedProducts = [], productsTotal = 0;
           if (Array.isArray(products) && products.length > 0) {
-            const { items, computedTotal } = await normalizePurchaseProducts(products, req.auth.clientId /* pass session if they read/write */);
+            const { items, computedTotal } = await normalizePurchaseProducts(
+              products,
+              req.auth.clientId /* pass session if normalize funcs use db */
+            );
             normalizedProducts = items; productsTotal = computedTotal;
           }
 
           let normalizedServices = [], servicesTotal = 0;
           if (Array.isArray(services) && services.length > 0) {
-            const { items, computedTotal } = await normalizePurchaseServices(services, req.auth.clientId /* pass session if they read/write */);
+            const { items, computedTotal } = await normalizePurchaseServices(
+              services,
+              req.auth.clientId /* pass session if normalize funcs use db */
+            );
             normalizedServices = items; servicesTotal = computedTotal;
           }
 
-          const finalTotal = (typeof totalAmount === "number") ? totalAmount : (productsTotal + servicesTotal);
+          const finalTotal = (typeof totalAmount === "number")
+            ? totalAmount
+            : (productsTotal + servicesTotal);
 
-          const atDate = date ? new Date(date) : new Date();
-          const { invoiceNumber, yearYY } = await issuePurchaseInvoiceNumber(
-            companyDoc._id,
-            atDate,
-            { session, series: "purchase" }
-          );
+          // ⛔ removed invoiceNumber issuance completely
+          // const atDate = date ? new Date(date) : new Date();
+          // const { invoiceNumber, yearYY } = await issuePurchaseInvoiceNumber(...);
 
           const docs = await PurchaseEntry.create([{
             vendor: vendorDoc._id,
@@ -120,9 +126,12 @@ exports.createPurchaseEntry = async (req, res) => {
             products: normalizedProducts,
             services: normalizedServices,
             totalAmount: finalTotal,
-            description, referenceNumber, gstPercentage, invoiceType,
+            description,
+            referenceNumber,
+            gstPercentage,
+            invoiceType,
             gstin: companyDoc.gstin || null,
-            invoiceNumber, invoiceYearYY: yearYY,
+            // ⛔ removed: invoiceNumber, invoiceYearYY
           }], { session });
           entry = docs[0];
 
@@ -145,7 +154,7 @@ exports.createPurchaseEntry = async (req, res) => {
 
       } catch (e) {
         const labels = new Set(e?.errorLabels || e?.errorLabelSet || []);
-        if (labels.has('TransientTransactionError') || e?.code === 112 || e?.code === 11000) {
+        if (labels.has("TransientTransactionError") || e?.code === 112 || e?.code === 11000) {
           // small backoff then retry
           await new Promise(r => setTimeout(r, 30 * (attempt + 1)));
           continue;
@@ -162,7 +171,6 @@ exports.createPurchaseEntry = async (req, res) => {
     session.endSession();
   }
 };
-
 
 // --- LIST / SEARCH / PAGINATE -----------------------------------
 
@@ -187,7 +195,7 @@ exports.getPurchaseEntries = async (req, res) => {
     if (dateFrom || dateTo) {
       where.date = {};
       if (dateFrom) where.date.$gte = new Date(dateFrom);
-      if (dateTo)   where.date.$lte = new Date(dateTo);
+      if (dateTo) where.date.$lte = new Date(dateTo);
     }
 
     if (q) {
@@ -276,12 +284,12 @@ exports.updatePurchaseEntry = async (req, res) => {
       servicesTotal = computedTotal;
     }
 
-    // prevent invoice fields from being overwritten
-    const { totalAmount, invoiceNumber, invoiceYearYY, ...rest } = otherUpdates;
-    Object.assign(entry, rest);
+    // ⛔ invoice fields no longer special; just apply updates normally
+    Object.assign(entry, otherUpdates);
 
-    if (typeof totalAmount === "number") {
-      entry.totalAmount = totalAmount;
+    // compute total if not explicitly provided
+    if (typeof otherUpdates.totalAmount === "number") {
+      entry.totalAmount = otherUpdates.totalAmount;
     } else {
       const sumProducts =
         productsTotal ||

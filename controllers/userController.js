@@ -22,12 +22,32 @@ async function getActorRoleDoc(req) {
   return null;
 }
 
-// Default rule: actor can assign any role with lower rank
-// (or use actor.canAssign override if you add that field)
-function canAssignRole(actorRoleDoc, targetRoleDoc) {
-  if (!actorRoleDoc || !targetRoleDoc) return false;
-  // allow everything except assigning a reserved 'master' role
-  return targetRoleDoc.name !== "master";
+function normalizeRoleName(x) {
+  return String(x || "").trim().toLowerCase();
+}
+
+async function getRoleByInput({ roleId, roleName }) {
+  if (roleId && mongoose.Types.ObjectId.isValid(roleId)) {
+    const r = await Role.findById(roleId);
+    if (r) return r;
+  }
+  if (roleName) {
+    const r = await Role.findOne({ name: normalizeRoleName(roleName) });
+    if (r) return r;
+  }
+  return null;
+}
+
+// allow master anything; client/admin anything except 'master'; manager -> 'user' only
+function canAssignRole(actorRoleDoc, targetRoleDoc, actorNameRaw) {
+  const actor = normalizeRoleName(actorRoleDoc?.name || actorNameRaw);
+  const target = normalizeRoleName(targetRoleDoc?.name);
+  if (!target) return false;
+
+  if (actor === "master") return true;
+  if (actor === "admin" || actor === "client") return target !== "master";
+  if (actor === "manager") return target === "user";
+  return false;
 }
 
 function pickOverrideFlags(input) {
@@ -40,6 +60,17 @@ function pickOverrideFlags(input) {
   }
   return out;
 }
+
+function pickOnlyCaps(doc) {
+  const out = {};
+  for (const k of CAP_KEYS || []) {
+    if (doc && Object.prototype.hasOwnProperty.call(doc, k)) {
+      out[k] = doc[k];
+    }
+  }
+  return out;
+}
+
 
 
 function seedFromRole(roleDoc) {
@@ -69,6 +100,7 @@ exports.createUser = async (req, res) => {
       userId,
       password,
       contactNumber,
+      email,
       address,
       companies = [],
       roleId,
@@ -113,6 +145,7 @@ exports.createUser = async (req, res) => {
       userId,
       password: hashedPassword,
       contactNumber,
+      email,
       address,
       role: targetRole._id, // Role ref
       companies,
@@ -177,61 +210,134 @@ exports.getUsers = async (req, res) => {
 
 exports.updateUser = async (req, res) => {
   try {
-    const { userName, contactNumber, address, companies, password, roleId, roleName, permissions } = req.body;
-    const userId = req.params.id;
+    const {
+      userName,
+      contactNumber,
+      email,
+      address,
+      companies,
+      // do not allow password here; use reset route below
+      roleId,
+      roleName,
+      overrides,        // optional: {capKey: true|false|null}
+      permissions,      // optional: ["canCreateInventory", ...] => true
+    } = req.body;
 
-    const doc = await User.findById(userId);
+    const targetUserId = req.params.id;
+    const doc = await User.findById(targetUserId);
     if (!doc) return res.status(404).json({ message: "User not found" });
 
-    const actorRole = await getActorRoleDoc(req);
     const clientId = req.user.createdByClient || req.user.id;
+    const actorRoleDoc = await getActorRoleDoc(req);
+    const actorRoleName = normalizeRoleName(req.user.role);
+    const isSameTenant = String(doc.createdByClient) === String(clientId);
+    const isPrivileged = actorRoleName === "admin" || actorRoleName === "master";
 
-    // Only allow updates by same client or high-privileged roles as you wish
-    if (String(doc.createdByClient) !== String(clientId) &&
-      (String(req.user.role).toLowerCase() !== "admin" && String(req.user.role).toLowerCase() !== "master")) {
+    // only same-tenant actors or privileged roles can edit
+    if (!isSameTenant && !isPrivileged) {
       return res.status(403).json({ message: "Not authorized to update this user" });
     }
 
-    // Role change
-    if (roleId || roleName) {
-      let targetRole = null;
-      if (roleId && mongoose.Types.ObjectId.isValid(roleId)) {
-        targetRole = await Role.findById(roleId);
-      } else if (roleName) {
-        targetRole = await Role.findOne({ name: String(roleName).toLowerCase() });
-      }
-      if (!targetRole) return res.status(400).json({ message: "Invalid role" });
+    // --- basic fields
+    if (typeof userName === "string") doc.userName = userName;
+    if (typeof contactNumber === "string") doc.contactNumber = contactNumber;
+    if (typeof email === "string") doc.email = email;
+    if (typeof address === "string") doc.address = address;
 
-      if (!canAssignRole(actorRole, targetRole)) {
-        return res.status(403).json({ message: "Not allowed to assign this role" });
-      }
-      doc.role = targetRole._id;
-    }
-
-    // Companies validation
+    // --- company list (validate belongs to tenant)
     if (Array.isArray(companies)) {
       const validCompanies = await Company.find({ _id: { $in: companies }, client: clientId });
       if (validCompanies.length !== companies.length) {
         return res.status(400).json({ message: "Invalid companies selected" });
       }
       doc.companies = companies;
+
+      // keep UserPermission.allowedCompanies aligned
+      await UserPermission.findOneAndUpdate(
+        { client: clientId, user: doc._id },
+        {
+          $setOnInsert: { client: clientId, user: doc._id },
+          $set: { allowedCompanies: companies, updatedBy: req.user._id },
+        },
+        { upsert: true, new: true }
+      );
     }
 
-    if (typeof userName === "string") doc.userName = userName;
-    if (typeof contactNumber === "string") doc.contactNumber = contactNumber;
-    if (typeof address === "string") doc.address = address;
-    if (Array.isArray(permissions)) doc.permissions = permissions;
+    // --- role change (only if actually different)
+    if (roleId || roleName) {
+      const newRole = await getRoleByInput({ roleId, roleName });
+      if (!newRole) return res.status(400).json({ message: "Invalid role" });
 
-    if (password) {
-      doc.password = await bcrypt.hash(password, 10);
+      const isDifferent = String(doc.role) !== String(newRole._id);
+      if (isDifferent) {
+        if (!canAssignRole(actorRoleDoc, newRole, req.user.role)) {
+          return res.status(403).json({ message: "Not allowed to assign this role" });
+        }
+        doc.role = newRole._id;
+
+        // reseed user-permissions from role defaults + keep overrides
+        const seed = seedFromRole(newRole);              // role.defaultPermissions → {cap:true}
+        const extra = {};
+        if (overrides) Object.assign(extra, pickOverrideFlags(overrides));
+        if (Array.isArray(permissions) && permissions.length && CAP_KEYS) {
+          for (const k of permissions) if (CAP_KEYS.includes(k)) extra[k] = true;
+        }
+
+        // merge with existing record to preserve explicit false/null overrides
+        // read only capability keys so we don't accidentally $set client/user/etc.
+        const existingUPCaps = await UserPermission
+          .findOne({ client: clientId, user: doc._id })
+          .select(CAP_KEYS.join(" "))
+          .lean();
+
+        const mergedCaps = {
+          ...seed,                      // role defaults
+          ...(existingUPCaps || {}),    // keep explicit false/null from previous
+          ...extra,                     // incoming overrides/permissions
+          updatedBy: req.user._id,
+        };
+
+        await UserPermission.findOneAndUpdate(
+          { client: clientId, user: doc._id },
+          {
+            $setOnInsert: {
+              client: clientId,
+              user: doc._id,
+              allowedCompanies: doc.companies || [],
+            },
+            $set: mergedCaps,           // ✅ only caps + updatedBy
+          },
+          { upsert: true, new: true }
+        );
+
+      }
+    } else if (overrides || permissions) {
+      // no role change, but explicit permission updates
+      const extra = {};
+      if (overrides) Object.assign(extra, pickOverrideFlags(overrides));
+      if (Array.isArray(permissions) && permissions.length && CAP_KEYS) {
+        for (const k of permissions) if (CAP_KEYS.includes(k)) extra[k] = true;
+      }
+      if (Object.keys(extra).length) {
+        await UserPermission.findOneAndUpdate(
+          { client: clientId, user: doc._id },
+          {
+            $setOnInsert: { client: clientId, user: doc._id, allowedCompanies: doc.companies || [] },
+            $set: { ...extra, updatedBy: req.user._id },
+          },
+          { upsert: true, new: true }
+        );
+      }
     }
 
     await doc.save();
-    res.status(200).json({ message: "User updated", user: doc });
+    return res.status(200).json({ message: "User updated", user: doc });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("updateUser error:", err);
+    return res.status(500).json({ error: err.message });
   }
 };
+
 
 
 exports.deleteUser = async (req, res) => {
@@ -261,30 +367,49 @@ exports.deleteUser = async (req, res) => {
 
 exports.resetPassword = async (req, res) => {
   try {
-    const { userId, oldPassword, newPassword } = req.body;
+    const { userId } = req.params; // URL param: /api/users/:userId/reset-password
+    const { oldPassword, newPassword } = req.body;
 
-    if (!userId || !oldPassword || !newPassword) {
-      return res.status(400).json({ message: "All fields are required." });
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ message: "New password is too short." });
     }
 
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: "User not found." });
+    const doc = await User.findById(userId);
+    if (!doc) return res.status(404).json({ message: "User not found." });
 
-    const isMatch = await bcrypt.compare(oldPassword, user.password);
-    if (!isMatch) return res.status(401).json({ message: "Old password is incorrect." });
+    const actorRole = normalizeRoleName(req.user.role);
+    const isPrivileged = actorRole === "admin" || actorRole === "master";
+    const isSelf = String(req.user.id) === String(doc._id);
+
+    const clientId = req.user.createdByClient || req.user.id;
+    const isSameTenant = String(doc.createdByClient) === String(clientId);
+
+    // permission to reset
+    if (!isSelf && !(isPrivileged && isSameTenant)) {
+      return res.status(403).json({ message: "Not authorized to reset this user's password" });
+    }
+
+    // if not privileged, must verify old password
+    if (!isPrivileged) {
+      if (!oldPassword) {
+        return res.status(400).json({ message: "Current password is required." });
+      }
+      const ok = await bcrypt.compare(oldPassword, doc.password);
+      if (!ok) return res.status(401).json({ message: "Current password is incorrect." });
+    }
 
     const salt = await bcrypt.genSalt(10);
-    const hashedNewPassword = await bcrypt.hash(newPassword, salt);
+    doc.password = await bcrypt.hash(newPassword, salt);
+    doc.passwordChangedAt = new Date();       // add this field to your User schema if you want token invalidation
+    await doc.save();
 
-    user.password = hashedNewPassword;
-    await user.save();
-
-    res.json({ message: "Password reset successfully." });
+    return res.json({ message: "Password reset successfully." });
   } catch (error) {
-    console.error("Reset password error:", error.message);
-    res.status(500).json({ message: "Server error." });
+    console.error("resetPassword error:", error);
+    return res.status(500).json({ message: "Server error." });
   }
 };
+
 
 
 exports.getUsersByClient = async (req, res) => {
