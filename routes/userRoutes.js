@@ -11,6 +11,8 @@ router.put("/:id", verifyClientOrAdmin, userController.updateUser);
 router.delete("/:id", verifyClientOrAdmin, userController.deleteUser);
 router.get("/by-client/:clientId",verifyMasterAdmin, userController.getUsersByClient);
 
+router.post("/:userId/reset-password", verifyClientOrAdmin, userController.resetPassword);
+
 // Example endpoints that only logged-in employees/admins can access:
 router.post("/login", userController.loginUser)
 
