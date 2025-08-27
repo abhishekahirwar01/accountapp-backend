@@ -75,7 +75,6 @@ exports.createSalesEntry = async (req, res) => {
         company: companyId,
         date,
         products,
-        service,
         services,
         totalAmount,
         description,
@@ -109,15 +108,12 @@ exports.createSalesEntry = async (req, res) => {
         productsTotal = computedTotal;
       }
 
-      let normalizedServices = [],
-        servicesTotal = 0;
-      if (Array.isArray(service) && service.length > 0) {
-        const { items, computedTotal } = await normalizeServices(
-          service,
-          req.auth.clientId
-        );
-        normalizedServices = items;
-        servicesTotal = computedTotal;
+
+      let normalizedServices = [], servicesTotal = 0;
+      if (Array.isArray(services) && services.length > 0) {
+        const { items, computedTotal } = await normalizeServices(services, req.auth.clientId /* pass session if needed */);
+        normalizedServices = items; servicesTotal = computedTotal;
+
       }
 
       const finalTotal =
@@ -126,37 +122,29 @@ exports.createSalesEntry = async (req, res) => {
           : productsTotal + servicesTotal;
 
       const atDate = date ? new Date(date) : new Date();
-      const { invoiceNumber, yearYY } = await issueSalesInvoiceNumber(
-        companyId,
-        atDate,
-        { session, series: "sales" }
-      );
+      const { invoiceNumber, yearYY } =
+        await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
 
-      const docs = await SalesEntry.create(
-        [
-          {
-            party: partyDoc._id,
-            company: companyDoc._id,
-            client: req.auth.clientId,
-            date,
-            products: normalizedProducts,
-            service: normalizedServices,
-            totalAmount: finalTotal,
-            description,
-            referenceNumber,
 
-            gstPercentage:
-              typeof gstRate === "number" ? gstRate : gstPercentage,
-            discountPercentage,
-            invoiceType,
-            gstin: companyDoc.gstin || null,
-            invoiceNumber,
-            invoiceYearYY: yearYY,
-            createdByUser: req.auth.userId,
-          },
-        ],
-        { session }
-      );
+      const docs = await SalesEntry.create([{
+        party: partyDoc._id,
+        company: companyDoc._id,
+        client: req.auth.clientId,
+        date,
+        products: normalizedProducts,
+        services: normalizedServices,
+        totalAmount: finalTotal,
+        description,
+        referenceNumber,
+        gstPercentage,
+        discountPercentage,
+        invoiceType,
+        gstin: companyDoc.gstin || null,
+        invoiceNumber,
+        invoiceYearYY: yearYY,
+        createdByUser: req.auth.userId,
+      }], { session });
+
 
       entry = docs[0];
     });
@@ -200,7 +188,7 @@ exports.getSalesEntries = async (req, res) => {
     const entries = await SalesEntry.find(filter)
       .populate("party", "name")
       .populate("products.product", "name")
-      .populate("service.serviceName", "name")
+      .populate({ path: "services.service", select: "name" })
       .populate("company", "businessName")
       .sort({ date: -1 });
 
@@ -255,7 +243,7 @@ exports.updateSalesEntry = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
-    const { products, service, ...otherUpdates } = req.body;
+    const { products, services, ...otherUpdates } = req.body;
 
     // If company is being changed, check permission + existence
     if (otherUpdates.company) {
@@ -298,10 +286,10 @@ exports.updateSalesEntry = async (req, res) => {
     }
 
     // Normalize service lines only if provided (Array.isArray allows clearing with [])
-    if (Array.isArray(service)) {
+    if (Array.isArray(services)) {
       const { items: normalizedServices, computedTotal } =
-        await normalizeServices(service, req.auth.clientId);
-      entry.service = normalizedServices;
+        await normalizeServices(services, req.auth.clientId);
+      entry.services = normalizedServices;
       servicesTotal = computedTotal;
     }
 
@@ -324,8 +312,8 @@ exports.updateSalesEntry = async (req, res) => {
           : 0);
       const sumServices =
         servicesTotal ||
-        (Array.isArray(entry.service)
-          ? entry.service.reduce((s, it) => s + (Number(it.amount) || 0), 0)
+        (Array.isArray(entry.services)
+          ? entry.services.reduce((s, it) => s + (Number(it.amount) || 0), 0)
           : 0);
       entry.totalAmount = sumProducts + sumServices;
     }
