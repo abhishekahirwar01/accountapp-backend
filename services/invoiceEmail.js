@@ -204,6 +204,92 @@ function renderInvoiceHtml({ sale, party, company, currency = "INR", logoUrl, he
 
 
 
+exports.sendInvoiceFromClientPdf = async (req, res) => {
+  try {
+    const clientId = req.user.id;
+    const {
+      pdfBase64,
+      filename,
+      partyId,
+      companyId,
+      to: toOverride,
+      subject: subjectOverride,
+      message: messageOverride,
+    } = req.body || {};
+
+    if (!pdfBase64) {
+      return res.status(400).json({ message: "Missing pdfBase64" });
+    }
+
+    // Who to email + branding for the message
+    const [party, company] = await Promise.all([
+      partyId ? Party.findById(partyId).lean() : null,
+      companyId ? Company.findById(companyId).lean() : null,
+    ]);
+
+    const to = toOverride || party?.email;
+    if (!to) return res.status(400).json({ message: "Recipient email not provided" });
+
+    const partyName = party?.name || "Customer";
+    const companyName = company?.businessName || "Your Company";
+    const companyEmail = company?.emailId || company?.email || "support@example.com";
+    const companyPhone = company?.mobileNumber || company?.phone || "";
+
+    // Subject + message (your requested text, can be overridden by client)
+    const subject = subjectOverride || `Invoice Form ${companyName}`;
+    const html =
+      messageOverride ||
+      `
+      <div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;font-size:14px;color:#111;">
+        <p>Dear ${partyName},</p>
+        <p>
+          Thank you for choosing <strong>${companyName}</strong>. Please find attached the invoice
+          for your recent purchase.
+        </p>
+        <p>We appreciate your business and look forward to serving you again.</p>
+        <p>
+          For any queries, feel free to contact us at
+          <a href="mailto:${companyEmail}">${companyEmail}</a>
+          ${companyPhone ? ` or <a href="tel:${companyPhone}">${companyPhone}</a>` : ""}.
+        </p>
+        <p style="margin-top:16px;">
+          Warm regards,<br/>
+          ${companyName}<br/>
+          ${companyEmail}
+        </p>
+      </div>
+      `;
+
+    const pdfBuffer = Buffer.from(pdfBase64, "base64");
+
+    await exports._internal.sendWithClientGmail({
+      clientId,
+      fromName: companyName,
+      to,
+      subject,
+      html,
+      attachments: [
+        {
+          filename: filename || "Invoice.pdf",
+          content: pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
+    });
+
+    res.json({ ok: true });
+  } catch (e) {
+    const msg = e?.message || "Failed to send";
+    // When refresh token is invalid/revoked, sendWithClientGmail already marks disconnected.
+    if (/Gmail access was revoked/i.test(msg)) {
+      return res
+        .status(401)
+        .json({ code: "gmail_reconnect_required", message: msg });
+    }
+    res.status(400).json({ message: msg });
+  }
+};
+
 /**
  * Sends the sales invoice FROM the client’s connected Gmail TO the party’s email.
  * Throws only if you call it directly; in controllers, call inside setImmediate to avoid blocking.
