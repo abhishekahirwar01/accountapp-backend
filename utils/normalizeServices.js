@@ -1,29 +1,24 @@
+// utils/normalizeServices.js
 const Service = require("../models/Service");
 
-module.exports = async (rawServices = [], clientId) => {
-  if (!Array.isArray(rawServices)) throw new Error("Services must be an array");
-
+module.exports = async function normalizeServices(rows, clientId) {
   const items = [];
   let computedTotal = 0;
 
-  for (const item of rawServices) {
-    // incoming payload uses `service`
-    const serviceDoc = await Service.findOne({
-      _id: item.service,
-      createdByClient: clientId,
-    });
-    if (!serviceDoc) throw new Error(`Service not found or unauthorized: ${item.service}`);
+  for (const r of rows || []) {
+    const id = r.service; // ✅ expect 'service'
+    if (!id) continue;
 
-    const amount = Number(item.amount ?? serviceDoc.amount);
-    if (Number.isNaN(amount)) throw new Error("Invalid amount");
+    // Optional tenant check (ensure this matches your Service schema field)
+    const svc = await Service.findOne({ _id: id, createdByClient: clientId })
+      .select("_id")
+      .lean();
+    if (!svc) continue;
 
-    items.push({
-      // ⬅️ match SalesEntry schema
-      serviceName: serviceDoc._id,
-      amount,
-      description: item.description || serviceDoc.description || "",
-    });
+    const amount = Number(r.amount) || 0;
+    const description = r.description || "";
 
+    items.push({ service: svc._id, amount, description }); // ✅
     computedTotal += amount;
   }
 

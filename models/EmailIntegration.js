@@ -11,6 +11,9 @@ const emailIntegrationSchema = new mongoose.Schema(
 
     // Only keep the refresh token. Encrypt at rest in production.
     refreshToken: { type: String, default: null, select: true },
+    // 🔴 NEW: why we are disconnected + when we noticed
+    reason: { type: String, enum: ["token_expired", "revoked", "unknown", null], default: null },
+    lastFailureAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

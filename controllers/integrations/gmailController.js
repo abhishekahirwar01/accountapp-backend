@@ -2,6 +2,8 @@
 const jwt = require("jsonwebtoken");
 const { google } = require("googleapis");
 const EmailIntegration = require("../../models/EmailIntegration");
+const Company = require("../../models/Company");
+const User = require("../../models/User");
 const MailComposer = require("nodemailer/lib/mail-composer");
 
 // helper: build OAuth client
@@ -14,15 +16,52 @@ function buildOAuthClient() {
 }
 
 // GET /api/integrations/gmail/status
+// GET /api/integrations/gmail/status
 exports.getStatus = async (req, res) => {
   try {
     const clientId = req.user.id;
-    let doc = await EmailIntegration.findOne({ client: clientId });
-    if (!doc) doc = await EmailIntegration.create({ client: clientId });
-    res.json({
+
+    // include refreshToken because we need to test it
+    let doc = await EmailIntegration.findOne({ client: clientId }).lean();
+
+    if (!doc) {
+      const created = await EmailIntegration.create({ client: clientId });
+      doc = created.toObject();
+    }
+
+    // ✅ Proactive health check: if we think we're connected, try to mint an access token now.
+    if (doc.connected && doc.refreshToken) {
+      const oauth2 = buildOAuthClient();
+      oauth2.setCredentials({ refresh_token: doc.refreshToken });
+      try {
+        const tokenResp = await oauth2.getAccessToken(); // throws on invalid_grant in most cases
+        if (!tokenResp || !tokenResp.token) {
+          throw new Error("invalid_grant"); // normalize weird cases
+        }
+      } catch (err) {
+        const reason = /invalid_grant|expired|revoked/i.test(err?.message || "")
+          ? "token_expired"
+          : "unknown";
+
+        await EmailIntegration.updateOne(
+          { client: clientId },
+          { $set: { connected: false, reason, lastFailureAt: new Date() } }
+        );
+
+        // reflect in response
+        doc.connected = false;
+        doc.reason = reason;
+        doc.lastFailureAt = new Date();
+      }
+    }
+
+    return res.json({
       connected: !!doc.connected,
       email: doc.email || null,
       termsAcceptedAt: doc.termsAcceptedAt || null,
+      // 🔎 expose diagnostics so the UI can explain why
+      reason: doc.reason || null,
+      lastFailureAt: doc.lastFailureAt || null,
     });
   } catch (e) {
     res.status(500).json({ message: e.message });
@@ -157,15 +196,15 @@ exports.connectCallback = async (req, res) => {
           provider: "gmail",
           connected: true,
           email,
-          accessToken: tokens.access_token || null,
-          refreshToken: tokens.refresh_token || null, // may be null on reconsent; prompt=consent usually ensures it
-          tokenType: tokens.token_type || null,
-          scope: tokens.scope || null,
-          expiryDate: tokens.expiry_date ? new Date(tokens.expiry_date) : null,
+          refreshToken: tokens.refresh_token || existing?.refreshToken || null,
+          // clear diagnostics
+          reason: null,
+          lastFailureAt: null,
         },
       },
       { upsert: true }
     );
+
 
     // Back to app
     const url = new URL(redirect, "http://dummy");
@@ -184,24 +223,70 @@ exports.connectCallback = async (req, res) => {
 /**
  * Utility: send email via the client's Gmail using refresh_token only.
  */
-async function sendWithClientGmail({ clientId, fromName, to, subject, html, attachments = [] }) {
-  const integ = await EmailIntegration.findOne({ client: clientId, connected: true }).lean();
-  if (!integ?.refreshToken || !integ?.email) {
-    throw new Error("Client has not connected Gmail or refresh token/email missing");
+async function assertSenderHasGmail(clientId) {
+  const integ = await EmailIntegration.findOne({
+    client: clientId,
+    provider: "gmail",
+    connected: true,
+  })
+    .select("+refreshToken email")
+    .lean();
+
+  if (!integ || !integ.refreshToken || !integ.email) {
+    const err = new Error(
+      "Gmail is not connected for the company sender. Please connect Gmail in settings."
+    );
+    err.statusCode = 400;
+    throw err;
+  }
+  return { senderEmail: integ.email, refreshToken: integ.refreshToken };
+}
+
+
+async function sendWithClientGmail({
+  clientId,
+  refreshToken,
+  senderEmail,     // ✅ new
+  fromName,
+  to,
+  subject,
+  html,
+  attachments = [],
+}) {
+  // Ensure we have both refresh token and sender email.
+  let rt = refreshToken;
+  let email = senderEmail;
+
+  if (!rt || !email) {
+    const integ = await EmailIntegration.findOne({
+      client: clientId, provider: "gmail", connected: true,
+    }).select("+refreshToken email").lean();
+
+    if (!integ?.refreshToken || !integ?.email) {
+      throw new Error("Client has not connected Gmail or refresh token/email missing");
+    }
+    rt = rt || integ.refreshToken;
+    email = email || integ.email;
   }
 
-  const oauth2 = buildOAuthClient();
-  // IMPORTANT: refresh-only; do not set access_token/expiry
-  oauth2.setCredentials({ refresh_token: integ.refreshToken });
+  const oauth2 = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.GOOGLE_REDIRECT_URI
+  );
+  oauth2.setCredentials({ refresh_token: rt });
 
   const gmail = google.gmail({ version: "v1", auth: oauth2 });
 
+  // ✅ build explicit From header
+  const fromHeader = fromName ? `${fromName} <${email}>` : email;
+
   const mail = new MailComposer({
-    from: fromName ? `${fromName} <${integ.email}>` : integ.email,
+    from: fromHeader,
     to,
     subject,
     html,
-    attachments, // [{ filename, content, contentType }]
+    attachments,
   }).compile();
 
   const raw = (await mail.build())
@@ -213,21 +298,109 @@ async function sendWithClientGmail({ clientId, fromName, to, subject, html, atta
   try {
     await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
   } catch (err) {
-    // If the refresh token is revoked/invalid, mark disconnected so UI can prompt re-connect
     const isAuthErr =
       err?.code === 401 ||
-      /invalid_grant|unauthorized|not authorized|permission/i.test(err?.message || "");
-
+      /invalid_grant|unauthorized|not authorized|permission|expired|revoked/i.test(err?.message || "");
     if (isAuthErr) {
       await EmailIntegration.updateOne(
         { client: clientId },
-        { $set: { connected: false, refreshToken: null } }
+        { $set: { connected: false, refreshToken: null, reason: "revoked", lastFailureAt: new Date() } }
       );
-      throw new Error("Gmail access was revoked. Please reconnect Gmail.");
+      throw new Error("Gmail access was revoked/expired. Please reconnect Gmail.");
     }
     throw err;
   }
 }
+
+
+
+
+// POST /api/integrations/gmail/send-invoice
+exports.sendInvoicePDF = async (req, res) => {
+  try {
+    const {
+      to,
+      subject,
+      message,
+      html,
+      fileName,
+      pdfBase64,
+      companyId,                 // optional but recommended
+    } = req.body || {};
+
+    if (!to || !pdfBase64) {
+      return res.status(400).json({ message: "Missing 'to' or 'pdfBase64'." });
+    }
+
+    // Determine which Client (owner) to send as.
+    let senderClientId = null;
+    let companyDoc = null;
+    // 1) Prefer the company owner if companyId provided and owner exists
+    if (companyId) {
+      const company = await Company.findById(companyId).select("businessName owner").lean();
+      if (!company) return res.status(404).json({ message: "Company not found." });
+      if (company.owner) senderClientId = company.owner;
+    }
+
+    if (companyId) {
+      companyDoc = await Company.findById(companyId).select("businessName owner").lean(); // <-- assign here
+      if (!companyDoc) return res.status(404).json({ message: "Company not found." });
+      if (companyDoc.owner) senderClientId = companyDoc.owner;
+    }
+
+    // 2) Else use the user's creator client (User.createdByClient)
+    if (!senderClientId) {
+      const actorUserId = req.user?.id;
+      if (actorUserId) {
+        const actor = await User.findById(actorUserId).select("createdByClient").lean();
+        if (actor?.createdByClient) senderClientId = actor.createdByClient;
+      }
+    }
+
+    // 3) Fallback (legacy) to req.user.id (if your auth sometimes sets it to Client id)
+    if (!senderClientId) senderClientId = req.user?.id;
+
+    if (!senderClientId) {
+      return res.status(400).json({
+        message:
+          "No email sender configured for this request. Ensure the Company has an owner or the user has createdByClient.",
+      });
+    }
+
+    // Ensure the chosen sender has Gmail connected
+    const { senderEmail, refreshToken } = await assertSenderHasGmail(senderClientId);
+
+    const htmlBody =
+      typeof html === "string" && html.trim()
+        ? html
+        : `<pre style="font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;white-space:pre-wrap;">${message || ""}</pre>`;
+
+
+    // Send the email using the sender’s Gmail
+    await sendWithClientGmail({
+      clientId: senderClientId,
+      refreshToken,
+      senderEmail,
+      fromName: companyDoc?.businessName || undefined,
+      to,
+      subject: subject || "Invoice",
+      html: htmlBody,                          // ✅ use the template
+      attachments: [
+        {
+          filename: fileName || "invoice.pdf",
+          content: Buffer.from(pdfBase64, "base64"),
+          contentType: "application/pdf",
+        },
+      ],
+    });
+
+    return res.json({ ok: true, sentFrom: senderEmail });
+  } catch (e) {
+    const code = e.statusCode || e.code;
+    return res.status(code === 400 ? 400 : 500).json({ message: e.message || "Failed to send invoice email." });
+  }
+};
+
 
 
 // Example endpoint: POST /api/integrations/gmail/send-test { to }
@@ -247,6 +420,8 @@ exports.sendTest = async (req, res) => {
     res.status(400).json({ message: e.message });
   }
 };
+
+
 
 // POST /api/integrations/gmail/disconnect
 exports.disconnect = async (req, res) => {
