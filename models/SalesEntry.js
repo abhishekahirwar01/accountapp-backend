@@ -7,15 +7,15 @@ const salesItemSchema = new mongoose.Schema({
   quantity: { type: Number, required: true, min: 1 },
   pricePerUnit: { type: Number, required: true, min: 0 },
   unitType: { type: String, enum: UNIT_TYPES, default: "Piece" },
-  amount: { type: Number, required: true, min: 0 },     // quantity * pricePerUnit
+  amount: { type: Number, required: true, min: 0 },
 }, { _id: false });
 
 const salesServiceSchema = new mongoose.Schema({
-  services: { type: mongoose.Schema.Types.ObjectId, ref: "Services", required: true },
+  // ✅ singular field name + correct model ref
+  service: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
   amount: { type: Number, required: true, min: 1 },
   description: { type: String },
 }, { _id: false });
-
 
 const salesSchema = new mongoose.Schema({
   party: { type: mongoose.Schema.Types.ObjectId, ref: "Party", required: true },
@@ -23,40 +23,46 @@ const salesSchema = new mongoose.Schema({
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
   createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   date: { type: Date, required: true },
+
   products: {
     type: [salesItemSchema],
     required: false,
     validate: {
-      validator: function (v) {
-        return !((this.products?.length ?? 0) === 0 && (this.services?.length ?? 0) === 0);
+      validator: function () {
+        const p = Array.isArray(this.products) ? this.products.length : 0;
+        const s = Array.isArray(this.services) ? this.services.length : 0;
+        return !(p === 0 && s === 0);
       },
-      message: 'At least one product or service is required'
-    }
+      message: "At least one product or service is required",
+    },
   },
+
+  // ✅ top-level array is plural: services
   services: {
     type: [salesServiceSchema],
     required: false,
     validate: {
-      validator: function (v) {
-        return !((this.products?.length ?? 0) === 0 && (this.services?.length ?? 0) === 0);
+      validator: function () {
+        const p = Array.isArray(this.products) ? this.products.length : 0;
+        const s = Array.isArray(this.services) ? this.services.length : 0;
+        return !(p === 0 && s === 0);
       },
-      message: 'At least one product or service is required'
-    }
+      message: "At least one product or service is required",
+    },
   },
+
   totalAmount: { type: Number, required: true, min: 0 },
 
   description: { type: String },
   referenceNumber: { type: String },
 
-  // optional/legacy
   gstPercentage: { type: Number },
   discountPercentage: { type: Number },
   invoiceType: { type: String, enum: ["Tax", "Invoice"] },
   gstin: { type: String },
-  invoiceNumber: { type: String, index: true },   // e.g. "25-000123"
-  invoiceYearYY: { type: Number, index: true },   // e.g. 25
+  invoiceNumber: { type: String, index: true },
+  invoiceYearYY: { type: Number, index: true },
 }, { timestamps: true });
-
 
 // Unique per company + year + number (ignore when not set)
 salesSchema.index(

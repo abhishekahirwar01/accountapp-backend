@@ -1,7 +1,7 @@
 // routes/integrations.js
 const express = require("express");
 const jwt = require("jsonwebtoken");
-const {getStatus, acceptTerms, connectStart, connectCallback, sendTest, disconnect} = require("../controllers/integrations/gmailController");
+const {getStatus, acceptTerms, connectStart, connectCallback, sendTest, disconnect , sendInvoicePDF} = require("../controllers/integrations/gmailController");
 
 const router = express.Router();
 
@@ -30,5 +30,6 @@ router.get("/gmail/connect", requireAuthAllowQuery, connectStart);          // s
 router.get("/gmail/callback", connectCallback);                             // OAuth redirect URI
 router.post("/gmail/send-test", requireAuth, sendTest);
 router.post("/gmail/disconnect", requireAuth, disconnect);
+router.post("/gmail/send-invoice", requireAuth, sendInvoicePDF);
 
 module.exports = router;
