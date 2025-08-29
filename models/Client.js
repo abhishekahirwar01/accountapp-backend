@@ -31,11 +31,16 @@ const clientSchema = new mongoose.Schema({
   role: { type: String, default: "client" },
   userLimit: { type: Number, default: 5 },
   masterAdmin: { type: mongoose.Schema.Types.ObjectId, ref: "MasterAdmin" },
+   otpHash: { type: String, default: null },
+  otpExpiresAt: { type: Date, default: null },
+  otpAttempts: { type: Number, default: 0 },
+  otpLastSentAt: { type: Date, default: null },
 }, {
   timestamps: true,
   toJSON: {
     transform(doc, ret) {
       delete ret.password; // never leak password
+      delete ret.otpHash;
       return ret;
     },
   },

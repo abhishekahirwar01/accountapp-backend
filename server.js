@@ -18,7 +18,7 @@ const paymentRoutes = require("./routes/paymentRoutes");
 const journalRoutes = require("./routes/journalRoutes");
 const permissionRoutes = require('./routes/permission.routes')
 const serviceRoutes = require('./routes/serviceRoutes')
-const { loginClient } = require("./controllers/clientController");
+const { loginClient , requestClientOtp, loginClientWithOtp} = require("./controllers/clientController");
 const integrationsRoutes = require("./routes/integrationsRoutes");
 const invoiceNumberRoutes = require("./routes/invoiceNumberRoutes")
 const AccountValidityRoutes = require("./routes/accountValidityRoutes");
@@ -64,6 +64,8 @@ app.use("/api/integrations", integrationsRoutes);
 
 app.use("/api/master-admin", masterAdminRoutes);
 app.post("/api/clients/:slug/login", loginClient);
+app.post("/api/clients/:slug/request-otp", requestClientOtp);
+app.post("/api/clients/:slug/login-otp",   loginClientWithOtp);
 app.use("/api/clients", clientRoutes);
 app.use("/api/companies", companyRoutes);
 app.use("/api/sales", salesRoutes);
