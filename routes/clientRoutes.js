@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
-const { createClient, getClients, loginClient, updateClient, deleteClient, resetPassword , getClientById, setUserLimit , checkUsername} = require("../controllers/clientController");
+const { createClient, getClients, loginClient, updateClient, deleteClient, resetPassword , getClientById, setUserLimit , checkUsername,
+  requestClientOtp, loginClientWithOtp
+} = require("../controllers/clientController");
 const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
 const verifyClient = require("../middleware/verifyClient")
 const rateLimit = require("express-rate-limit");
@@ -10,6 +12,33 @@ const usernameCheckLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
+
+
+// OTP throttles (tune as needed)
+const otpRequestLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: 5,              // 5 OTP requests/min/IP
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+const otpVerifyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 15,             // 15 verifications/min/IP
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+
+//client login
+// PUBLIC: no middleware here
+//password login
+router.post("/:slug/login", loginClient);
+
+// ✅  PUBLIC OTP endpoints (do not require middleware)
+router.post("/:slug/request-otp", otpRequestLimiter, requestClientOtp);
+router.post("/:slug/login-otp", otpVerifyLimiter, loginClientWithOtp);
+router.get("/check-username", usernameCheckLimiter, checkUsername);
+
 // Create a client
 router.post("/", verifyMasterAdmin, createClient);
 
@@ -33,11 +62,10 @@ router.get("/:id", verifyMasterAdmin, getClientById);
 
 router.put("/:clientId/user-limit",verifyMasterAdmin, setUserLimit)
 
-//client login
-// PUBLIC: no middleware here
-router.post("/:slug/login", loginClient);
 
-router.get("/check-username", usernameCheckLimiter, checkUsername);
+
+
+
 
 // router.post('/login-debug', loginClient);
 module.exports = router;
