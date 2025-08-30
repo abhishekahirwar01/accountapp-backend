@@ -78,6 +78,26 @@ exports.getParties = async (req, res) => {
   }
 };
 
+exports.getPartyBalance = async (req, res) => {
+  try {
+    const { partyId } = req.params; // Get the partyId from the URL parameter
+
+    // Find the party by its ID
+    const party = await Party.findById(partyId);
+
+    if (!party) {
+      return res.status(404).json({ message: "Customer not found" });
+    }
+
+    // Send back the balance value
+    res.json({ balance: party.balance });
+  } catch (err) {
+    console.error("Error fetching party balance:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+
 exports.updateParty = async (req, res) => {
   try {
     const doc = await Party.findById(req.params.id);
