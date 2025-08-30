@@ -14,7 +14,6 @@ const { getEffectivePermissions } = require("../services/effectivePermissions");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
-
 async function ensureAuthCaps(req) {
   // Normalize: support old middlewares that used req.user
   if (!req.auth && req.user)
@@ -51,7 +50,6 @@ function companyAllowedForUser(req, companyId) {
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
 
-
 function pickCompanyGSTIN(c) {
   return (
     c?.gstin ??
@@ -65,7 +63,6 @@ function pickCompanyGSTIN(c) {
   );
 }
 
-
 exports.createSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
   let entry, companyDoc, partyDoc;
@@ -73,51 +70,115 @@ exports.createSalesEntry = async (req, res) => {
   try {
     await ensureAuthCaps(req);
     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
-      return res.status(403).json({ message: "Not allowed to create sales entries" });
+      return res
+        .status(403)
+        .json({ message: "Not allowed to create sales entries" });
     }
 
-    const { company: companyId } = req.body;
+    const { company: companyId, paymentMethod , party , totalAmount} = req.body;
+    console.log("Payment Method:", paymentMethod);
+    console.log("party:", party);
+    console.log("Total Amount:", totalAmount);
+    console.log("Request Body:", req.body);
+
+     // Ensure that party is provided
+    if (!party) {
+      return res.status(400).json({ message: "Customer ID is required" });
+    }
+
+   
+
+    if (paymentMethod === "Credit") {
+      // Fetch the party document using the customer ID (party)
+      partyDoc = await Party.findById(party);
+      if (!partyDoc) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+
+      // Update the party's balance
+      partyDoc.balance += totalAmount; // Add balance to the customer
+      await partyDoc.save(); // Save the updated party document
+
+      console.log(`Added ${totalAmount} to ${partyDoc.name}'s balance.`);
+    }
+
     if (!companyAllowedForUser(req, companyId)) {
-      return res.status(403).json({ message: "You are not allowed to use this company" });
+      return res
+        .status(403)
+        .json({ message: "You are not allowed to use this company" });
     }
 
     await session.withTransaction(async () => {
       const {
-        party, company: companyId, date, products, services,
-        totalAmount, description, referenceNumber,
-        gstPercentage, gstRate, discountPercentage, invoiceType,
-        taxAmount: taxAmountIn, invoiceTotal: invoiceTotalIn,
+        party,
+        company: companyId,
+        date,
+        products,
+        services,
+        totalAmount,
+        description,
+        referenceNumber,
+        gstPercentage,
+        gstRate,
+        discountPercentage,
+        invoiceType,
+        taxAmount: taxAmountIn,
+        invoiceTotal: invoiceTotalIn,
       } = req.body;
 
-      companyDoc = await Company.findOne({ _id: companyId, client: req.auth.clientId }).session(session);
+      companyDoc = await Company.findOne({
+        _id: companyId,
+        client: req.auth.clientId,
+      }).session(session);
       if (!companyDoc) throw new Error("Invalid company selected");
 
-      partyDoc = await Party.findOne({ _id: party, createdByClient: req.auth.clientId }).session(session);
+      partyDoc = await Party.findOne({
+        _id: party,
+        createdByClient: req.auth.clientId,
+      }).session(session);
       if (!partyDoc) throw new Error("Customer not found or unauthorized");
 
       // normalize lines as you already do ...
-      let normalizedProducts = [], productsTotal = 0;
+      let normalizedProducts = [],
+        productsTotal = 0;
       if (Array.isArray(products) && products.length > 0) {
-        const { items, computedTotal } = await normalizeProducts(products, req.auth.clientId);
-        normalizedProducts = items; productsTotal = computedTotal;
+        const { items, computedTotal } = await normalizeProducts(
+          products,
+          req.auth.clientId
+        );
+        normalizedProducts = items;
+        productsTotal = computedTotal;
       }
 
-      let normalizedServices = [], servicesTotal = 0;
+      let normalizedServices = [],
+        servicesTotal = 0;
       if (Array.isArray(services) && services.length > 0) {
-        const { items, computedTotal } = await normalizeServices(services, req.auth.clientId);
-        normalizedServices = items; servicesTotal = computedTotal;
+        const { items, computedTotal } = await normalizeServices(
+          services,
+          req.auth.clientId
+        );
+        normalizedServices = items;
+        servicesTotal = computedTotal;
       }
 
       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
-      const effectiveGstPct = typeof gstPercentage === "number" ? gstPercentage
-                             : (typeof gstRate === "number" ? gstRate : 0);
-      const taxAmount = typeof taxAmountIn === "number"
-        ? taxAmountIn
-        : +((computedSubtotal * effectiveGstPct) / 100).toFixed(2);
+      const effectiveGstPct =
+        typeof gstPercentage === "number"
+          ? gstPercentage
+          : typeof gstRate === "number"
+          ? gstRate
+          : 0;
+      const taxAmount =
+        typeof taxAmountIn === "number"
+          ? taxAmountIn
+          : +((computedSubtotal * effectiveGstPct) / 100).toFixed(2);
 
-      const finalTotal = typeof totalAmount === "number"
-        ? totalAmount
-        : (typeof invoiceTotalIn === "number" ? invoiceTotalIn : +(computedSubtotal + taxAmount).toFixed(2));
+      const finalTotal =
+        typeof totalAmount === "number"
+          ? totalAmount
+          : typeof invoiceTotalIn === "number"
+          ? invoiceTotalIn
+          : +(computedSubtotal + taxAmount).toFixed(2);
 
       const atDate = date ? new Date(date) : new Date();
 
@@ -129,36 +190,47 @@ exports.createSalesEntry = async (req, res) => {
           await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
 
         try {
-          const docs = await SalesEntry.create([{
-            party: partyDoc._id,
-            company: companyDoc._id,
-            client: req.auth.clientId,
-            date,
-            products: normalizedProducts,
-            services: normalizedServices,
-            totalAmount: finalTotal,
-            description,
-            referenceNumber,
-            gstPercentage: effectiveGstPct,
-            discountPercentage,
-            invoiceType,
-            gstin: companyDoc.gstin || null,
-            invoiceNumber,
-            invoiceYearYY: yearYY,
-            createdByUser: req.auth.userId,
-          }], { session });
+          const docs = await SalesEntry.create(
+            [
+              {
+                party: partyDoc._id,
+                company: companyDoc._id,
+                client: req.auth.clientId,
+                date,
+                products: normalizedProducts,
+                services: normalizedServices,
+                totalAmount: finalTotal,
+                description,
+                referenceNumber,
+                gstPercentage: effectiveGstPct,
+                discountPercentage,
+                invoiceType,
+                gstin: companyDoc.gstin || null,
+                invoiceNumber,
+                invoiceYearYY: yearYY,
+                paymentMethod,
+                createdByUser: req.auth.userId,
+              },
+            ],
+            { session }
+          );
 
           entry = docs[0];
 
           // record issuance only AFTER success
-          await IssuedInvoiceNumber.create([{
-            company: companyDoc._id,
-            series: "sales",
-            invoiceNumber,
-            yearYY,
-            seq,
-            prefix
-          }], { session });
+          await IssuedInvoiceNumber.create(
+            [
+              {
+                company: companyDoc._id,
+                series: "sales",
+                invoiceNumber,
+                yearYY,
+                seq,
+                prefix,
+              },
+            ],
+            { session }
+          );
 
           break; // success
         } catch (e) {
@@ -171,16 +243,18 @@ exports.createSalesEntry = async (req, res) => {
       }
     });
 
-    return res.status(201).json({ message: "Sales entry created successfully", entry });
+    return res
+      .status(201)
+      .json({ message: "Sales entry created successfully", entry });
   } catch (err) {
     console.error("createSalesEntry error:", err);
-    return res.status(500).json({ message: "Something went wrong", error: err.message });
+    return res
+      .status(500)
+      .json({ message: "Something went wrong", error: err.message });
   } finally {
     session.endSession();
   }
 };
-
-
 
 // exports.createSalesEntry = async (req, res) => {
 //   const session = await mongoose.startSession();
@@ -346,10 +420,6 @@ exports.createSalesEntry = async (req, res) => {
 //   }
 // };
 
-
-
-
-
 // UPDATE a sales entry (replace your current function)
 exports.updateSalesEntry = async (req, res) => {
   try {
@@ -456,8 +526,6 @@ exports.updateSalesEntry = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
-
 
 // exports.updateSalesEntry = async (req, res) => {
 //   try {
@@ -623,7 +691,11 @@ exports.getSalesEntries = async (req, res) => {
     const entries = await SalesEntry.find(filter)
       .populate("party", "name")
       .populate("products.product", "name")
-      .populate({ path: "services.service", select: "serviceName", strictPopulate: false }) // ✅
+      .populate({
+        path: "services.service",
+        select: "serviceName",
+        strictPopulate: false,
+      }) // ✅
       .populate("company", "businessName")
       .sort({ date: -1 });
     // Return consistent format
@@ -670,7 +742,11 @@ exports.getSalesEntriesByClient = async (req, res) => {
     const entries = await SalesEntry.find({ client: clientId })
       .populate("party", "name")
       .populate("products.product", "name")
-      .populate({ path: "services.service", select: "serviceName", strictPopulate: false }) // ✅
+      .populate({
+        path: "services.service",
+        select: "serviceName",
+        strictPopulate: false,
+      }) // ✅
       .populate("company", "businessName")
       .sort({ date: -1 });
 

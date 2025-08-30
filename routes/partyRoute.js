@@ -3,11 +3,14 @@ const router = express.Router();
 const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
 const partyController = require("../controllers/partyController");
 
+
 // Create Product
 router.post("/", verifyClientOrAdmin, partyController.createParty);
 
 
 router.get("/", verifyClientOrAdmin, partyController.getParties);
+
+router.get("/:partyId/balance",verifyClientOrAdmin, partyController.getPartyBalance);
 
 
 router.put("/:id", verifyClientOrAdmin, partyController.updateParty);
