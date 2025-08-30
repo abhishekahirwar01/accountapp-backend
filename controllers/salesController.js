@@ -76,7 +76,9 @@ exports.createSalesEntry = async (req, res) => {
       return res.status(403).json({ message: "Not allowed to create sales entries" });
     }
 
-    const { company: companyId } = req.body;
+    const { company: companyId ,paymentMethod} = req.body;
+    console.log("Payment Method:", paymentMethod);
+    console.log("Request Body:", req.body);
     if (!companyAllowedForUser(req, companyId)) {
       return res.status(403).json({ message: "You are not allowed to use this company" });
     }
@@ -145,6 +147,7 @@ exports.createSalesEntry = async (req, res) => {
             gstin: companyDoc.gstin || null,
             invoiceNumber,
             invoiceYearYY: yearYY,
+            paymentMethod,
             createdByUser: req.auth.userId,
           }], { session });
 
