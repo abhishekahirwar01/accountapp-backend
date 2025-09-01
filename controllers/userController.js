@@ -38,6 +38,8 @@ async function getRoleByInput({ roleId, roleName }) {
   return null;
 }
 
+
+
 // allow master anything; client/admin anything except 'master'; manager -> 'user' only
 function canAssignRole(actorRoleDoc, targetRoleDoc, actorNameRaw) {
   const actor = normalizeRoleName(actorRoleDoc?.name || actorNameRaw);
@@ -49,6 +51,8 @@ function canAssignRole(actorRoleDoc, targetRoleDoc, actorNameRaw) {
   if (actor === "manager") return target === "user";
   return false;
 }
+
+
 
 function pickOverrideFlags(input) {
   const out = {};

@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
 const purchaseController = require("../controllers/purchaseController");
+const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
 
 // Create Purchase Entry
 router.post("/", verifyClientOrAdmin, purchaseController.createPurchaseEntry);
@@ -14,7 +15,7 @@ router.delete("/:id", verifyClientOrAdmin, purchaseController.deletePurchaseEntr
 router.put("/:id", verifyClientOrAdmin, purchaseController.updatePurchaseEntry);
 
 // Get Purchases by client ID (admin only)
-router.get("/by-client/:clientId", verifyClientOrAdmin, purchaseController.getPurchaseEntriesByClient);
+router.get("/by-client/:clientId", verifyMasterAdmin, purchaseController.getPurchaseEntriesByClient);
 
 // // Get Purchase Entry by ID
 // router.get("/:id", verifyClientOrMaster, purchaseController.getPurchaseEntryById);
