@@ -8,12 +8,20 @@ const purchaseItemSchema = new mongoose.Schema({
   pricePerUnit: { type: Number, required: true, min: 0 },
   unitType: { type: String, enum: UNIT_TYPES, default: "Piece" },
   amount: { type: Number, required: true, min: 0 },
+   // New fields to store GST-related information
+  gstPercentage: { type: Number, default: 18 },  // Default GST percentage can be set here
+  lineTax: { type: Number, required: true, min: 0 }, // GST amount for this product line
+  lineTotal: { type: Number, required: true, min: 0 }, // Final total with GST
 }, { _id: false });
 
 const purchaseServiceSchema = new mongoose.Schema({
   serviceName: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
   amount: { type: Number, required: true, min: 1 },
   description: { type: String },
+    // New fields to store GST-related information for services
+  gstPercentage: { type: Number, default: 18 },  // Default GST percentage for services
+  lineTax: { type: Number, required: true, min: 0 }, // GST amount for this service line
+  lineTotal: { type: Number, required: true, min: 0 }, // Final total with GST for the service
 }, { _id: false });
 
 const purchaseSchema = new mongoose.Schema({
