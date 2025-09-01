@@ -98,6 +98,28 @@ exports.getPartyBalance = async (req, res) => {
 };
 
 
+// GET /api/parties/balances
+exports.getPartyBalancesBulk = async (req, res) => {
+  try {
+    const where = { createdByClient: req.auth.clientId };
+
+    const rows = await Party.find(where)
+      .select({ _id: 1, balance: 1 })
+      .lean();
+
+    const balances = {};
+    for (const r of rows) {
+      balances[String(r._id)] = Number(r?.balance ?? 0);
+    }
+
+    return res.json({ balances });
+  } catch (err) {
+    console.error("getPartyBalancesBulk error:", err);
+    return res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+
 exports.updateParty = async (req, res) => {
   try {
     const doc = await Party.findById(req.params.id);
