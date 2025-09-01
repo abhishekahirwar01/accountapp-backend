@@ -50,18 +50,7 @@ function companyAllowedForUser(req, companyId) {
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
 
-function pickCompanyGSTIN(c) {
-  return (
-    c?.gstin ??
-    c?.gstIn ??
-    c?.gstNumber ??
-    c?.gst_no ??
-    c?.gst ??
-    c?.gstinNumber ??
-    c?.tax?.gstin ??
-    null
-  );
-}
+
 
 exports.createSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
@@ -75,31 +64,19 @@ exports.createSalesEntry = async (req, res) => {
         .json({ message: "Not allowed to create sales entries" });
     }
 
-    const { company: companyId, paymentMethod , party , totalAmount} = req.body;
-    console.log("Payment Method:", paymentMethod);
-    console.log("party:", party);
-    console.log("Total Amount:", totalAmount);
-    console.log("Request Body:", req.body);
+    const { company: companyId, paymentMethod, party, totalAmount } = req.body;
 
-     // Ensure that party is provided
     if (!party) {
       return res.status(400).json({ message: "Customer ID is required" });
     }
 
-   
-
     if (paymentMethod === "Credit") {
-      // Fetch the party document using the customer ID (party)
       partyDoc = await Party.findById(party);
       if (!partyDoc) {
         return res.status(404).json({ message: "Customer not found" });
       }
-
-      // Update the party's balance
-      partyDoc.balance += totalAmount; // Add balance to the customer
-      await partyDoc.save(); // Save the updated party document
-
-      console.log(`Added ${totalAmount} to ${partyDoc.name}'s balance.`);
+      partyDoc.balance += totalAmount;
+      await partyDoc.save();
     }
 
     if (!companyAllowedForUser(req, companyId)) {
@@ -138,51 +115,46 @@ exports.createSalesEntry = async (req, res) => {
       }).session(session);
       if (!partyDoc) throw new Error("Customer not found or unauthorized");
 
-      // normalize lines as you already do ...
-      let normalizedProducts = [],
-        productsTotal = 0;
+      // Normalize products with GST calculations
+      let normalizedProducts = [], productsTotal = 0, productsTax = 0;
       if (Array.isArray(products) && products.length > 0) {
-        const { items, computedTotal } = await normalizeProducts(
+        const { items, computedTotal, computedTax } = await normalizeProducts(
           products,
           req.auth.clientId
         );
         normalizedProducts = items;
         productsTotal = computedTotal;
+        productsTax = computedTax;
       }
 
-      let normalizedServices = [],
-        servicesTotal = 0;
+      // Normalize services with GST calculations
+      let normalizedServices = [], servicesTotal = 0, servicesTax = 0;
       if (Array.isArray(services) && services.length > 0) {
-        const { items, computedTotal } = await normalizeServices(
+        const { items, computedTotal, computedTax } = await normalizeServices(
           services,
           req.auth.clientId
         );
         normalizedServices = items;
         servicesTotal = computedTotal;
+        servicesTax = computedTax;
       }
 
       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
-      const effectiveGstPct =
-        typeof gstPercentage === "number"
-          ? gstPercentage
-          : typeof gstRate === "number"
-          ? gstRate
-          : 0;
-      const taxAmount =
-        typeof taxAmountIn === "number"
-          ? taxAmountIn
-          : +((computedSubtotal * effectiveGstPct) / 100).toFixed(2);
+      const computedTaxAmount = (productsTax || 0) + (servicesTax || 0);
+      
+      // Use computed values if not explicitly provided
+      const finalTotal = typeof totalAmount === "number"
+        ? totalAmount
+        : typeof invoiceTotalIn === "number"
+        ? invoiceTotalIn
+        : +(computedSubtotal + computedTaxAmount).toFixed(2);
 
-      const finalTotal =
-        typeof totalAmount === "number"
-          ? totalAmount
-          : typeof invoiceTotalIn === "number"
-          ? invoiceTotalIn
-          : +(computedSubtotal + taxAmount).toFixed(2);
+      const finalTaxAmount = typeof taxAmountIn === "number"
+        ? taxAmountIn
+        : computedTaxAmount;
 
       const atDate = date ? new Date(date) : new Date();
 
-      // ⬇️ allocate & insert with retry (handles legacy duplicates)
       let attempts = 0;
       while (true) {
         attempts++;
@@ -200,9 +172,12 @@ exports.createSalesEntry = async (req, res) => {
                 products: normalizedProducts,
                 services: normalizedServices,
                 totalAmount: finalTotal,
+                taxAmount: finalTaxAmount, // NEW: Save total tax amount
+                subTotal: computedSubtotal, // NEW: Save subtotal
                 description,
                 referenceNumber,
-                gstPercentage: effectiveGstPct,
+                gstPercentage: computedTaxAmount > 0 ? 
+                  +((computedTaxAmount / computedSubtotal) * 100).toFixed(2) : 0,
                 discountPercentage,
                 invoiceType,
                 gstin: companyDoc.gstin || null,
@@ -217,7 +192,6 @@ exports.createSalesEntry = async (req, res) => {
 
           entry = docs[0];
 
-          // record issuance only AFTER success
           await IssuedInvoiceNumber.create(
             [
               {
@@ -232,10 +206,9 @@ exports.createSalesEntry = async (req, res) => {
             { session }
           );
 
-          break; // success
+          break;
         } catch (e) {
           if (e?.code === 11000 && attempts < 20) {
-            // number was used by a legacy doc; try the next one
             continue;
           }
           throw e;
@@ -256,169 +229,7 @@ exports.createSalesEntry = async (req, res) => {
   }
 };
 
-// exports.createSalesEntry = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   let entry, companyDoc, partyDoc;
 
-//   try {
-//     await ensureAuthCaps(req);
-
-//     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
-//       return res
-//         .status(403)
-//         .json({ message: "Not allowed to create sales entries" });
-//     }
-
-//     const { company: companyId } = req.body;
-//     if (!companyAllowedForUser(req, companyId)) {
-//       return res
-//         .status(403)
-//         .json({ message: "You are not allowed to use this company" });
-//     }
-
-//     await session.withTransaction(async () => {
-//       const {
-//         party,
-//         company: bodyCompanyId,
-//         date,
-//         products,
-//         services,
-//         // FE sends GST-inclusive here (invoice total); we still compute defensively
-//         totalAmount,
-//         description,
-//         referenceNumber,
-//         gstPercentage, // preferred
-//         gstRate,       // legacy
-//         discountPercentage,
-//         invoiceType,
-//         taxAmount: taxAmountIn,       // optional from FE
-//         invoiceTotal: invoiceTotalIn, // legacy alias for GST-inclusive total
-//       } = req.body;
-
-//       companyDoc = await Company.findOne({
-//         _id: bodyCompanyId,
-//         client: req.auth.clientId,
-//       }).session(session);
-//       if (!companyDoc) throw new Error("Invalid company selected");
-
-//       partyDoc = await Party.findOne({
-//         _id: party,
-//         createdByClient: req.auth.clientId,
-//       }).session(session);
-//       if (!partyDoc) throw new Error("Customer not found or unauthorized");
-
-//       // Normalize lines
-//       let normalizedProducts = [],
-//         productsTotal = 0;
-//       if (Array.isArray(products) && products.length > 0) {
-//         const { items, computedTotal } = await normalizeProducts(
-//           products,
-//           req.auth.clientId
-//         );
-//         normalizedProducts = items;
-//         productsTotal = computedTotal;
-//       }
-
-//       let normalizedServices = [],
-//         servicesTotal = 0;
-//       if (Array.isArray(services) && services.length > 0) {
-//         const { items, computedTotal } = await normalizeServices(
-//           services,
-//           req.auth.clientId
-//         );
-//         normalizedServices = items;
-//         servicesTotal = computedTotal;
-//       }
-
-//       // Subtotal from normalized lines
-//       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
-
-//       // Effective GST %
-//       const effectiveGstPct =
-//         typeof gstPercentage === "number"
-//           ? gstPercentage
-//           : typeof gstRate === "number"
-//             ? gstRate
-//             : 0;
-
-//       // Tax amount (prefer FE if provided)
-//       const taxAmount =
-//         typeof taxAmountIn === "number"
-//           ? taxAmountIn
-//           : +((computedSubtotal * effectiveGstPct) / 100).toFixed(2);
-
-//       // Final total (prefer FE totalAmount, then invoiceTotal, else compute)
-//       const finalTotal =
-//         typeof totalAmount === "number"
-//           ? totalAmount
-//           : typeof invoiceTotalIn === "number"
-//             ? invoiceTotalIn
-//             : +(computedSubtotal + taxAmount).toFixed(2);
-
-//       const atDate = date ? new Date(date) : new Date();
-//       const { invoiceNumber, yearYY } = await issueSalesInvoiceNumber(
-//         companyDoc._id,
-//         atDate,
-//         { session }
-//       );
-//       const companyGSTIN = pickCompanyGSTIN(companyDoc);
-
-//       const docs = await SalesEntry.create(
-//         [
-//           {
-//             party: partyDoc._id,
-//             company: companyDoc._id,
-//             client: req.auth.clientId,
-//             date: atDate,
-//             products: normalizedProducts,
-//             services: normalizedServices,
-
-//             // ✅ store GST-inclusive total
-//             totalAmount: finalTotal,
-
-//             // optional: if your schema has these fields they'll be saved; otherwise ignored
-//             subTotal: computedSubtotal,
-//             taxAmount,
-//             gstPercentage: effectiveGstPct,
-
-//             description,
-//             referenceNumber,
-//             discountPercentage,
-//             invoiceType,
-//             gstin: companyGSTIN,
-//             invoiceNumber,
-//             invoiceYearYY: yearYY,
-//             createdByUser: req.auth.userId,
-//           },
-//         ],
-//         { session }
-//       );
-
-//       entry = docs[0];
-//     });
-
-//     // async email (non-blocking)
-//     setImmediate(() => {
-//       sendSalesInvoiceEmail({
-//         clientId: req.auth.clientId,
-//         sale: entry.toObject ? entry.toObject() : entry,
-//         partyId: entry.party,
-//         companyId: entry.company,
-//       }).catch((err) => console.error("Invoice email failed:", err.message));
-//     });
-
-//     return res
-//       .status(201)
-//       .json({ message: "Sales entry created successfully", entry });
-//   } catch (err) {
-//     console.error("createSalesEntry error:", err);
-//     return res
-//       .status(500)
-//       .json({ message: "Something went wrong", error: err.message });
-//   } finally {
-//     session.endSession();
-//   }
-// };
 
 // UPDATE a sales entry (replace your current function)
 exports.updateSalesEntry = async (req, res) => {

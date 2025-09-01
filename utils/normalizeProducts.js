@@ -8,9 +8,14 @@ module.exports = async (rawProducts = [], clientId) => {
 
   const items = [];
   let computedTotal = 0;
+  let computedTax = 0;
 
   for (const item of rawProducts) {
-    const product = await Product.findOne({ _id: item.product, createdByClient: clientId });
+    const product = await Product.findOne({ 
+      _id: item.product, 
+      createdByClient: clientId 
+    });
+    
     if (!product) throw new Error(`Product not found or unauthorized: ${item.product}`);
 
     const quantity = Number(item.quantity ?? 1);
@@ -21,16 +26,27 @@ module.exports = async (rawProducts = [], clientId) => {
 
     const amount = Number(item.amount ?? quantity * pricePerUnit);
     
+    // Get GST percentage from the request or use product default
+    const gstPercentage = Number(item.gstPercentage ?? product.gstPercentage ?? 18);
+    
+    // Calculate tax and total for this line
+    const lineTax = +(amount * gstPercentage / 100).toFixed(2);
+    const lineTotal = +(amount + lineTax).toFixed(2);
+
     items.push({
       product: product._id,
       quantity,
       pricePerUnit,
       unitType: item.unitType || product.unitType || "Piece",
-      amount
+      amount,
+      gstPercentage, // NEW: Save GST percentage
+      lineTax,       // NEW: Save calculated tax
+      lineTotal      // NEW: Save line total (amount + tax)
     });
 
     computedTotal += amount;
+    computedTax += lineTax;
   }
 
-  return { items, computedTotal };
+  return { items, computedTotal, computedTax };
 };
