@@ -33,7 +33,7 @@ router.put("/:id", verifyClientOrAdmin,uploadLogo, updateCompany);
 // Delete company (client or master)
 router.delete("/:id", verifyClientOrAdmin, deleteCompany);
 
-router.get("/by-client/:clientId", verifyClientOrAdmin, getCompaniesByClientId);
+router.get("/by-client/:clientId", verifyMasterAdmin, getCompaniesByClientId);
 
 
 // ✅ NEW: role-agnostic “my companies”
