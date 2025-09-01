@@ -12,7 +12,7 @@ router.get("/", verifyClientOrAdmin, partyController.getParties);
 
 router.get("/:partyId/balance",verifyClientOrAdmin, partyController.getPartyBalance);
 
-
+router.get("/balances", verifyClientOrAdmin, partyController.getPartyBalancesBulk); // bulk
 router.put("/:id", verifyClientOrAdmin, partyController.updateParty);
 router.delete("/:id", verifyClientOrAdmin, partyController.deleteParty);
 
