@@ -324,7 +324,6 @@ exports.getCompaniesByClientId = async (req, res) => {
 };
 
 
-// NEW: unified "my" endpoint for all roles
 // controllers/companyController.js (or wherever getMyCompanies lives)
 exports.getMyCompanies = async (req, res) => {
   try {
