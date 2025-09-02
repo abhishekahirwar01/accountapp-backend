@@ -5,8 +5,8 @@ const jwt = require("jsonwebtoken");
 const slugifyUsername = require("../utils/slugify");
 const Permission = require("../models/Permission");
 const AccountValidity = require("../models/AccountValidity");
-const { computeExpiry } = require("../utils/validity");
-const { randomInt } = require("crypto"); 
+const { randomInt } = require("crypto");
+const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");
 
 // Create Client (Only Master Admin)
 // controllers/clientController.js
@@ -143,6 +143,8 @@ exports.createClient = async (req, res) => {
       );
 
       await session.commitTransaction();
+      // CACHE: invalidate the list for this master
+      invalidateClientsForMaster(req.user.id);
       return res
         .status(201)
         .json({
@@ -161,16 +163,34 @@ exports.createClient = async (req, res) => {
 };
 
 // Get All Clients (Only Master Admin)
+// Get All Clients (Only Master Admin)
 exports.getClients = async (req, res) => {
   try {
-    const clients = await Client.find({ masterAdmin: req.user.id }).select(
-      "-password"
-    );
-    res.status(200).json(clients);
+    const cacheKey = key.clientsList(req.user.id);
+
+    const cached = myCache.get(cacheKey);
+    if (cached) {
+      // ✅ add these 2 lines
+      res.set('X-Cache', 'HIT');
+      res.set('X-Cache-Key', cacheKey);
+
+      return res.status(200).json(cached);
+    }
+
+    const clients = await Client.find({ masterAdmin: req.user.id }).select("-password");
+
+    myCache.set(cacheKey, clients);
+
+    // ✅ add these 2 lines
+    res.set('X-Cache', 'MISS');
+    res.set('X-Cache-Key', cacheKey);
+
+    return res.status(200).json(clients);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 };
+
 
 // Client Login
 exports.loginClient = async (req, res) => {
@@ -200,7 +220,7 @@ exports.loginClient = async (req, res) => {
       AccountValidity.updateOne(
         { _id: validity._id },
         { $set: { status: "expired" } }
-      ).catch(() => {});
+      ).catch(() => { });
       return res
         .status(403)
         .json({ message: "Account validity expired. Contact support." });
@@ -282,6 +302,7 @@ exports.updateClient = async (req, res) => {
       client.canSendInvoiceWhatsapp = canSendInvoiceWhatsapp;
 
     await client.save();
+    invalidateClient(req.user.id, client._id);
     res.status(200).json({ message: "Client updated successfully", client });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -302,6 +323,9 @@ exports.deleteClient = async (req, res) => {
     }
 
     await Client.deleteOne({ _id: id });
+    // CACHE: invalidate both this single client + the list
+    invalidateClient(req.user.id, id);
+
 
     res.status(200).json({ message: "Client deleted successfully" });
   } catch (err) {
@@ -342,6 +366,15 @@ exports.resetPassword = async (req, res) => {
 exports.getClientById = async (req, res) => {
   try {
     const { id } = req.params;
+    const cacheKey = key.client(req.user.id, id);
+
+    // 1) Try cache
+    const cached = myCache.get(cacheKey);
+    if (cached) {
+      return res.status(200).json(cached);
+    }
+
+    // 2) Fallback to DB
 
     const client = await Client.findOne({
       _id: id,
@@ -350,7 +383,8 @@ exports.getClientById = async (req, res) => {
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
-
+    // 3) Cache it
+    myCache.set(cacheKey, client);
     res.status(200).json(client);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -371,6 +405,7 @@ exports.setUserLimit = async (req, res) => {
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
+    invalidateClient(req.user.id, client._id);
     res.json({ message: "User limit updated", client });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
@@ -506,7 +541,7 @@ exports.requestClientOtp = async (req, res) => {
       AccountValidity.updateOne(
         { _id: validity._id },
         { $set: { status: "expired" } }
-      ).catch(() => {});
+      ).catch(() => { });
       return res
         .status(403)
         .json({ message: "Account validity expired. Contact support." });
@@ -520,7 +555,7 @@ exports.requestClientOtp = async (req, res) => {
       const wait = Math.ceil(
         (OTP_RESEND_SECONDS * 1000 -
           (Date.now() - client.otpLastSentAt.getTime())) /
-          1000
+        1000
       );
       return res
         .status(429)
@@ -594,7 +629,7 @@ exports.loginClientWithOtp = async (req, res) => {
       AccountValidity.updateOne(
         { _id: validity._id },
         { $set: { status: "expired" } }
-      ).catch(() => {});
+      ).catch(() => { });
       return res
         .status(403)
         .json({ message: "Account validity expired. Contact support." });
