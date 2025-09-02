@@ -2,6 +2,8 @@ const path = require("path");
 const fs = require("fs");
 const Company = require("../models/Company");
 const Client = require("../models/Client");
+const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
+
 
 // Helper to convert absolute file path to a public URL under /uploads
 const toPublicUrl = (absPath) => {
@@ -13,7 +15,7 @@ const toPublicUrl = (absPath) => {
 // Optional: delete a file if it exists
 const safeUnlink = (absPath) => {
   if (!absPath) return;
-  fs.promises.unlink(absPath).catch(() => {});
+  fs.promises.unlink(absPath).catch(() => { });
 };
 
 // Create Company (Client Only)
@@ -125,25 +127,60 @@ exports.createCompany = async (req, res) => {
 // Get Companies of Client (Client Only)
 exports.getClientCompanies = async (req, res) => {
   try {
+    const cacheKey = key.clientsList(req.user.id);  // Unique cache key for the client
+
+    // 1) Check cache first
+    const cached = myCache.get(cacheKey);
+    if (cached) {
+      res.set('X-Cache', 'HIT');  // Debug header to track cache hit
+      res.set('X-Cache-Key', cacheKey);
+      return res.status(200).json(cached);
+    }
+    // 2) If cache miss, fetch from DB
     const companies = await Company.find({ client: req.user.id });
+
+    // 3) Store the result in cache
+    myCache.set(cacheKey, companies);  // Cache it for the next time (default TTL 5 minutes)
+    res.set('X-Cache', 'MISS');  // Debug header to track cache miss
+    res.set('X-Cache-Key', cacheKey);
+
     res.status(200).json(companies);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// // Get All Companies (Master Admin Only)
+// Get All Companies (Master Admin Only)
 exports.getAllCompanies = async (req, res) => {
   try {
+    const cacheKey = "allCompanies";  // Unique cache key for all companies (master admin)
+
+    // 1) Check cache first
+    const cached = myCache.get(cacheKey);
+    if (cached) {
+      res.set('X-Cache', 'HIT');  // Debug header to track cache hit
+      res.set('X-Cache-Key', cacheKey);
+      return res.status(200).json(cached);
+    }
+
+    // 2) If cache miss, fetch from DB
     const companies = await Company.find().populate(
       "client",
       "clientUsername email"
     );
-    res.status(200).json(companies);
+
+    // 3) Store the result in cache
+    myCache.set(cacheKey, companies);  // Cache it for the next time (default TTL 5 minutes)
+
+    res.set('X-Cache', 'MISS');  // Debug header to track cache miss
+    res.set('X-Cache-Key', cacheKey);
+
+    return res.status(200).json(companies);  // Return the fresh data
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // Update Company (Client or Master Admin)
 exports.updateCompany = async (req, res) => {
@@ -261,7 +298,15 @@ exports.updateCompany = async (req, res) => {
       company.client = selectedClient;
     }
 
+    // After saving the updated company, invalidate the cache
+    const cacheKey = key.client(req.user.id, companyId);
+    myCache.del(cacheKey);  // Invalidate the cache for this company
+
+    // Cache invalidation for the client’s company list
+    invalidateClientsForMaster(req.user.id);  // Invalidate cache for client companies
+
     await company.save();
+    invalidateClientsForMaster(req.user.id);
     res.status(200).json({ message: "Company updated", company });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -294,6 +339,12 @@ exports.deleteCompany = async (req, res) => {
     }
 
     await Company.findByIdAndDelete(companyId);
+    // Cache invalidation
+    const cacheKey = key.client(req.user.id, companyId);
+    myCache.del(cacheKey);  // Invalidate the cache for this company
+
+    invalidateClientsForMaster(req.user.id);  // Invalidate cache for client companies
+
     res.status(200).json({ message: "Company deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
