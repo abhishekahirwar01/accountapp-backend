@@ -28,6 +28,7 @@ const userPermissionsRoutes = require("./routes/userPermissionsRoutes");
 dotenv.config();
 connectDB();
 
+
 const app = express();
 
 
