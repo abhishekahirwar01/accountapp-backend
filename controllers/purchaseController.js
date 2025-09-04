@@ -5,8 +5,8 @@ const Vendor = require("../models/Vendor");
 const Product = require("../models/Product");
 const normalizePurchaseProducts = require("../utils/normalizePurchaseProducts");
 const normalizePurchaseServices = require("../utils/normalizePurchaseServices");
-
-// ⛔ removed: const { issuePurchaseInvoiceNumber } = require("../services/invoiceIssuer");
+const { getFromCache, setToCache } = require('../RedisCache');
+const { deletePurchaseEntryCache } = require('../utils/cacheHelpers')
 
 // load effective caps if middleware didn’t attach them
 const { getEffectivePermissions } = require("../services/effectivePermissions");
@@ -57,7 +57,6 @@ function companyAllowedForUser(req, companyId) {
 
 // --- CREATE ------------------------------------------------------
 
-// controllers/purchaseController.js (createPurchaseEntry without any invoice numbering)
 exports.createPurchaseEntry = async (req, res) => {
   const session = await mongoose.startSession();
   const txnOpts = {
@@ -71,7 +70,7 @@ exports.createPurchaseEntry = async (req, res) => {
     if (!userIsPriv(req) && !req.auth.caps?.canCreatePurchaseEntries) {
       return res.status(403).json({ message: "Not allowed to create purchase entries" });
     }
-    const { company: companyId } = req.body;
+    const { company: companyId } = req.body;  // Make sure companyId is properly initialized here
     if (!companyAllowedForUser(req, companyId)) {
       return res.status(403).json({ message: "You are not allowed to use this company" });
     }
@@ -85,6 +84,7 @@ exports.createPurchaseEntry = async (req, res) => {
             totalAmount, description, referenceNumber, gstPercentage, invoiceType,
           } = req.body;
 
+          // Make sure companyId is defined here
           const companyDoc = await Company.findOne({ _id: companyId, client: req.auth.clientId }).session(session);
           if (!companyDoc) throw new Error("Invalid company selected");
 
@@ -113,10 +113,6 @@ exports.createPurchaseEntry = async (req, res) => {
             ? totalAmount
             : (productsTotal + servicesTotal);
 
-          // ⛔ removed invoiceNumber issuance completely
-          // const atDate = date ? new Date(date) : new Date();
-          // const { invoiceNumber, yearYY } = await issuePurchaseInvoiceNumber(...);
-
           const docs = await PurchaseEntry.create([{
             vendor: vendorDoc._id,
             company: companyDoc._id,
@@ -131,24 +127,16 @@ exports.createPurchaseEntry = async (req, res) => {
             gstPercentage,
             invoiceType,
             gstin: companyDoc.gstin || null,
-            // ⛔ removed: invoiceNumber, invoiceYearYY
           }], { session });
           entry = docs[0];
 
-          if (normalizedProducts.length) {
-            const ops = normalizedProducts
-              .filter(it => (Number(it.quantity) || 0) > 0)
-              .map(it => ({
-                updateOne: {
-                  filter: it.product
-                    ? { _id: it.product, createdByClient: req.auth.clientId }
-                    : { name: String(it.name).toLowerCase().trim(), createdByClient: req.auth.clientId },
-                  update: { $inc: { stocks: Number(it.quantity) || 0 } },
-                }
-              }));
-            if (ops.length) await Product.bulkWrite(ops, { session });
-          }
         }, txnOpts);
+
+        // Access clientId and companyId after creation
+        const clientId = entry.client.toString();
+
+        // Call the cache deletion function
+        await deletePurchaseEntryCache(clientId, companyId);
 
         return res.status(201).json({ message: "Purchase entry created successfully", entry });
 
@@ -187,8 +175,10 @@ exports.getPurchaseEntries = async (req, res) => {
       limit = 100,
     } = req.query;
 
+    const clientId = req.auth.clientId;  // Extract clientId correctly
+
     const where = {
-      client: req.auth.clientId,
+      client: clientId,
       ...(companyAllowedForUser(req, companyId) ? { ...(companyId && { company: companyId }) } : { company: { $in: [] } }),
     };
 
@@ -208,13 +198,27 @@ exports.getPurchaseEntries = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
+    // Construct a cache key based on the query parameters
+    const cacheKey = `purchaseEntries:${JSON.stringify({ clientId, companyId })}`;
+
+    // Check if the data is cached in Redis
+    const cachedEntries = await getFromCache(cacheKey);
+    if (cachedEntries) {
+      // If cached, return the data directly
+      return res.status(200).json({
+        success: true,
+        count: cachedEntries.length,
+        data: cachedEntries,
+      });
+    }
+
+    // If not cached, fetch the data from the database
     const query = PurchaseEntry.find(where)
       .sort({ date: -1 })
       .skip(skip)
       .limit(perPage)
       .populate({ path: "vendor", select: "vendorName" })
       .populate({ path: "products.product", select: "name unitType" })
-      // support both old/new service refs without throwing
       .populate({ path: "services.serviceName", select: "serviceName" })
       .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
       .populate({ path: "company", select: "businessName" });
@@ -223,6 +227,9 @@ exports.getPurchaseEntries = async (req, res) => {
       query.lean(),
       PurchaseEntry.countDocuments(where),
     ]);
+
+    // Cache the fetched data in Redis for future requests
+    await setToCache(cacheKey, entries);
 
     res.status(200).json({
       success: true,
@@ -236,6 +243,69 @@ exports.getPurchaseEntries = async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
+
+// --- ADMIN: LIST BY CLIENT --------------------------------------
+
+exports.getPurchaseEntriesByClient = async (req, res) => {
+  try {
+    await ensureAuthCaps(req);
+
+    const { clientId } = req.params;
+    const { companyId, page = 1, limit = 100 } = req.query;
+
+    // only master/admin can query arbitrary clients; client can only query self
+    if (req.auth.role === "client" && String(clientId) !== String(req.auth.clientId)) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+    if (!PRIV_ROLES.has(req.auth.role)) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    const where = { client: clientId };
+    if (companyId) where.company = companyId;
+
+    const perPage = Math.min(Number(limit) || 100, 500);
+    const skip = (Number(page) - 1) * perPage;
+
+    // Construct a cache key based on clientId and query parameters
+    const cacheKey = `purchaseEntriesByClient:${JSON.stringify({ client: clientId, company: companyId })}`;
+
+    // Check if the data is cached in Redis
+    const cachedEntries = await getFromCache(cacheKey);
+    if (cachedEntries) {
+      // If cached, return the data directly
+      return res.status(200).json({
+        success: true,
+        count: cachedEntries.length,
+        data: cachedEntries,
+      });
+    }
+
+    const [entries, total] = await Promise.all([
+      PurchaseEntry.find(where)
+        .sort({ date: -1 })
+        .skip(skip)
+        .limit(perPage)
+        .populate({ path: "vendor", select: "vendorName" })
+        .populate({ path: "products.product", select: "name unitType" })
+        .populate({ path: "services.serviceName", select: "serviceName" })
+        .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
+        .populate({ path: "company", select: "businessName" })
+        .lean(),
+      PurchaseEntry.countDocuments(where),
+    ]);
+
+    await setToCache(cacheKey, entries);
+
+    res.status(200).json({ entries, total, page: Number(page), limit: perPage });
+  } catch (err) {
+    console.error("getPurchaseEntriesByClient error:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+
 
 // --- UPDATE ------------------------------------------------------
 
@@ -301,6 +371,12 @@ exports.updatePurchaseEntry = async (req, res) => {
     }
 
     await entry.save();
+    // After deletion, clear the relevant cache for client and company
+    const clientId = entry.client.toString();
+    const companyId = entry.company.toString();
+
+    // Call the cache deletion function
+    await deletePurchaseEntryCache(clientId, companyId);
     res.json({ message: "Purchase entry updated successfully", entry });
   } catch (err) {
     console.error("updatePurchaseEntry error:", err);
@@ -322,52 +398,15 @@ exports.deletePurchaseEntry = async (req, res) => {
     }
 
     await entry.deleteOne();
+    // After deletion, clear the relevant cache for client and company
+    const clientId = entry.client.toString();
+    const companyId = entry.company.toString();
+
+    // Call the cache deletion function
+    await deletePurchaseEntryCache(clientId, companyId);
     res.json({ message: "Purchase deleted" });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
 
-// --- ADMIN: LIST BY CLIENT --------------------------------------
-
-exports.getPurchaseEntriesByClient = async (req, res) => {
-  try {
-    await ensureAuthCaps(req);
-
-    const { clientId } = req.params;
-    const { companyId, page = 1, limit = 100 } = req.query;
-
-    // only master/admin can query arbitrary clients; client can only query self
-    if (req.auth.role === "client" && String(clientId) !== String(req.auth.clientId)) {
-      return res.status(403).json({ message: "Not authorized" });
-    }
-    if (!PRIV_ROLES.has(req.auth.role)) {
-      return res.status(403).json({ message: "Not authorized" });
-    }
-
-    const where = { client: clientId };
-    if (companyId) where.company = companyId;
-
-    const perPage = Math.min(Number(limit) || 100, 500);
-    const skip = (Number(page) - 1) * perPage;
-
-    const [entries, total] = await Promise.all([
-      PurchaseEntry.find(where)
-        .sort({ date: -1 })
-        .skip(skip)
-        .limit(perPage)
-        .populate({ path: "vendor", select: "vendorName" })
-        .populate({ path: "products.product", select: "name unitType" })
-        .populate({ path: "services.serviceName", select: "serviceName" })
-        .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
-        .populate({ path: "company", select: "businessName" })
-        .lean(),
-      PurchaseEntry.countDocuments(where),
-    ]);
-
-    res.status(200).json({ entries, total, page: Number(page), limit: perPage });
-  } catch (err) {
-    console.error("getPurchaseEntriesByClient error:", err);
-    res.status(500).json({ error: err.message });
-  }
-};
