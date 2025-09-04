@@ -5,10 +5,10 @@ const Company = require("../models/Company");
 const Party = require("../models/Party");
 const normalizeProducts = require("../utils/normalizeProducts");
 const normalizeServices = require("../utils/normalizeServices");
-const { sendSalesInvoiceEmail } = require("../services/invoiceEmail");
 const IssuedInvoiceNumber = require("../models/IssuedInvoiceNumber");
 const { issueSalesInvoiceNumber } = require("../services/invoiceIssuer");
-
+const { getFromCache, setToCache } = require('../RedisCache');
+const { deleteSalesEntryCache } = require('../utils/cacheHelpers');
 // at top of controllers/salesController.js
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 
@@ -50,6 +50,107 @@ function companyAllowedForUser(req, companyId) {
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
 
+
+// In your getSalesEntries controller
+exports.getSalesEntries = async (req, res) => {
+  try {
+    const filter = {};
+
+    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+    if (req.user.role === "client") {
+      filter.client = req.user.id;
+    }
+    if (req.query.companyId) {
+      filter.company = req.query.companyId;
+    }
+
+    // Construct a cache key based on the filter
+    const cacheKey = `salesEntries:${JSON.stringify(filter)}`;
+
+    // Check if the data is cached in Redis
+    const cachedEntries = await getFromCache(cacheKey);
+    if (cachedEntries) {
+      // If cached, return the data directly
+      return res.status(200).json({
+        success: true,
+        count: cachedEntries.length,
+        data: cachedEntries,
+      });
+    }
+
+    // If not cached, fetch the data from the database
+    const entries = await SalesEntry.find(filter)
+      .populate("party", "name")
+      .populate("products.product", "name")
+      .populate({
+        path: "services.service",
+        select: "serviceName",
+        strictPopulate: false,
+      }) // ✅
+      .populate("company", "businessName")
+      .sort({ date: -1 });
+    // Return consistent format
+
+    // Cache the fetched data in Redis for future requests
+    await setToCache(cacheKey, entries);
+
+    res.status(200).json({
+      success: true,
+      count: entries.length,
+      data: entries, // Use consistent key
+    });
+  } catch (err) {
+    console.error("Error fetching sales entries:", err.message);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+};
+
+
+// GET Sales Entries by clientId (for master admin)
+exports.getSalesEntriesByClient = async (req, res) => {
+  try {
+    const { clientId } = req.params;
+
+    // Construct a cache key based on clientId
+    const cacheKey = `salesEntriesByClient:${clientId}`;
+
+    // Check if the data is cached in Redis
+    const cachedEntries = await getFromCache(cacheKey);
+    if (cachedEntries) {
+      // If cached, return the data directly
+      return res.status(200).json({
+        success: true,
+        count: cachedEntries.length,
+        data: cachedEntries,
+      });
+    }
+
+    // Fetch data from database if not cached
+    const entries = await SalesEntry.find({ client: clientId })
+      .populate("party", "name")
+      .populate("products.product", "name")
+      .populate({
+        path: "services.service",
+        select: "serviceName",
+        strictPopulate: false,
+      })
+      .populate("company", "businessName")
+      .sort({ date: -1 });
+
+    // Cache the fetched data in Redis for future requests
+    await setToCache(cacheKey, entries);
+
+    // Return the fetched data
+    res.status(200).json({ entries });
+  } catch (err) {
+    res
+      .status(500)
+      .json({ message: "Failed to fetch entries", error: err.message });
+  }
+};
 
 
 exports.createSalesEntry = async (req, res) => {
@@ -141,13 +242,13 @@ exports.createSalesEntry = async (req, res) => {
 
       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
       const computedTaxAmount = (productsTax || 0) + (servicesTax || 0);
-      
+
       // Use computed values if not explicitly provided
       const finalTotal = typeof totalAmount === "number"
         ? totalAmount
         : typeof invoiceTotalIn === "number"
-        ? invoiceTotalIn
-        : +(computedSubtotal + computedTaxAmount).toFixed(2);
+          ? invoiceTotalIn
+          : +(computedSubtotal + computedTaxAmount).toFixed(2);
 
       const finalTaxAmount = typeof taxAmountIn === "number"
         ? taxAmountIn
@@ -176,7 +277,7 @@ exports.createSalesEntry = async (req, res) => {
                 subTotal: computedSubtotal, // NEW: Save subtotal
                 description,
                 referenceNumber,
-                gstPercentage: computedTaxAmount > 0 ? 
+                gstPercentage: computedTaxAmount > 0 ?
                   +((computedTaxAmount / computedSubtotal) * 100).toFixed(2) : 0,
                 discountPercentage,
                 invoiceType,
@@ -215,6 +316,12 @@ exports.createSalesEntry = async (req, res) => {
         }
       }
     });
+
+    const clientId = entry.client.toString();  // Retrieve clientId from the entry
+
+    // Call the reusable cache deletion function
+    await deleteSalesEntryCache(clientId, companyId);
+
 
     return res
       .status(201)
@@ -323,13 +430,12 @@ exports.updateSalesEntry = async (req, res) => {
 
     await entry.save();
 
-    // optional: keep your async email
-    // setImmediate(() => {
-    //   sendSalesInvoiceEmail({
-    //     clientId: req.auth.clientId,
-    //     saleId: entry._id,
-    //   }).catch((err) => console.error("Failed to send invoice email:", err));
-    // });
+    // Retrieve companyId and clientId from the sales entry to delete related cache
+    const companyId = entry.company.toString();
+    const clientId = entry.client.toString();  // Retrieve clientId from the entry
+
+    // Call the reusable cache deletion function
+    await deleteSalesEntryCache(clientId, companyId);
 
     res.json({ message: "Sales entry updated successfully", entry });
   } catch (err) {
@@ -339,47 +445,9 @@ exports.updateSalesEntry = async (req, res) => {
 };
 
 
-// In your getSalesEntries controller
-exports.getSalesEntries = async (req, res) => {
-  try {
-    const filter = {};
-
-    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
-    if (req.user.role === "client") {
-      filter.client = req.user.id;
-    }
-    if (req.query.companyId) {
-      filter.company = req.query.companyId;
-    }
-
-    const entries = await SalesEntry.find(filter)
-      .populate("party", "name")
-      .populate("products.product", "name")
-      .populate({
-        path: "services.service",
-        select: "serviceName",
-        strictPopulate: false,
-      }) // ✅
-      .populate("company", "businessName")
-      .sort({ date: -1 });
-    // Return consistent format
-    res.status(200).json({
-      success: true,
-      count: entries.length,
-      data: entries, // Use consistent key
-    });
-  } catch (err) {
-    console.error("Error fetching sales entries:", err.message);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-};
-
-// DELETE a sales entry
 exports.deleteSalesEntry = async (req, res) => {
   try {
+    // Find the sales entry by ID
     const entry = await SalesEntry.findById(req.params.id);
 
     if (!entry) {
@@ -391,33 +459,22 @@ exports.deleteSalesEntry = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
+    // Delete the sales entry
     await entry.deleteOne();
+
+    // Retrieve companyId and clientId from the sales entry to delete related cache
+    const companyId = entry.company.toString();
+    const clientId = entry.client.toString();  // Retrieve clientId from the entry
+
+    // Call the reusable cache deletion function
+    await deleteSalesEntryCache(clientId, companyId);
+
     res.status(200).json({ message: "Sales entry deleted successfully" });
   } catch (err) {
+    console.error("Error deleting sales entry:", err);
     res.status(500).json({ error: err.message });
   }
 };
 
-// GET Sales Entries by clientId (for master admin)
-exports.getSalesEntriesByClient = async (req, res) => {
-  try {
-    const { clientId } = req.params;
 
-    const entries = await SalesEntry.find({ client: clientId })
-      .populate("party", "name")
-      .populate("products.product", "name")
-      .populate({
-        path: "services.service",
-        select: "serviceName",
-        strictPopulate: false,
-      }) // ✅
-      .populate("company", "businessName")
-      .sort({ date: -1 });
 
-    res.status(200).json({ entries });
-  } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Failed to fetch entries", error: err.message });
-  }
-};

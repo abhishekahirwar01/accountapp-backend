@@ -4,7 +4,7 @@ const Party = require("../models/Party");
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
 
-
+const {generatePartyBalanceCacheKey} = require("../utils/cacheHelpers")
 exports.createParty = async (req, res) => {
   try {
     if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateCustomers) {
@@ -106,7 +106,7 @@ exports.getPartyBalance = async (req, res) => {
     const { partyId } = req.params; // Get the partyId from the URL parameter
 
     // Generate a cache key for the party balance
-    const cacheKey = key.partyBalance(req.auth.clientId, partyId);
+     const cacheKey = generatePartyBalanceCacheKey(req.auth.clientId, partyId);
 
     // 1) Check cache first
     const cached = myCache.get(cacheKey);
@@ -150,7 +150,7 @@ exports.getPartyBalancesBulk = async (req, res) => {
     const balances = {};
     for (const r of rows) {
       // Generate a cache key for each party balance
-      const cacheKey = key.partyBalance(req.auth.clientId, r._id);
+      const cacheKey = generatePartyBalanceCacheKey(req.auth.clientId, r._id);
 
       // 1) Check cache first
       const cached = myCache.get(cacheKey);
@@ -189,7 +189,7 @@ exports.updateParty = async (req, res) => {
     myCache.del(cacheKey);  // Invalidate the cache for the list of parties
 
     // Invalidate the cache for this party's balance
-    const partyBalanceKey = key.partyBalance(req.auth.clientId, doc._id);
+    const partyBalanceKey = generatePartyBalanceCacheKey(req.auth.clientId, doc._id);
     myCache.del(partyBalanceKey);
 
     res.json({ message: "Party updated", party: doc });
@@ -218,7 +218,7 @@ exports.deleteParty = async (req, res) => {
     myCache.del(cacheKey);  // Invalidate the cache for the list of parties
 
     // Invalidate the cache for this party's balance
-    const partyBalanceKey = key.partyBalance(req.auth.clientId, doc._id);
+    const partyBalanceKey = generatePartyBalanceCacheKey(req.auth.clientId, doc._id);
     myCache.del(partyBalanceKey);
 
     res.json({ message: "Party deleted successfully" });
