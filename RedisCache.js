@@ -24,15 +24,7 @@ redis.on('error', (err) => {
 // Function to get data from Redis cache
 const getFromCache = async (key) => {
   try {
-    const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout: Redis Cache check took too long')), 50)
-    );
-    
-    // Race the cache fetch against the timeout
-    const cachedData = await Promise.race([
-      redis.get(key).then((data) => (data ? JSON.parse(data) : null)),
-      timeout,
-    ]);
+    const cachedData = await redis.get(key);
 
     if (cachedData) {
       console.log('data fetched from redis');
@@ -45,25 +37,15 @@ const getFromCache = async (key) => {
   }
 };
 
-// Function to set data in Redis cache with a timeout of 50ms
+// Function to set data in Redis cache
 const setToCache = async (key, value, ttl = 3600) => {
   try {
-    const timeout = new Promise((_, reject) =>
-      setTimeout(() => reject(new Error('Timeout: Redis Cache set took too long')), 50)
-    );
-
-    // Race the Redis set operation against the timeout
-    await Promise.race([
-      redis.setex(key, ttl, JSON.stringify(value)),
-      timeout,
-    ]);
-
+    await redis.setex(key, ttl, JSON.stringify(value));  // Cache data for 'ttl' seconds
     console.log(`Data cached with key: ${key}`);
   } catch (error) {
     console.error('Error setting data to Redis cache:', error);
   }
 };
-
 
 // Function to delete data from Redis cache
 const deleteFromCache = async (key) => {
