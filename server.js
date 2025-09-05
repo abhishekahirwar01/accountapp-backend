@@ -86,6 +86,10 @@ app.use("/api/account", AccountValidityRoutes);
 app.use("/api/user-permissions", userPermissionsRoutes);
 
 
+app.get('/', (req, res) => {
+  res.send("Account App CI/CD is working");
+});
+
 
 app.get('/api/db-status', async (req, res) => {
   try {
@@ -127,7 +131,7 @@ module.exports = app;
 
 // This should only run locally
 if (require.main === module) {
-  const PORT = process.env.PORT || 5000;
+  const PORT = process.env.PORT || 8745;
   app.listen(PORT, () => {
     console.log(`🚀 Server running locally at http://localhost:${PORT}`);
   });
