@@ -27,20 +27,22 @@ jobs:
 
     # Step 5: Deploy to VPS
     - name: Deploy to VPS using SSH
-      env:
-        HOST: ${{ secrets.VPS_HOST }}
-        USER: ${{ secrets.VPS_USER }}
-        PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
-      run: |
-        mkdir -p ~/.ssh
-        echo "$PRIVATE_KEY" > ~/.ssh/id_rsa
-        chmod 600 ~/.ssh/id_rsa
-        ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
+  env:
+    HOST: ${{ secrets.VPS_HOST }}
+    USER: ${{ secrets.VPS_USER }}
+    PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
+  run: |
+    mkdir -p ~/.ssh
+    echo "$PRIVATE_KEY" > ~/.ssh/id_rsa
+    chmod 600 ~/.ssh/id_rsa
+    ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
 
-        ssh $USER@$HOST << EOF
-          cd /home/accountAppBackend || exit
-          git pull origin main || exit
-          npm install || exit
-          pm2 restart accountbackend || exit
-        EOF
+    ssh $USER@$HOST << EOF
+      cd /home/accountAppBackend || exit
+      git stash || exit   # Stash any local changes
+      git pull origin main || exit
+      npm install || exit
+      pm2 restart accountbackend || exit
+    EOF
+
 
