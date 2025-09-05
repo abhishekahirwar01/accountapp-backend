@@ -10,39 +10,37 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # Step 1: Check out code from GitHub
-    - name: Checkout code
-      uses: actions/checkout@v2
+      # Step 1: Check out code from GitHub
+      - name: Checkout code
+        uses: actions/checkout@v2
 
-    # Step 2: Set up Node.js
-    - name: Set up Node.js
-      uses: actions/setup-node@v2
-      with:
-        node-version: '16'  # specify your Node.js version
+      # Step 2: Set up Node.js
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '16'  # specify your Node.js version
 
-    # Step 3: Install dependencies
-    - name: Install dependencies
-      run: |
-        npm install
+      # Step 3: Install dependencies
+      - name: Install dependencies
+        run: |
+          npm install
 
-    # Step 5: Deploy to VPS
-    - name: Deploy to VPS using SSH
-  env:
-    HOST: ${{ secrets.VPS_HOST }}
-    USER: ${{ secrets.VPS_USER }}
-    PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
-  run: |
-    mkdir -p ~/.ssh
-    echo "$PRIVATE_KEY" > ~/.ssh/id_rsa
-    chmod 600 ~/.ssh/id_rsa
-    ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
+      # Step 4: Deploy to VPS using SSH
+      - name: Deploy to VPS using SSH
+        env:
+          HOST: ${{ secrets.VPS_HOST }}
+          USER: ${{ secrets.VPS_USER }}
+          PRIVATE_KEY: ${{ secrets.VPS_PRIVATE_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
 
-    ssh $USER@$HOST << EOF
-      cd /home/accountAppBackend || exit
-      git stash || exit   # Stash any local changes
-      git pull origin main || exit
-      npm install || exit
-      pm2 restart accountbackend || exit
-    EOF
-
-
+          ssh $USER@$HOST << EOF
+            cd /home/accountAppBackend || exit
+            git stash || exit   # Stash any local changes
+            git pull origin main || exit
+            npm install || exit
+            pm2 restart accountbackend || exit
+          EOF
