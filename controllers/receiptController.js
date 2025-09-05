@@ -67,6 +67,25 @@ function companyAllowedForUser(req, companyId) {
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
 
+
+function companyFilterForUser(req, requestedCompanyId) {
+  const allowed = Array.isArray(req.auth.allowedCompanies)
+    ? req.auth.allowedCompanies.map(String)
+    : null;
+
+  if (requestedCompanyId) {
+    if (!allowed || allowed.length === 0 || allowed.includes(String(requestedCompanyId))) {
+      return { company: requestedCompanyId };
+    }
+    return { company: { $in: [] } }; // not allowed -> empty
+  }
+  if (allowed && allowed.length > 0 && !userIsPriv(req)) {
+    return { company: { $in: allowed } };
+  }
+  return {};
+}
+
+
 /** CREATE */
 // exports.createReceipt = async (req, res) => {
 //   try {
@@ -78,6 +97,13 @@ function companyAllowedForUser(req, companyId) {
 
 //     const { party, date, amount, description, referenceNumber, company: companyId } = req.body;
 
+//     if (!party || !companyId) {
+//       return res.status(400).json({ message: "party and company are required" });
+//     }
+//     const amt = Number(amount || 0);
+//     if (!(amt > 0)) {
+//       return res.status(400).json({ message: "Amount must be > 0" });
+//     }
 //     if (!companyAllowedForUser(req, companyId)) {
 //       return res.status(403).json({ message: "You are not allowed to use this company" });
 //     }
@@ -85,37 +111,94 @@ function companyAllowedForUser(req, companyId) {
 //     // Ensure company & party belong to this tenant
 //     const [companyDoc, partyDoc] = await Promise.all([
 //       Company.findOne({ _id: companyId, client: req.auth.clientId }),
-//       Party.findOne({ _id: party, createdByClient: req.auth.clientId }),
+//       Party.findOne({ _id: party, createdByClient: req.auth.clientId }).select({ balance: 1 }),
 //     ]);
 //     if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
-//     if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
+//     if (!partyDoc)  return res.status(400).json({ message: "Customer not found or unauthorized" });
 
-//     const receipt = await ReceiptEntry.create({
-//       party: partyDoc._id,
-//       date,
-//       amount,
-//       description,
-//       referenceNumber,
-//       company: companyDoc._id,
-//       client: req.auth.clientId,
-//       createdByUser: req.auth.userId, // optional if your schema has it
-//     });
+//     // Try transaction first
+//     let session;
+//     try {
+//       session = await mongoose.startSession();
+//       session.startTransaction();
 
-//     res.status(201).json({ message: "Receipt entry created", receipt });
+//       // 1) Deduct from party balance (guard ensures balance >= amt)
+//       const updatedParty = await adjustBalanceGuarded({
+//         partyId: partyDoc._id,
+//         clientId: req.auth.clientId,
+//         delta: -amt,
+//         session,
+//       });
+//       if (!updatedParty) {
+//         throw new Error("Receipt amount exceeds customer's remaining balance");
+//       }
+
+//       // 2) Create receipt
+//       const [receipt] = await ReceiptEntry.create([{
+//         party: partyDoc._id,
+//         date,
+//         amount: amt,
+//         description,
+//         referenceNumber,
+//         company: companyDoc._id,
+//         client: req.auth.clientId,
+//         createdByUser: req.auth.userId,
+//         type: "receipt",
+//       }], { session });
+
+//       await session.commitTransaction();
+//       session.endSession();
+
+//       return res.status(201).json({
+//         message: "Receipt entry created",
+//         receipt,
+//         updatedBalance: Number(updatedParty.balance),
+//       });
+//     } catch (txErr) {
+//       if (session) { try { await session.abortTransaction(); session.endSession(); } catch (_) {} }
+//       // Fallback for non-replica-set deployments: do guarded $inc then create
+//       try {
+//         const updatedParty = await adjustBalanceGuarded({
+//           partyId: partyDoc._id,
+//           clientId: req.auth.clientId,
+//           delta: -amt,
+//           session: undefined,
+//         });
+//         if (!updatedParty) {
+//           return res.status(400).json({ message: "Receipt amount exceeds customer's remaining balance" });
+//         }
+
+//         const receipt = await ReceiptEntry.create({
+//           party: partyDoc._id,
+//           date,
+//           amount: amt,
+//           description,
+//           referenceNumber,
+//           company: companyDoc._id,
+//           client: req.auth.clientId,
+//           createdByUser: req.auth.userId,
+//           type: "receipt",
+//         });
+
+//         return res.status(201).json({
+//           message: "Receipt entry created",
+//           receipt,
+//           updatedBalance: Number(updatedParty.balance),
+//         });
+//       } catch (fallbackErr) {
+//         return res.status(400).json({ message: fallbackErr.message || "Failed to create receipt" });
+//       }
+//     }
 //   } catch (err) {
 //     console.error("createReceipt error:", err);
 //     res.status(500).json({ message: "Server error", error: err.message });
 //   }
 // };
-
+/** CREATE */
 /** CREATE */
 exports.createReceipt = async (req, res) => {
   try {
     await ensureAuthCaps(req);
-
-    if (!userIsPriv(req) && !req.auth.caps?.canCreateReceiptEntries) {
-      return res.status(403).json({ message: "Not allowed to create receipt entries" });
-    }
 
     const { party, date, amount, description, referenceNumber, company: companyId } = req.body;
 
@@ -144,18 +227,7 @@ exports.createReceipt = async (req, res) => {
       session = await mongoose.startSession();
       session.startTransaction();
 
-      // 1) Deduct from party balance (guard ensures balance >= amt)
-      const updatedParty = await adjustBalanceGuarded({
-        partyId: partyDoc._id,
-        clientId: req.auth.clientId,
-        delta: -amt,
-        session,
-      });
-      if (!updatedParty) {
-        throw new Error("Receipt amount exceeds customer's remaining balance");
-      }
-
-      // 2) Create receipt
+      // 1) Create receipt without checking balance
       const [receipt] = await ReceiptEntry.create([{
         party: partyDoc._id,
         date,
@@ -177,22 +249,13 @@ exports.createReceipt = async (req, res) => {
       return res.status(201).json({
         message: "Receipt entry created",
         receipt,
-        updatedBalance: Number(updatedParty.balance),
       });
     } catch (txErr) {
+
       if (session) { try { await session.abortTransaction(); session.endSession(); } catch (_) { } }
       // Fallback for non-replica-set deployments: do guarded $inc then create
-      try {
-        const updatedParty = await adjustBalanceGuarded({
-          partyId: partyDoc._id,
-          clientId: req.auth.clientId,
-          delta: -amt,
-          session: undefined,
-        });
-        if (!updatedParty) {
-          return res.status(400).json({ message: "Receipt amount exceeds customer's remaining balance" });
-        }
 
+      try {
         const receipt = await ReceiptEntry.create({
           party: partyDoc._id,
           date,
@@ -208,7 +271,6 @@ exports.createReceipt = async (req, res) => {
         return res.status(201).json({
           message: "Receipt entry created",
           receipt,
-          updatedBalance: Number(updatedParty.balance),
         });
       } catch (fallbackErr) {
         return res.status(400).json({ message: fallbackErr.message || "Failed to create receipt" });
@@ -219,6 +281,7 @@ exports.createReceipt = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
 
 
 /** LIST (tenant filtered, supports company filter, q, date range, pagination) */
