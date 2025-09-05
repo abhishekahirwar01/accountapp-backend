@@ -261,20 +261,24 @@ exports.deleteJournal = async (req, res) => {
 exports.getJournalsByClient = async (req, res) => {
   try {
     await ensureAuthCaps(req);
-    if (!userIsPriv(req)) {
-      return res.status(403).json({ message: "Not authorized" });
-    }
 
     const { clientId } = req.params;
     const { companyId, page = 1, limit = 100 } = req.query;
 
+    // Check if the user is authorized to access this data
+    if (!userIsPriv(req)) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+  
+    // Construct the query to filter journals by client
     const where = { client: clientId };
     if (companyId) where.company = companyId;
 
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a cache key based on the query parameters
+    // Construct a cache key based on clientId and query parameters
     const cacheKey = `journalEntriesByClient:${JSON.stringify({ clientId, companyId })}`;
 
     // Check if the data is cached in Redis
@@ -288,18 +292,21 @@ exports.getJournalsByClient = async (req, res) => {
       });
     }
 
+    // Fetch journal entries from the database
     const [data, total] = await Promise.all([
       JournalEntry.find(where)
-        .sort({ date: -1 })
-        .skip(skip)
-        .limit(perPage)
-        .populate({ path: "company", select: "businessName" })
-        .lean(),
-      JournalEntry.countDocuments(where),
+        .sort({ date: -1 })  // Sorting by date in descending order
+        .skip(skip)  // Pagination: skip records for the current page
+        .limit(perPage)  // Limit the number of records returned per page
+        .populate({ path: "company", select: "businessName" })  // Populate company details
+        .lean(),  // Convert the result to plain JavaScript objects
+      JournalEntry.countDocuments(where),  // Get the total count of journal entries
     ]);
 
-     await setToCache(cacheKey, { data, total });
+    // Cache the fetched data for future use
+    await setToCache(cacheKey, data);
 
+    // Respond with the data, including pagination information
     res.status(200).json({
       success: true,
       total,
@@ -312,3 +319,4 @@ exports.getJournalsByClient = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
