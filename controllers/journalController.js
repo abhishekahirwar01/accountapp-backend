@@ -2,6 +2,8 @@
 const JournalEntry = require("../models/JournalEntry");
 const Company = require("../models/Company");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
+const { getFromCache, setToCache } = require('../RedisCache');
+const { deleteJournalEntryCache } = require("../utils/cacheHelpers")
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -42,6 +44,7 @@ function companyAllowedForUser(req, companyId) {
     : [];
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
+
 function companyFilterForUser(req, requestedCompanyId) {
   const allowed = Array.isArray(req.auth.allowedCompanies)
     ? req.auth.allowedCompanies.map(String)
@@ -88,6 +91,12 @@ exports.createJournal = async (req, res) => {
       createdByUser: req.auth.userId, // if present in schema
     });
 
+    // Access clientId and companyId after creation
+    const clientId = journal.client.toString();
+
+    // Call the cache deletion function
+    await deleteJournalEntryCache(clientId, companyId);
+
     res.status(201).json({ message: "Journal entry created", journal });
   } catch (err) {
     console.error("createJournal error:", err);
@@ -105,9 +114,13 @@ exports.getJournals = async (req, res) => {
       companyId,
       dateFrom,
       dateTo,
-      page = 1,
-      limit = 100,
+      page: pageRaw = '1',
+      limit: limitRaw = '100',
     } = req.query;
+
+    const page = Math.max(parseInt(pageRaw, 10) || 1, 1);
+    const perPage = Math.min(parseInt(limitRaw, 10) || 100, 500);
+    const skip = (page - 1) * perPage;
 
     const where = {
       client: req.auth.clientId,
@@ -121,39 +134,60 @@ exports.getJournals = async (req, res) => {
     }
 
     if (q) {
+      const regex = new RegExp(String(q), 'i');
       where.$or = [
-        { narration: { $regex: String(q), $options: "i" } },
-        { debitAccount: { $regex: String(q), $options: "i" } },
-        { creditAccount: { $regex: String(q), $options: "i" } },
+        { narration: regex },
+        { debitAccount: regex },
+        { creditAccount: regex },
       ];
     }
 
-    const perPage = Math.min(Number(limit) || 100, 500);
-    const skip = (Number(page) - 1) * perPage;
+    // ✅ Standardize key fields (use "client" not "clientId") and include all filters
+    const cacheKey = `journalEntries:${JSON.stringify({
+      clientId: req.auth.clientId,
+      companyId: companyId || null
+    })}`;
+
+    // Try cache
+    const cached = await getFromCache(cacheKey);
+    if (cached) {
+      return res.status(200).json({
+        success: true,
+        total: cached.total,
+        page,
+        limit: perPage,
+        data: cached.data,
+      });
+    }
 
     const query = JournalEntry.find(where)
-      .sort({ date: -1 })
+      .sort({ date: -1, _id: -1 })
       .skip(skip)
       .limit(perPage)
-      .populate({ path: "company", select: "businessName" });
+      .populate({ path: "company", select: "businessName" })
+      .lean();
 
     const [data, total] = await Promise.all([
-      query.lean(),
+      query,
       JournalEntry.countDocuments(where),
     ]);
 
-    res.status(200).json({
+    // ✅ cache the right variable and keep shape consistent
+    await setToCache(cacheKey, { data, total });
+
+    return res.status(200).json({
       success: true,
       total,
-      page: Number(page),
+      page,
       limit: perPage,
       data,
     });
   } catch (err) {
     console.error("getJournals error:", err);
-    res.status(500).json({ success: false, error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
+
 
 /** UPDATE */
 exports.updateJournal = async (req, res) => {
@@ -181,6 +215,14 @@ exports.updateJournal = async (req, res) => {
     Object.assign(journal, rest);
     await journal.save();
 
+     // Access clientId and companyId after creation
+     const companyId = journal.company ? (journal.company._id || journal.company).toString() : null;
+
+    const clientId = journal.client.toString();
+
+    // Call the cache deletion function
+    await deleteJournalEntryCache(clientId, companyId);
+
     res.json({ message: "Journal updated", journal });
   } catch (err) {
     console.error("updateJournal error:", err);
@@ -201,6 +243,13 @@ exports.deleteJournal = async (req, res) => {
     }
 
     await journal.deleteOne();
+     // Access clientId and companyId after creation
+      const companyId = journal.company ? (journal.company._id || journal.company).toString() : null;
+    const clientId = journal.client.toString();
+
+    // Call the cache deletion function
+    await deleteJournalEntryCache(clientId, companyId);
+
     res.json({ message: "Journal deleted" });
   } catch (err) {
     console.error("deleteJournal error:", err);
@@ -225,6 +274,20 @@ exports.getJournalsByClient = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
+    // Construct a cache key based on the query parameters
+    const cacheKey = `journalEntriesByClient:${JSON.stringify({ clientId, companyId })}`;
+
+    // Check if the data is cached in Redis
+    const cachedEntries = await getFromCache(cacheKey);
+    if (cachedEntries) {
+      // If cached, return the data directly
+      return res.status(200).json({
+        success: true,
+        count: cachedEntries.length,
+        data: cachedEntries,
+      });
+    }
+
     const [data, total] = await Promise.all([
       JournalEntry.find(where)
         .sort({ date: -1 })
@@ -234,6 +297,8 @@ exports.getJournalsByClient = async (req, res) => {
         .lean(),
       JournalEntry.countDocuments(where),
     ]);
+
+    await setToCache(cacheKey, entries);
 
     res.status(200).json({
       success: true,
