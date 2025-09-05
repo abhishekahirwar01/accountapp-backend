@@ -87,7 +87,7 @@ app.use("/api/user-permissions", userPermissionsRoutes);
 
 
 app.get('/', (req, res) => {
-  res.send("Account App CI/CD is working...");
+  res.send("Account App CI/CD is working...error fixes in getJournalsByClient");
 });
 
 

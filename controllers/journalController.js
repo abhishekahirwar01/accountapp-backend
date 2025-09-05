@@ -298,7 +298,7 @@ exports.getJournalsByClient = async (req, res) => {
       JournalEntry.countDocuments(where),
     ]);
 
-    await setToCache(cacheKey, entries);
+     await setToCache(cacheKey, { data, total });
 
     res.status(200).json({
       success: true,
