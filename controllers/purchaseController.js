@@ -56,7 +56,6 @@ function companyAllowedForUser(req, companyId) {
 }
 
 // --- CREATE ------------------------------------------------------
-
 exports.createPurchaseEntry = async (req, res) => {
   const session = await mongoose.startSession();
   const txnOpts = {
@@ -161,7 +160,6 @@ exports.createPurchaseEntry = async (req, res) => {
 };
 
 // --- LIST / SEARCH / PAGINATE -----------------------------------
-
 exports.getPurchaseEntries = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -246,7 +244,6 @@ exports.getPurchaseEntries = async (req, res) => {
 
 
 // --- ADMIN: LIST BY CLIENT --------------------------------------
-
 exports.getPurchaseEntriesByClient = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -308,7 +305,6 @@ exports.getPurchaseEntriesByClient = async (req, res) => {
 
 
 // --- UPDATE ------------------------------------------------------
-
 exports.updatePurchaseEntry = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -385,7 +381,6 @@ exports.updatePurchaseEntry = async (req, res) => {
 };
 
 // --- DELETE ------------------------------------------------------
-
 exports.deletePurchaseEntry = async (req, res) => {
   try {
     await ensureAuthCaps(req);

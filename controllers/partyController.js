@@ -1,10 +1,10 @@
 // controllers/party.controller.js
 const Party = require("../models/Party");
+const Customer = require("../models/Client")
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
 
-const {generatePartyBalanceCacheKey} = require("../utils/cacheHelpers")
 exports.createParty = async (req, res) => {
   try {
     if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateCustomers) {
@@ -39,10 +39,6 @@ exports.createParty = async (req, res) => {
       createdByUser: req.auth.userId,       // optional
     });
 
-     // CACHE INVALIDATION: Invalidate the cache for this client's parties list
-    const cacheKey = key.client(req.auth.clientId);  // Cache key for the client’s parties
-    myCache.del(cacheKey);  // Invalidate cache for client's party list
-
     res.status(201).json({ message: "Party created", party });
   } catch (err) {
     if (err.code === 11000) {
@@ -70,16 +66,6 @@ exports.getParties = async (req, res) => {
       ];
     }
 
-    const cacheKey = key.client(req.auth.clientId, q, page, limit);  // Generate a cache key based on query parameters
-
-    // 1) Check cache first
-    const cached = myCache.get(cacheKey);
-    if (cached) {
-      res.set('X-Cache', 'HIT');  // Debug header to track cache hit
-      res.set('X-Cache-Key', cacheKey);
-      return res.status(200).json(cached);
-    }
-
       // 2) If cache miss, fetch from DB
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
@@ -89,11 +75,6 @@ exports.getParties = async (req, res) => {
       Party.countDocuments(where),
     ]);
 
-    // 3) Store the result in cache
-    myCache.set(cacheKey, { parties, total, page: Number(page), limit: perPage });
-
-    res.set('X-Cache', 'MISS');  // Debug header to track cache miss
-    res.set('X-Cache-Key', cacheKey);
 
     res.json({ parties, total, page: Number(page), limit: perPage });
   } catch (err) {
@@ -105,16 +86,6 @@ exports.getPartyBalance = async (req, res) => {
   try {
     const { partyId } = req.params; // Get the partyId from the URL parameter
 
-    // Generate a cache key for the party balance
-     const cacheKey = generatePartyBalanceCacheKey(req.auth.clientId, partyId);
-
-    // 1) Check cache first
-    const cached = myCache.get(cacheKey);
-    if (cached) {
-      res.set('X-Cache', 'HIT');
-      res.set('X-Cache-Key', cacheKey);
-      return res.json({ balance: cached });
-    }
 
     // 2) If cache miss, fetch from DB
     const party = await Party.findById(partyId);
@@ -122,12 +93,6 @@ exports.getPartyBalance = async (req, res) => {
     if (!party) {
       return res.status(404).json({ message: "Customer not found" });
     }
-
-    // Cache the balance value
-    myCache.set(cacheKey, party.balance);
-
-    res.set('X-Cache', 'MISS');
-    res.set('X-Cache-Key', cacheKey);
 
     res.json({ balance: party.balance });
   } catch (err) {
@@ -148,20 +113,6 @@ exports.getPartyBalancesBulk = async (req, res) => {
       .lean();
 
     const balances = {};
-    for (const r of rows) {
-      // Generate a cache key for each party balance
-      const cacheKey = generatePartyBalanceCacheKey(req.auth.clientId, r._id);
-
-      // 1) Check cache first
-      const cached = myCache.get(cacheKey);
-      if (cached) {
-        balances[String(r._id)] = cached;
-      } else {
-        // 2) If cache miss, fetch from DB and cache it
-        balances[String(r._id)] = r.balance;
-        myCache.set(cacheKey, r.balance);  // Store in cache
-      }
-    }
 
     return res.json({ balances });
   } catch (err) {
@@ -184,14 +135,6 @@ exports.updateParty = async (req, res) => {
     Object.assign(doc, req.body);
     await doc.save();
 
-    // Invalidate cache for this party
-    const cacheKey = key.client(req.auth.clientId);
-    myCache.del(cacheKey);  // Invalidate the cache for the list of parties
-
-    // Invalidate the cache for this party's balance
-    const partyBalanceKey = generatePartyBalanceCacheKey(req.auth.clientId, doc._id);
-    myCache.del(partyBalanceKey);
-
     res.json({ message: "Party updated", party: doc });
   } catch (err) {
     if (err.code === 11000) {
@@ -212,14 +155,6 @@ exports.deleteParty = async (req, res) => {
     }
 
     await doc.deleteOne();
-
-    // Invalidate cache for this party
-    const cacheKey = key.client(req.auth.clientId);
-    myCache.del(cacheKey);  // Invalidate the cache for the list of parties
-
-    // Invalidate the cache for this party's balance
-    const partyBalanceKey = generatePartyBalanceCacheKey(req.auth.clientId, doc._id);
-    myCache.del(partyBalanceKey);
 
     res.json({ message: "Party deleted successfully" });
   } catch (err) {
