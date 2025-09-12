@@ -4,7 +4,7 @@ const Company = require("../models/Company");
 const Vendor = require("../models/Vendor");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deletePaymentEntryCache } = require("../utils/cacheHelpers");
+const { deletePaymentEntryCache , deletePaymentEntryCacheByUser } = require("../utils/cacheHelpers");
 
 // roles that can bypass allowedCompanies restrictions
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
@@ -106,6 +106,7 @@ exports.createPayment = async (req, res) => {
 
     // Call the cache deletion function
     await deletePaymentEntryCache(clientId, companyId);
+    await deletePaymentEntryCacheByUser(clientId, companyId);
 
     res.status(201).json({ message: "Payment entry created", payment });
   } catch (err) {
@@ -440,7 +441,7 @@ exports.updatePayment = async (req, res) => {
     // Call the cache deletion function after updating
     const companyId = payment.company.toString();
     await deletePaymentEntryCache(payment.client.toString(), companyId);
-
+await deletePaymentEntryCacheByUser(payment.client.toString(), companyId);
     res.json({ message: "Payment updated", payment });
   } catch (err) {
     console.error("updatePayment error:", err);
@@ -464,6 +465,7 @@ exports.deletePayment = async (req, res) => {
     // Call the cache deletion function after deletion
     const companyId = payment.company.toString();
     await deletePaymentEntryCache(payment.client.toString(), companyId);
+    await deletePaymentEntryCacheByUser(payment.client.toString(), companyId);
     res.json({ message: "Payment deleted" });
   } catch (err) {
     console.error("deletePayment error:", err);

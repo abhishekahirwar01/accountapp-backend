@@ -5,7 +5,7 @@ const Company = require("../models/Company");
 const Party = require("../models/Party");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deleteReceiptEntryCache } = require("../utils/cacheHelpers")
+const { deleteReceiptEntryCache , deleteReceiptEntryCacheByUser} = require("../utils/cacheHelpers")
 
 // privileged roles that can skip allowedCompanies checks
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
@@ -246,6 +246,8 @@ exports.createReceipt = async (req, res) => {
        // Call the cache deletion function
       await deleteReceiptEntryCache(req.auth.clientId, companyDoc._id.toString());
 
+      await deleteReceiptEntryCacheByUser(req.auth.clientId, companyDoc._id.toString());
+
       return res.status(201).json({
         message: "Receipt entry created",
         receipt,
@@ -440,6 +442,7 @@ exports.updateReceipt = async (req, res) => {
 
       // Call the cache deletion function
       await deleteReceiptEntryCache(req.auth.clientId, companyId);
+      await deleteReceiptEntryCacheByUser(req.auth.clientId, companyId);
 
       return res.json({ message: "Receipt updated", receipt });
     } catch (txErr) {
@@ -517,6 +520,7 @@ exports.deleteReceipt = async (req, res) => {
 
       // Call the cache deletion function
       await deleteReceiptEntryCache(req.auth.clientId, companyId);
+      await deleteReceiptEntryCacheByUser(req.auth.clientId, companyId);
 
       return res.json({
         message: "Receipt deleted",
