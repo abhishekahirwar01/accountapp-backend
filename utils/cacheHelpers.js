@@ -7,7 +7,62 @@ const { redis } = require('../RedisCache');  // Assuming you have Redis client i
 // Reusable function to delete sales entry cache
 const deleteSalesEntryCache = async (clientId, companyId) => {
   try {
+    const clientIdentifier = clientId || (global.user ? global.user.clientId : null);
+
+    if (!clientIdentifier) {
+      console.error("No client ID found in either clientId or user.");
+      return;
+    }
+
     // Cache keys
+    const clientCacheKey = `salesEntriesByClient:${clientIdentifier}`;
+    const companyCacheKey = `salesEntries:${JSON.stringify({ client: clientIdentifier, company: companyId })}`;
+
+    console.log(`Attempting to delete cache for client: ${clientCacheKey}`);
+    console.log(`Attempting to delete cache for company: ${companyCacheKey}`);
+
+    // Check if the cache exists first before trying to delete it
+    const clientCacheExists = await redis.exists(clientCacheKey);
+    const companyCacheExists = await redis.exists(companyCacheKey);
+
+    if (clientCacheExists === 1) {
+      const clientDelResponse = await redis.del(clientCacheKey);
+      console.log(`Cache for client ${clientCacheKey} deleted successfully`);
+    } else {
+      console.log(`No cache found for client ${clientCacheKey}`);
+    }
+
+    if (companyCacheExists === 1) {
+      const companyDelResponse = await redis.del(companyCacheKey);
+      console.log(`Cache for company ${companyCacheKey} deleted successfully`);
+    } else {
+      console.log(`No cache found for company ${companyCacheKey}`);
+    }
+
+    // Fallback check - fetch data from Redis if necessary
+    if (clientCacheExists === 0 || companyCacheExists === 0) {
+      console.log("Cache not found, fetching data from Redis...");
+      // Logic to fetch and log data from Redis
+      // Example:
+      const clientData = await redis.get(clientCacheKey);
+      const companyData = await redis.get(companyCacheKey);
+      console.log('Data fetched from Redis:', clientData, companyData);
+    }
+  } catch (error) {
+    console.error('Error deleting cache in deleteSalesEntryCache:', error);
+  }
+};
+
+
+const deleteSalesEntryCacheByUser = async (user, companyId) => {
+  try {
+    let clientId;
+    // Check if the user has created a client or is associated with a client
+    if (user.createdByClient) {
+      clientId = user.createdByClient;
+    }
+
+    // Cache keys based on dynamic clientId and companyId
     const clientCacheKey = `salesEntriesByClient:${clientId}`;
     const companyCacheKey = `salesEntries:${JSON.stringify({ client: clientId, company: companyId })}`;
 
@@ -71,6 +126,42 @@ const deletePurchaseEntryCache = async (clientId, companyId) => {
 };
 
 
+const deletePurchaseEntryCacheByUser = async (user, companyId) => {
+  try {
+    let clientId;
+    // Check if the user has created a client or is associated with a client
+    if (user.createdByClient) {
+      clientId = user.createdByClient;
+    }
+
+    // Define the cache keys based on clientId and companyId
+    const clientCacheKey = `purchaseEntriesByClient:${clientId}`;
+    const companyCacheKey = `purchaseEntries:${JSON.stringify({ client: clientId, company: companyId })}`;
+
+    console.log(`Attempting to delete cache for client: ${clientCacheKey}`);
+    console.log(`Attempting to delete cache for company: ${companyCacheKey}`);
+
+    // Delete cached data from Redis for both client and company
+    const clientDelResponse = await redis.del(clientCacheKey);
+    const companyDelResponse = await redis.del(companyCacheKey);
+
+    // Log if deletion was successful or not
+    if (clientDelResponse === 1) {
+      console.log(`Cache for client ${clientCacheKey} deleted successfully`);
+    } else {
+      console.log(`No cache found for client ${clientCacheKey}`);
+    }
+
+    if (companyDelResponse === 1) {
+      console.log(`Cache for company ${companyCacheKey} deleted successfully`);
+    } else {
+      console.log(`No cache found for company ${companyCacheKey}`);
+    }
+  } catch (error) {
+    console.error('Error deleting cache in deletePurchaseEntryCache:', error);
+  }
+};
+
 // Reusable function to delete Receipt entry cache
 const deleteReceiptEntryCache = async (clientId, companyId) => {
   try {
@@ -104,6 +195,43 @@ const deleteReceiptEntryCache = async (clientId, companyId) => {
 };
 
 
+const deleteReceiptEntryCacheByUser = async (user, companyId) => {
+  try {
+    let clientId;
+    // Check if the user has created a client or is associated with a client
+    if (user.createdByClient) {
+      clientId = user.createdByClient;
+    }
+
+    // Cache keys
+    const clientCacheKey = `receiptEntriesByClient:${clientId}`;
+    const companyCacheKey = `receiptEntries:${JSON.stringify({ client: clientId, company: companyId })}`;
+
+    // Log the cache keys to be deleted
+    console.log(`Attempting to delete cache for client: ${clientCacheKey}`);
+    console.log(`Attempting to delete cache for company: ${companyCacheKey}`);
+
+    // Delete cached data from Redis for both client and company
+    const clientDelResponse = await redis.del(clientCacheKey);
+    const companyDelResponse = await redis.del(companyCacheKey);
+
+    // Log if deletion was successful or not
+    if (clientDelResponse === 1) {
+      console.log(`Cache for client ${clientCacheKey} deleted successfully`);
+    } else {
+      console.log(`No cache found for client ${clientCacheKey}`);
+    }
+
+    if (companyDelResponse === 1) {
+      console.log(`Cache for company ${companyCacheKey} deleted successfully`);
+    } else {
+      console.log(`No cache found for company ${companyCacheKey}`);
+    }
+  } catch (error) {
+    console.error('Error deleting cache in deleteReceiptEntryCacheByUser:', error);
+  }
+};
+
 
 
 const deletePaymentEntryCache = async (clientId, companyId) => {
@@ -135,6 +263,39 @@ const deletePaymentEntryCache = async (clientId, companyId) => {
     }
   } catch (error) {
     console.error("Error deleting cache in deletePaymentEntryCache:", error);
+  }
+};
+
+
+const deletePaymentEntryCacheByUser = async (user, companyId) => {
+  try {
+    let clientId;
+    // Check if the user has created a client or is associated with a client
+    if (user.createdByClient) {
+      clientId = user.createdByClient;
+    }
+
+    // Define the cache keys to delete
+    const keys = [
+      `paymentEntriesByClient:${clientId}`,
+      `paymentEntries:${clientId}:${companyId}`,
+      `paymentEntries:${JSON.stringify({ clientId, companyId })}`,
+      `paymentEntries:${JSON.stringify({ companyId, clientId })}`,
+      `paymentEntries:${JSON.stringify({ client: clientId, company: companyId })}`,
+      `paymentEntries:${JSON.stringify({ company: companyId, client: clientId })}`
+    ];
+
+    // Check & delete each explicitly
+    for (const k of keys) {
+      const exists = await redis.exists(k);
+      console.log(exists ? `Will delete ${k}` : `Not present ${k}`);
+      if (exists) {
+        const del = await redis.del(k);
+        console.log(del ? `Deleted ${k}` : `Failed to delete ${k}`);
+      }
+    }
+  } catch (error) {
+    console.error("Error deleting cache in deletePaymentEntryCacheByUser:", error);
   }
 };
 
@@ -173,6 +334,38 @@ const deleteJournalEntryCache = async (clientId, companyId) => {
 };
 
 
+const deleteJournalEntryCacheByUser = async (user, companyId) => {
+  try {
+    let clientId;
+    // Check if the user has created a client or is associated with a client
+    if (user.createdByClient) {
+      clientId = user.createdByClient;
+    }
+
+    // Define the cache keys to delete
+    const keys = [
+      `journalEntriesByClient:${clientId}`,
+      `journalEntries:${clientId}:${companyId}`,
+      `journalEntries:${JSON.stringify({ clientId, companyId })}`,
+      `journalEntries:${JSON.stringify({ companyId, clientId })}`,
+      `journalEntries:${JSON.stringify({ client: clientId, company: companyId })}`,
+      `journalEntries:${JSON.stringify({ company: companyId, client: clientId })}`
+    ];
+
+    // Check & delete each explicitly
+    for (const k of keys) {
+      const exists = await redis.exists(k);
+      console.log(exists ? `Will delete ${k}` : `Not present ${k}`);
+      if (exists) {
+        const del = await redis.del(k);
+        console.log(del ? `Deleted ${k}` : `Failed to delete ${k}`);
+      }
+    }
+  } catch (error) {
+    console.error("Error deleting cache in deleteJournalEntryCacheByUser:", error);
+  }
+};
+
 
 
 module.exports = {
@@ -180,5 +373,10 @@ module.exports = {
   deletePurchaseEntryCache,
   deleteReceiptEntryCache,
   deletePaymentEntryCache,
-  deleteJournalEntryCache
+  deleteJournalEntryCache,
+  deleteSalesEntryCacheByUser,
+  deletePurchaseEntryCacheByUser,
+  deleteReceiptEntryCacheByUser,
+  deletePaymentEntryCacheByUser,
+  deleteJournalEntryCacheByUser
 };

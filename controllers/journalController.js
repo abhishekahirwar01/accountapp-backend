@@ -3,7 +3,7 @@ const JournalEntry = require("../models/JournalEntry");
 const Company = require("../models/Company");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deleteJournalEntryCache } = require("../utils/cacheHelpers")
+const { deleteJournalEntryCache , deleteJournalEntryCacheByUser } = require("../utils/cacheHelpers")
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -96,6 +96,7 @@ exports.createJournal = async (req, res) => {
 
     // Call the cache deletion function
     await deleteJournalEntryCache(clientId, companyId);
+    await deleteJournalEntryCacheByUser(clientId, companyId);
 
     res.status(201).json({ message: "Journal entry created", journal });
   } catch (err) {
@@ -222,6 +223,7 @@ exports.updateJournal = async (req, res) => {
 
     // Call the cache deletion function
     await deleteJournalEntryCache(clientId, companyId);
+    await deleteJournalEntryCacheByUser(clientId, companyId);
 
     res.json({ message: "Journal updated", journal });
   } catch (err) {
@@ -249,6 +251,7 @@ exports.deleteJournal = async (req, res) => {
 
     // Call the cache deletion function
     await deleteJournalEntryCache(clientId, companyId);
+    await deleteJournalEntryCacheByUser(clientId, companyId);
 
     res.json({ message: "Journal deleted" });
   } catch (err) {

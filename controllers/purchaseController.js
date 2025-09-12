@@ -6,7 +6,7 @@ const Product = require("../models/Product");
 const normalizePurchaseProducts = require("../utils/normalizePurchaseProducts");
 const normalizePurchaseServices = require("../utils/normalizePurchaseServices");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deletePurchaseEntryCache } = require('../utils/cacheHelpers')
+const { deletePurchaseEntryCache , deletePurchaseEntryCacheByUser } = require('../utils/cacheHelpers')
 
 // load effective caps if middleware didn’t attach them
 const { getEffectivePermissions } = require("../services/effectivePermissions");
@@ -136,6 +136,7 @@ exports.createPurchaseEntry = async (req, res) => {
 
         // Call the cache deletion function
         await deletePurchaseEntryCache(clientId, companyId);
+        await deletePurchaseEntryCacheByUser(clientId, companyId);
 
         return res.status(201).json({ message: "Purchase entry created successfully", entry });
 
@@ -373,6 +374,7 @@ exports.updatePurchaseEntry = async (req, res) => {
 
     // Call the cache deletion function
     await deletePurchaseEntryCache(clientId, companyId);
+     await deletePurchaseEntryCacheByUser(clientId, companyId);
     res.json({ message: "Purchase entry updated successfully", entry });
   } catch (err) {
     console.error("updatePurchaseEntry error:", err);
@@ -399,6 +401,7 @@ exports.deletePurchaseEntry = async (req, res) => {
 
     // Call the cache deletion function
     await deletePurchaseEntryCache(clientId, companyId);
+     await deletePurchaseEntryCacheByUser(clientId, companyId);
     res.json({ message: "Purchase deleted" });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });

@@ -8,9 +8,10 @@ const normalizeServices = require("../utils/normalizeServices");
 const IssuedInvoiceNumber = require("../models/IssuedInvoiceNumber");
 const { issueSalesInvoiceNumber } = require("../services/invoiceIssuer");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deleteSalesEntryCache } = require('../utils/cacheHelpers');
+const { deleteSalesEntryCache ,deleteSalesEntryCacheByUser } = require('../utils/cacheHelpers');
 // at top of controllers/salesController.js
 const { getEffectivePermissions } = require("../services/effectivePermissions");
+const NotificationController = require("../controllers/notificationController")
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -315,13 +316,14 @@ exports.createSalesEntry = async (req, res) => {
           throw e;
         }
       }
+
     });
 
     const clientId = entry.client.toString();  // Retrieve clientId from the entry
 
     // Call the reusable cache deletion function
     await deleteSalesEntryCache(clientId, companyId);
-
+      await deleteSalesEntryCacheByUser(clientId, companyId);
 
     return res
       .status(201)
@@ -336,6 +338,11 @@ exports.createSalesEntry = async (req, res) => {
   }
 };
 
+
+// Define the sameTenant function
+const sameTenant = (entryClientId, userClientId) => {
+  return entryClientId.toString() === userClientId.toString();
+};
 
 
 // UPDATE a sales entry (replace your current function)
@@ -436,6 +443,7 @@ exports.updateSalesEntry = async (req, res) => {
 
     // Call the reusable cache deletion function
     await deleteSalesEntryCache(clientId, companyId);
+      await deleteSalesEntryCacheByUser(clientId, companyId);
 
     res.json({ message: "Sales entry updated successfully", entry });
   } catch (err) {
@@ -466,8 +474,14 @@ exports.deleteSalesEntry = async (req, res) => {
     const companyId = entry.company.toString();
     const clientId = entry.client.toString();  // Retrieve clientId from the entry
 
+    // Check if the user field exists before trying to delete cache by user
+    const user = entry.user ? entry.user.toString() : null;
+
     // Call the reusable cache deletion function
     await deleteSalesEntryCache(clientId, companyId);
+
+     await deleteSalesEntryCacheByUser(clientId, companyId);
+  
 
     res.status(200).json({ message: "Sales entry deleted successfully" });
   } catch (err) {
@@ -475,6 +489,7 @@ exports.deleteSalesEntry = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 
 
