@@ -5,6 +5,10 @@ const Vendor = require("../models/Vendor");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { getFromCache, setToCache } = require('../RedisCache');
 const { deletePaymentEntryCache , deletePaymentEntryCacheByUser } = require("../utils/cacheHelpers");
+const { createNotification } = require("./notificationController");
+const User = require("../models/User");
+const Client = require("../models/Client");
+const Role = require("../models/Role")
 
 // roles that can bypass allowedCompanies restrictions
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
@@ -49,24 +53,6 @@ function companyAllowedForUser(req, companyId) {
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
 
-function companyFilterForUser(req, requestedCompanyId) {
-  const allowed = Array.isArray(req.auth.allowedCompanies)
-    ? req.auth.allowedCompanies.map(String)
-    : null;
-
-  if (requestedCompanyId) {
-    if (!allowed || allowed.length === 0 || allowed.includes(String(requestedCompanyId))) {
-      return { company: requestedCompanyId };
-    }
-    // requested not allowed => return empty result
-    return { company: { $in: [] } };
-  }
-  if (allowed && allowed.length > 0 && !userIsPriv(req)) {
-    return { company: { $in: allowed } };
-  }
-  return {};
-}
-
 /** CREATE */
 exports.createPayment = async (req, res) => {
   try {
@@ -101,12 +87,44 @@ exports.createPayment = async (req, res) => {
       createdByUser: req.auth.userId, // optional if your schema has it
     });
 
+     // NEW: Create notification for admin after payment entry is created
+    const adminRole = await Role.findOne({ name: "admin" });
+    if (adminRole) {
+      const adminUser = await User.findOne({ role: adminRole._id });
+      if (adminUser) {
+        // Look up the user document to get the actual userName
+        const userDoc = await User.findById(req.auth.userId);
+        
+        // Use multiple fallback options for userName
+        const userName = userDoc?.userName || userDoc?.name || 
+                        userDoc?.username || req.auth.userName || 
+                        req.auth.name || 'Unknown User';
+        
+        // Use multiple fallback options for vendorName
+        const vendorName = vendorDoc?.name || vendorDoc?.vendorName || 
+                          vendorDoc?.title || 'Unknown Vendor';
+
+        const notificationMessage = `New payment entry created by ${userName} for vendor ${vendorName} of amount ₹${amount}.`;
+        await createNotification(
+          notificationMessage,
+          adminUser._id,
+          req.auth.userId,
+          "create", // action type
+          "payment", // entry type
+          payment._id,
+          req.auth.clientId
+        );
+        console.log("Payment notification created successfully.");
+      }
+    }
+
+
     // Access clientId and companyId after creation
     const clientId = payment.client.toString();
 
     // Call the cache deletion function
     await deletePaymentEntryCache(clientId, companyId);
-    await deletePaymentEntryCacheByUser(clientId, companyId);
+    // await deletePaymentEntryCacheByUser(clientId, companyId);
 
     res.status(201).json({ message: "Payment entry created", payment });
   } catch (err) {
@@ -114,89 +132,6 @@ exports.createPayment = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-
-/** LIST (tenant-scoped, supports q/date/company filters + pagination) */
-// exports.getPayments = async (req, res) => {
-//   try {
-//     await ensureAuthCaps(req);
-
-//     const {
-//       q,
-//       companyId,
-//       dateFrom,
-//       dateTo,
-//       page = 1,
-//       limit = 100,
-//     } = req.query;
-
-//     const clientId = req.auth.clientId;
-
-//     const where = {
-//       client: req.auth.clientId,
-//       ...companyFilterForUser(req, companyId),
-//     };
-
-//     if (dateFrom || dateTo) {
-//       where.date = {};
-//       if (dateFrom) where.date.$gte = new Date(dateFrom);
-//       if (dateTo) where.date.$lte = new Date(dateTo);
-//     }
-
-//     if (q) {
-//       where.$or = [
-//         { description: { $regex: String(q), $options: "i" } },
-//         { referenceNumber: { $regex: String(q), $options: "i" } },
-//       ];
-//     }
-
-//     const perPage = Math.min(Number(limit) || 100, 500);
-//     const skip = (Number(page) - 1) * perPage;
-
-//      // Construct a cache key based on the query parameters
-//     const cacheKey = `paymentEntries:${JSON.stringify({ clientId, companyId })}`;
-
-//     // Check if the data is cached in Redis
-//     const cachedEntries = await getFromCache(cacheKey);
-//     if (cachedEntries) {
-//       // If cached, return the data directly
-//       return res.status(200).json({
-//         success: true,
-//         count: cachedEntries.length,
-//         data: cachedEntries,
-//       });
-//     }
-
-//     const query = PaymentEntry.find(where)
-//       .sort({ date: -1 })
-//       .skip(skip)
-//       .limit(perPage)
-//       .populate({ path: "vendor", select: "vendorName" })
-//       .populate({ path: "company", select: "businessName" });
-
-//     const [data, total] = await Promise.all([
-//       query.lean(),
-//       PaymentEntry.countDocuments(where),
-//     ]);
-//     const [entries, total] = await Promise.all([
-//       query.lean(),
-//       PaymentEntry.countDocuments(where),
-//     ]);
-
-//      // Cache the fetched data in Redis for future requests
-//     await setToCache(cacheKey, entries);
-
-//     res.status(200).json({
-//       success: true,
-//       total,
-//       page: Number(page),
-//       limit: perPage,
-//       data,
-//     });
-//   } catch (err) {
-//     console.error("getPayments error:", err);
-//     res.status(500).json({ success: false, error: err.message });
-//   }
-// };
 
 
 
@@ -281,64 +216,6 @@ exports.getPayments = async (req, res) => {
 };
 
 
-
-// /** ADMIN / MASTER: list by client (optional company + pagination) */
-// exports.getPaymentsByClient = async (req, res) => {
-//   try {
-//     await ensureAuthCaps(req);
-//     if (!userIsPriv(req)) {
-//       return res.status(403).json({ message: "Not authorized" });
-//     }
-
-//     const { clientId } = req.params;
-//     const { companyId, page = 1, limit = 100 } = req.query;
-
-//     const where = { client: clientId };
-//     if (companyId) where.company = companyId;
-
-//     const perPage = Math.min(Number(limit) || 100, 500);
-//     const skip = (Number(page) - 1) * perPage;
-
-//     // Construct a cache key based on clientId and query parameters
-//     const cacheKey = `paymentEntriesByClient:${JSON.stringify({ client: clientId, company: companyId })}`;
-
-//     // Check if the data is cached in Redis
-//     const cachedEntries = await getFromCache(cacheKey);
-//     if (cachedEntries) {
-//       // If cached, return the data directly
-//       return res.status(200).json({
-//         success: true,
-//         count: cachedEntries.length,
-//         data: cachedEntries,
-//       });
-//     }
-
-//     const [data, total] = await Promise.all([
-//       PaymentEntry.find(where)
-//         .sort({ date: -1 })
-//         .skip(skip)
-//         .limit(perPage)
-//         .populate({ path: "vendor", select: "vendorName" })
-//         .populate({ path: "company", select: "businessName" })
-//         .lean(),
-//       PaymentEntry.countDocuments(where),
-//     ]);
-
-//     // Cache the fetched data in Redis for future requests
-//     await setToCache(cacheKey, entries);
-
-//     res.status(200).json({
-//       success: true,
-//       total,
-//       page: Number(page),
-//       limit: perPage,
-//       data,
-//     });
-//   } catch (err) {
-//     console.error("getPaymentsByClient error:", err);
-//     res.status(500).json({ message: "Server error", error: err.message });
-//   }
-// };
 
 
 
@@ -428,20 +305,51 @@ exports.updatePayment = async (req, res) => {
       payment.company = companyDoc._id;
     }
 
-    // Vendor move check
+      // Vendor move check
+    let vendorDoc;
     if (vendor) {
-      const vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.auth.clientId });
+      vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.auth.clientId });
       if (!vendorDoc) return res.status(400).json({ message: "Vendor not found or unauthorized" });
       payment.vendor = vendorDoc._id;
+    } else {
+      // Get vendor info for notification if not changing
+      vendorDoc = await Vendor.findById(payment.vendor);
     }
 
     Object.assign(payment, rest);
     await payment.save();
 
+     // NEW: Create notification for admin after payment entry is updated
+    const adminRole = await Role.findOne({ name: "admin" });
+    if (adminRole) {
+      const adminUser = await User.findOne({ role: adminRole._id });
+      if (adminUser) {
+        const userDoc = await User.findById(req.auth.userId);
+        const userName = userDoc?.userName || userDoc?.name || 
+                        userDoc?.username || req.auth.userName || 
+                        req.auth.name || 'Unknown User';
+        
+        const vendorName = vendorDoc?.name || vendorDoc?.vendorName || 
+                          vendorDoc?.title || 'Unknown Vendor';
+
+        const notificationMessage = `Payment entry updated by ${userName} for vendor ${vendorName}.`;
+        await createNotification(
+          notificationMessage,
+          adminUser._id,
+          req.auth.userId,
+          "update", // action type
+          "payment", // entry type
+          payment._id,
+          req.auth.clientId
+        );
+        console.log("Payment update notification created successfully.");
+      }
+    }
+
     // Call the cache deletion function after updating
     const companyId = payment.company.toString();
     await deletePaymentEntryCache(payment.client.toString(), companyId);
-await deletePaymentEntryCacheByUser(payment.client.toString(), companyId);
+// await deletePaymentEntryCacheByUser(payment.client.toString(), companyId);
     res.json({ message: "Payment updated", payment });
   } catch (err) {
     console.error("updatePayment error:", err);
@@ -460,12 +368,41 @@ exports.deletePayment = async (req, res) => {
     if (!userIsPriv(req) && !sameTenant(payment.client, req.auth.clientId)) {
       return res.status(403).json({ message: "Not authorized" });
     }
+     // NEW: Get vendor info before deletion for notification
+    const vendorDoc = await Vendor.findById(payment.vendor);
 
     await payment.deleteOne();
+
+     // NEW: Create notification for admin after payment entry is deleted
+    const adminRole = await Role.findOne({ name: "admin" });
+    if (adminRole) {
+      const adminUser = await User.findOne({ role: adminRole._id });
+      if (adminUser) {
+        const userDoc = await User.findById(req.auth.userId);
+        const userName = userDoc?.userName || userDoc?.name || 
+                        userDoc?.username || req.auth.userName || 
+                        req.auth.name || 'Unknown User';
+        
+        const vendorName = vendorDoc?.name || vendorDoc?.vendorName || 
+                          vendorDoc?.title || 'Unknown Vendor';
+
+        const notificationMessage = `Payment entry deleted by ${userName} for vendor ${vendorName}.`;
+        await createNotification(
+          notificationMessage,
+          adminUser._id,
+          req.auth.userId,
+          "delete", // action type
+          "payment", // entry type
+          payment._id, // Use the original payment ID
+          req.auth.clientId
+        );
+        console.log("Payment delete notification created successfully.");
+      }
+    }
     // Call the cache deletion function after deletion
     const companyId = payment.company.toString();
     await deletePaymentEntryCache(payment.client.toString(), companyId);
-    await deletePaymentEntryCacheByUser(payment.client.toString(), companyId);
+    // await deletePaymentEntryCacheByUser(payment.client.toString(), companyId);
     res.json({ message: "Payment deleted" });
   } catch (err) {
     console.error("deletePayment error:", err);

@@ -14,5 +14,6 @@ router.get("/", verifyClientOrAdmin, ctrl.getBankDetails);
 router.get("/:id", verifyClientOrAdmin, ctrl.getBankDetailById);
 router.put("/:id", verifyClientOrAdmin, ctrl.updateBankDetail);
 router.delete("/:id", verifyClientOrAdmin, ctrl.deleteBankDetail);
+router.get("/options", verifyClientOrAdmin, ctrl.listBanksForCompany);
 
 module.exports = router;

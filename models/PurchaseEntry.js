@@ -7,6 +7,7 @@ const purchaseItemSchema = new mongoose.Schema({
   quantity: { type: Number, required: true, min: 1 },
   pricePerUnit: { type: Number, required: true, min: 0 },
   unitType: { type: String, enum: UNIT_TYPES, default: "Piece" },
+  otherUnit : {type: String},
   amount: { type: Number, required: true, min: 0 },
    // New fields to store GST-related information
   gstPercentage: { type: Number, default: 18 },  // Default GST percentage can be set here
@@ -30,6 +31,7 @@ const purchaseSchema = new mongoose.Schema({
   client: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   date: { type: Date, required: true },
+  bank: { type: mongoose.Schema.Types.ObjectId, ref: "BankDetail"},
   products: {
     type: [purchaseItemSchema],
     required: false
