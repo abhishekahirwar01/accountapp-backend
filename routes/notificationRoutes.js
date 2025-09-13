@@ -2,6 +2,8 @@ const express = require("express");
 const router = express.Router();
 const notificationController = require("../controllers/notificationController");
 
+const verifyMasterAdmin = require("../middleware/verifyMasterAdmin")
+
 // Route to create a new notification
 router.post("/", notificationController.createNotification);
 
@@ -13,7 +15,7 @@ router.get("/client/:clientId", notificationController.getClientNotifications);
 
 router.get("/user/:userId", notificationController.getUserNotifications);
 
-router.get("/master/:clientId", notificationController.getClientNotificationsByMaster);
+router.get("/master/:clientId",verifyMasterAdmin, notificationController.getClientNotificationsByMaster);
 
 
 // Route to mark a notification as read
