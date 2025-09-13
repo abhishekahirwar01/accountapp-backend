@@ -134,6 +134,57 @@ exports.getBankDetails = async (req, res) => {
 };
 
 
+/** GET /api/bank-details/options?companyId=...&q=... */
+exports.listBanksForCompany = async (req, res) => {
+  try {
+    const { companyId, q, createdByClient } = req.query;
+    if (!companyId) {
+      return res.status(400).json({ message: "companyId is required" });
+    }
+
+    const { role, companies = [], id: userId } = req.user || {};
+    const base = { company: companyId };
+
+    // 🔐 Access control consistent with your getBankDetails
+    if (["user", "manager", "admin"].includes(role)) {
+      if (!Array.isArray(companies) || !companies.includes(companyId)) {
+        return res.status(403).json({ message: "Not allowed for this company" });
+      }
+      // base.company already set
+    } else if (["client", "customer"].includes(role)) {
+      base.client = req.user.id;
+    } else if (role === "master") {
+      if (createdByClient) base.client = createdByClient;
+      // else: all tenants allowed (or add tenant scoping if you prefer)
+    } else {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    if (q) base.bankName = new RegExp(q, "i");
+
+    const docs = await BankDetail.find(base)
+      .select("_id bankName ifscCode city branchAddress")
+      .sort({ bankName: 1 })
+      .lean();
+
+    // Shape for dropdown
+    const options = docs.map(d => ({
+      value: d._id,
+      label: `${d.bankName}${d.city ? " — " + d.city : ""}${d.ifscCode ? " (" + d.ifscCode + ")" : ""}`,
+      bankName: d.bankName,
+      ifscCode: d.ifscCode,
+      city: d.city,
+      branchAddress: d.branchAddress,
+    }));
+
+    return res.json(options);
+  } catch (err) {
+    console.error("listBanksForCompany error:", err);
+    return res.status(500).json({ message: "Failed to fetch bank options", error: err.message });
+  }
+};
+
+
 /** GET /api/bank-details/:id */
 exports.getBankDetailById = async (req, res) => {
   try {
@@ -193,3 +244,5 @@ exports.deleteBankDetail = async (req, res) => {
     return res.status(500).json({ message: "Failed to delete bank detail", error: err.message });
   }
 };
+
+
