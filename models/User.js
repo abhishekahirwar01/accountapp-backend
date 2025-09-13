@@ -18,6 +18,8 @@ const userSchema = new mongoose.Schema(
 
     companies: [{ type: mongoose.Schema.Types.ObjectId, ref: "Company" }],
     createdByClient: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
+
+    
   },
   { timestamps: true }
 );
