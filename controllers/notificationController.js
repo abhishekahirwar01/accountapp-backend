@@ -112,29 +112,27 @@ exports.markAllNotificationsAsRead = async (req, res) => {
 
 
 // Fetch notifications for a specific client, only accessible by master-admin
+// Fetch notifications for a specific client, only accessible by master-admin
 exports.getClientNotificationsByMaster = async (req, res) => {
   try {
-    // Ensure that the user is a master-admin
-    if (req.auth.role !== 'master') {
+    // Use req.user from middleware
+    if (!req.user || req.user.role !== 'master') {
       return res.status(403).json({ message: 'Unauthorized access' });
     }
 
-    const { clientId } = req.params;  // Get clientId from request params
+    const { clientId } = req.params;
 
-    // Fetch notifications associated with the specific client
     const notifications = await Notification.find({ client: clientId })
-      .populate("triggeredBy", "userName email")  // Populate sender details
-      .populate("recipient", "userName email")   // Populate recipient details
-      .populate("client", "businessName")        // Populate client details (if needed)
-      .sort({ createdAt: -1 })                   // Sort by the most recent notifications first
-      .lean();                                   // Convert to plain objects for better performance
+      .populate("triggeredBy", "userName email")
+      .populate("recipient", "userName email")
+      .populate("client", "businessName")
+      .sort({ createdAt: -1 })
+      .lean();
 
-    // Check if notifications exist for the client
     if (!notifications || notifications.length === 0) {
       return res.status(404).json({ message: `No notifications found for client ${clientId}` });
     }
 
-    // Respond with the notifications
     res.status(200).json({ notifications });
   } catch (err) {
     console.error("Error fetching client notifications by master-admin:", err);
