@@ -538,6 +538,26 @@ const deleteJournalEntryCache = async (clientId, companyId) => {
 };
 
 
+async function flushAllCache(reason = "manual") {
+  try {
+    const useAsync = process.env.REDIS_FLUSH_ASYNC === "true";
+    console.log(`[Redis] FLUSHALL ${useAsync ? "ASYNC " : ""}requested (${reason})`);
+
+    // node-redis (v4) supports .flushAll() / ioredis uses .flushall()
+    if (typeof redis.flushAll === "function") {
+      await redis.flushAll(useAsync ? "ASYNC" : undefined);
+    } else if (typeof redis.flushall === "function") {
+      await redis.flushall(useAsync ? "ASYNC" : undefined);
+    } else {
+      // Fallback to raw command
+      await redis.sendCommand(["FLUSHALL", useAsync ? "ASYNC" : ""].filter(Boolean));
+    }
+
+    console.log("[Redis] FLUSHALL done");
+  } catch (err) {
+    console.error("[Redis] FLUSHALL error:", err);
+  }
+}
 
 
 module.exports = {
@@ -545,5 +565,6 @@ module.exports = {
   deletePurchaseEntryCache,
   deleteReceiptEntryCache,
   deletePaymentEntryCache,
-  deleteJournalEntryCache
+  deleteJournalEntryCache,
+  flushAllCache,
 };
