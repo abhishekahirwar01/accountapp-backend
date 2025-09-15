@@ -76,6 +76,154 @@ function companyAllowedForUser(req, companyId) {
 
 
 /** CREATE */
+// exports.createReceipt = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req);
+
+//     const { party, date, amount, description, referenceNumber, company: companyId } = req.body;
+
+//     if (!party || !companyId) {
+//       return res.status(400).json({ message: "party and company are required" });
+//     }
+//     const amt = Number(amount || 0);
+//     if (!(amt > 0)) {
+//       return res.status(400).json({ message: "Amount must be > 0" });
+//     }
+//     if (!companyAllowedForUser(req, companyId)) {
+//       return res.status(403).json({ message: "You are not allowed to use this company" });
+//     }
+
+//     // Ensure company & party belong to this tenant
+//     const [companyDoc, partyDoc] = await Promise.all([
+//       Company.findOne({ _id: companyId, client: req.auth.clientId }),
+//       Party.findOne({ _id: party, createdByClient: req.auth.clientId }).select({ balance: 1, name: 1 }), // Added name to select
+//     ]);
+//     if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
+//     if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
+
+//     // Try transaction first
+//     let session;
+//     try {
+//       session = await mongoose.startSession();
+//       session.startTransaction();
+
+//       // 1) Create receipt without checking balance
+//       const [receipt] = await ReceiptEntry.create([{
+//         party: partyDoc._id,
+//         date,
+//         amount: amt,
+//         description,
+//         referenceNumber,
+//         company: companyDoc._id,
+//         client: req.auth.clientId,
+//         createdByUser: req.auth.userId,
+//         type: "receipt",
+//       }], { session });
+
+//       // NEW: Create notification for admin after receipt entry is created
+//       const adminRole = await Role.findOne({ name: "admin" });
+//       if (adminRole) {
+//         const adminUser = await User.findOne({ role: adminRole._id });
+//         if (adminUser) {
+//           try {
+//             const userDoc = await User.findById(req.auth.userId);
+//             const userName = userDoc?.userName || userDoc?.name || 
+//                             userDoc?.username || req.auth.userName || 
+//                             req.auth.name || 'Unknown User';
+            
+//             const partyName = partyDoc?.name || partyDoc?.partyName || 
+//                              partyDoc?.customerName || 'Unknown Customer';
+
+//             const notificationMessage = `New receipt entry created by ${userName} for customer ${partyName} of amount ₹${amt}.`;
+//             await createNotification(
+//               notificationMessage,
+//               adminUser._id,
+//               req.auth.userId,
+//               "create",
+//               "payment", // Using "payment" since "receipt" might not be valid
+//               receipt._id,
+//               req.auth.clientId
+//             );
+//             console.log("Receipt notification created successfully.");
+//           } catch (notificationError) {
+//             console.error("Error creating notification:", notificationError);
+//           }
+//         }
+//       }
+
+//       await session.commitTransaction();
+//       session.endSession();
+
+//       // Call the cache deletion function
+//       await deleteReceiptEntryCache(req.auth.clientId, companyDoc._id.toString());
+
+//       return res.status(201).json({
+//         message: "Receipt entry created",
+//         receipt,
+//       });
+//     } catch (txErr) {
+
+//       if (session) { try { await session.abortTransaction(); session.endSession(); } catch (_) { } }
+//       // Fallback for non-replica-set deployments: do guarded $inc then create
+
+//       try {
+//         const receipt = await ReceiptEntry.create({
+//           party: partyDoc._id,
+//           date,
+//           amount: amt,
+//           description,
+//           referenceNumber,
+//           company: companyDoc._id,
+//           client: req.auth.clientId,
+//           createdByUser: req.auth.userId,
+//           type: "receipt",
+//         });
+
+//         // NEW: Create notification in fallback scenario too
+//         const adminRole = await Role.findOne({ name: "admin" });
+//         if (adminRole) {
+//           const adminUser = await User.findOne({ role: adminRole._id });
+//           if (adminUser) {
+//             try {
+//               const userDoc = await User.findById(req.auth.userId);
+//               const userName = userDoc?.userName || userDoc?.name || 
+//                               userDoc?.username || req.auth.userName || 
+//                               req.auth.name || 'Unknown User';
+              
+//               const partyName = partyDoc?.name || partyDoc?.partyName || 
+//                                partyDoc?.customerName || 'Unknown Customer';
+
+//               const notificationMessage = `New receipt entry created by ${userName} for customer ${partyName} of amount ₹${amt}.`;
+//               await createNotification(
+//                 notificationMessage,
+//                 adminUser._id,
+//                 req.auth.userId,
+//                 "create",
+//                 "payment",
+//                 receipt._id,
+//                 req.auth.clientId
+//               );
+//               console.log("Receipt notification created successfully (fallback).");
+//             } catch (notificationError) {
+//               console.error("Error creating notification:", notificationError);
+//             }
+//           }
+//         }
+
+//         return res.status(201).json({
+//           message: "Receipt entry created",
+//           receipt,
+//         });
+//       } catch (fallbackErr) {
+//         return res.status(400).json({ message: fallbackErr.message || "Failed to create receipt" });
+//       }
+//     }
+//   } catch (err) {
+//     console.error("createReceipt error:", err);
+//     res.status(500).json({ message: "Server error", error: err.message });
+//   }
+// };
+/** CREATE */
 exports.createReceipt = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -101,13 +249,29 @@ exports.createReceipt = async (req, res) => {
     if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
     if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
 
+    // Check if party has sufficient balance
+    if (partyDoc.balance < amt) {
+      return res.status(400).json({ message: "Insufficient balance for this customer" });
+    }
+
     // Try transaction first
     let session;
     try {
       session = await mongoose.startSession();
       session.startTransaction();
 
-      // 1) Create receipt without checking balance
+      // 1) Deduct amount from party balance
+      const updatedParty = await Party.findOneAndUpdate(
+        { _id: party, createdByClient: req.auth.clientId },
+        { $inc: { balance: -amt } }, // Deduct the amount
+        { new: true, session }
+      );
+
+      if (!updatedParty) {
+        throw new Error("Failed to update party balance");
+      }
+
+      // 2) Create receipt
       const [receipt] = await ReceiptEntry.create([{
         party: partyDoc._id,
         date,
@@ -160,13 +324,25 @@ exports.createReceipt = async (req, res) => {
       return res.status(201).json({
         message: "Receipt entry created",
         receipt,
+        updatedBalance: updatedParty.balance
       });
     } catch (txErr) {
-
       if (session) { try { await session.abortTransaction(); session.endSession(); } catch (_) { } }
-      // Fallback for non-replica-set deployments: do guarded $inc then create
-
+      
+      // Fallback for non-replica-set deployments
       try {
+        // 1) Deduct amount from party balance
+        const updatedParty = await Party.findOneAndUpdate(
+          { _id: party, createdByClient: req.auth.clientId },
+          { $inc: { balance: -amt } }, // Deduct the amount
+          { new: true }
+        );
+
+        if (!updatedParty) {
+          return res.status(400).json({ message: "Failed to update party balance" });
+        }
+
+        // 2) Create receipt
         const receipt = await ReceiptEntry.create({
           party: partyDoc._id,
           date,
@@ -213,6 +389,7 @@ exports.createReceipt = async (req, res) => {
         return res.status(201).json({
           message: "Receipt entry created",
           receipt,
+          updatedBalance: updatedParty.balance
         });
       } catch (fallbackErr) {
         return res.status(400).json({ message: fallbackErr.message || "Failed to create receipt" });
@@ -223,7 +400,6 @@ exports.createReceipt = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-
 
 
 /** LIST (tenant filtered, supports company filter, q, date range, pagination) */
