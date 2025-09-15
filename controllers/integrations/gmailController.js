@@ -55,14 +55,16 @@ exports.getStatus = async (req, res) => {
       }
     }
 
-    return res.json({
-      connected: !!doc.connected,
-      email: doc.email || null,
-      termsAcceptedAt: doc.termsAcceptedAt || null,
-      // 🔎 expose diagnostics so the UI can explain why
-      reason: doc.reason || null,
-      lastFailureAt: doc.lastFailureAt || null,
-    });
+  //  console.log('Email Integration Status:', doc); // Add this line for debugging
+
+return res.json({
+  connected: !!doc.connected,
+  email: doc.email || null,
+  termsAcceptedAt: doc.termsAcceptedAt || null,
+  reason: doc.reason || null,
+  lastFailureAt: doc.lastFailureAt || null,
+});
+
   } catch (e) {
     res.status(500).json({ message: e.message });
   }

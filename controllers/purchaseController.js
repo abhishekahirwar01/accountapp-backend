@@ -2,14 +2,20 @@ const mongoose = require("mongoose");
 const PurchaseEntry = require("../models/PurchaseEntry");
 const Company = require("../models/Company");
 const Vendor = require("../models/Vendor");
-const Product = require("../models/Product");
+const BankDetail = require("../models/BankDetail");
 const normalizePurchaseProducts = require("../utils/normalizePurchaseProducts");
 const normalizePurchaseServices = require("../utils/normalizePurchaseServices");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deletePurchaseEntryCache } = require('../utils/cacheHelpers')
+const { deletePurchaseEntryCache, deletePurchaseEntryCacheByUser } = require('../utils/cacheHelpers')
 
 // load effective caps if middleware didn’t attach them
 const { getEffectivePermissions } = require("../services/effectivePermissions");
+
+const { createNotification } = require("./notificationController");
+const User = require("../models/User");
+const Client = require("../models/Client");
+const Role = require("../models/Role")
+
 
 // --- helpers -----------------------------------------------------
 
@@ -24,6 +30,7 @@ async function ensureAuthCaps(req) {
       role: req.user.role,
       caps: req.user.caps,
       allowedCompanies: req.user.allowedCompanies,
+      userName: req.user.userName || 'Unknown',
     };
   }
   if (!req.auth) throw new Error("Unauthorized (no auth context)");
@@ -35,6 +42,22 @@ async function ensureAuthCaps(req) {
     });
     req.auth.caps = req.auth.caps || caps;
     req.auth.allowedCompanies = req.auth.allowedCompanies || allowedCompanies;
+  }
+
+  // NEW: Ensure userName is always set
+  if (!req.auth.userName) {
+    // Try to get the user's name from the database if not available in auth
+    try {
+      const user = await User.findById(req.auth.userId);
+      if (user) {
+        req.auth.userName = user.name || user.username || user.email || 'Unknown User';
+      } else {
+        req.auth.userName = 'Unknown User';
+      }
+    } catch (error) {
+      console.error("Error fetching user for userName:", error);
+      req.auth.userName = 'Unknown User';
+    }
   }
 }
 
@@ -55,6 +78,7 @@ function companyAllowedForUser(req, companyId) {
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
 
+
 // --- CREATE ------------------------------------------------------
 exports.createPurchaseEntry = async (req, res) => {
   const session = await mongoose.startSession();
@@ -69,12 +93,13 @@ exports.createPurchaseEntry = async (req, res) => {
     if (!userIsPriv(req) && !req.auth.caps?.canCreatePurchaseEntries) {
       return res.status(403).json({ message: "Not allowed to create purchase entries" });
     }
-    const { company: companyId } = req.body;  // Make sure companyId is properly initialized here
+    const { company: companyId, bank } = req.body;  // Make sure companyId is properly initialized here
     if (!companyAllowedForUser(req, companyId)) {
       return res.status(403).json({ message: "You are not allowed to use this company" });
     }
 
     let entry;
+    let vendorDoc, companyDoc;
     for (let attempt = 0; attempt < 4; attempt++) {
       try {
         await session.withTransaction(async () => {
@@ -84,11 +109,17 @@ exports.createPurchaseEntry = async (req, res) => {
           } = req.body;
 
           // Make sure companyId is defined here
-          const companyDoc = await Company.findOne({ _id: companyId, client: req.auth.clientId }).session(session);
+          companyDoc = await Company.findOne({ _id: companyId, client: req.auth.clientId }).session(session);
           if (!companyDoc) throw new Error("Invalid company selected");
 
-          const vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.auth.clientId }).session(session);
+          vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.auth.clientId }).session(session);
           if (!vendorDoc) throw new Error("Vendor not found or unauthorized");
+
+          // Validate the bank field - make sure the bank belongs to the company
+          const selectedBank = await BankDetail.findById(bank);
+          // if (!selectedBank || !selectedBank.company.equals(companyId)) {
+          //   throw new Error("Invalid bank selected for this company");
+          // }
 
           let normalizedProducts = [], productsTotal = 0;
           if (Array.isArray(products) && products.length > 0) {
@@ -126,8 +157,56 @@ exports.createPurchaseEntry = async (req, res) => {
             gstPercentage,
             invoiceType,
             gstin: companyDoc.gstin || null,
+            bank: req.body.bank,
           }], { session });
           entry = docs[0];
+
+          // NEW: Create notification for admin after purchase entry is created
+          const adminRole = await Role.findOne({ name: "admin" });
+          console.log("Admin role:", adminRole);
+          if (!adminRole) {
+            console.error("Admin role not found");
+            return;
+          }
+
+          const adminUser = await User.findOne({
+            role: adminRole._id
+          });
+
+          console.log("Admin user lookup:", { companyId, adminUser: adminUser ? adminUser._id : "not found" });
+
+          console.log("Creating notification for admin user...");
+          if (adminUser) {
+            console.log("req.auth:", req.auth);
+
+            // DEBUG: Look up the user document to get the actual userName
+            const userDoc = await User.findById(req.auth.userId);
+            console.log("User document found:", userDoc);
+
+            // FIX: Use multiple fallback options for userName
+            const userName = userDoc?.userName || userDoc?.name ||
+              userDoc?.username || req.auth.userName ||
+              req.auth.name || 'Unknown User';
+
+            // FIX: Use multiple fallback options for vendorName
+            const vendorName = vendorDoc?.name || vendorDoc?.vendorName ||
+              vendorDoc?.title || 'Unknown Vendor';
+
+            console.log("Final values - UserName:", userName, "VendorName:", vendorName);
+
+            const notificationMessage = `New purchase entry created by ${userName} for vendor ${vendorName}.`;
+
+            await createNotification(
+              notificationMessage,
+              adminUser._id,
+              req.auth.userId,
+              "create", // action type
+              "purchase", // entry type
+              entry._id,
+              req.auth.clientId
+            );
+            console.log("Purchase notification created successfully.");
+          }
 
         }, txnOpts);
 
@@ -136,6 +215,7 @@ exports.createPurchaseEntry = async (req, res) => {
 
         // Call the cache deletion function
         await deletePurchaseEntryCache(clientId, companyId);
+        // await deletePurchaseEntryCacheByUser(clientId, companyId);
 
         return res.status(201).json({ message: "Purchase entry created successfully", entry });
 
@@ -158,7 +238,6 @@ exports.createPurchaseEntry = async (req, res) => {
     session.endSession();
   }
 };
-
 // --- LIST / SEARCH / PAGINATE -----------------------------------
 exports.getPurchaseEntries = async (req, res) => {
   try {
@@ -367,18 +446,61 @@ exports.updatePurchaseEntry = async (req, res) => {
     }
 
     await entry.save();
+    // NEW: Create notification for admin after purchase entry is updated
+    const adminRole = await Role.findOne({ name: "admin" });
+    if (adminRole) {
+      const adminUser = await User.findOne({ role: adminRole._id });
+      if (adminUser) {
+        // Get vendor info
+        const vendorDoc = await Vendor.findById(entry.vendor);
+        const vendorName = vendorDoc?.name || vendorDoc?.vendorName || "Unknown Vendor";
+
+        // DEBUG: Check what entry contains
+        console.log("Purchase entry structure:", entry);
+
+        // FIX: Use the correct user reference
+        // Option 1: Use the user who made the request (usually the correct approach)
+        const requestingUserDoc = await User.findById(req.auth.userId);
+
+        // Option 2: If entry has a createdByUser field, use that
+        // const requestingUserDoc = await User.findById(entry.createdByUser);
+
+        // Use safe fallback with multiple possible field names
+        const userName = requestingUserDoc?.userName || requestingUserDoc?.name ||
+          requestingUserDoc?.username || 'Unknown User';
+
+        console.log("Found user document:", requestingUserDoc);
+        console.log("Extracted user name:", userName);
+
+        const notificationMessage = `Purchase entry updated by ${userName} for vendor ${vendorName}.`;
+
+        await createNotification(
+          notificationMessage,
+          adminUser._id,
+          req.auth.userId,
+          "update", // action type
+          "purchase", // entry type
+          entry._id,
+          req.auth.clientId
+        );
+        console.log("Purchase update notification created successfully.");
+      }
+    }
+
     // After deletion, clear the relevant cache for client and company
     const clientId = entry.client.toString();
     const companyId = entry.company.toString();
 
     // Call the cache deletion function
     await deletePurchaseEntryCache(clientId, companyId);
+    //  await deletePurchaseEntryCacheByUser(clientId, companyId);
     res.json({ message: "Purchase entry updated successfully", entry });
   } catch (err) {
     console.error("updatePurchaseEntry error:", err);
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // --- DELETE ------------------------------------------------------
 exports.deletePurchaseEntry = async (req, res) => {
@@ -392,16 +514,54 @@ exports.deletePurchaseEntry = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
+    // NEW: Get vendor info before deletion for notification
+    const vendorDoc = await Vendor.findById(entry.vendor);
+    
+    // DEBUG: Look up the user document to get the actual userName
+    const userDoc = await User.findById(req.auth.userId);
+    console.log("User document found for delete:", userDoc);
+    
+    // FIX: Use multiple fallback options for userName
+    const userName = userDoc?.userName || userDoc?.name || 
+                    userDoc?.username || req.auth.userName || 
+                    req.auth.name || 'Unknown User';
+    
+    // FIX: Use multiple fallback options for vendorName
+    const vendorName = vendorDoc?.name || vendorDoc?.vendorName || 
+                      vendorDoc?.title || 'Unknown Vendor';
+
+    console.log("Final values - UserName:", userName, "VendorName:", vendorName);
+
     await entry.deleteOne();
+
+    // NEW: Create notification for admin after purchase entry is deleted
+    const adminRole = await Role.findOne({ name: "admin" });
+    if (adminRole) {
+      const adminUser = await User.findOne({ role: adminRole._id });
+      if (adminUser) {
+        const notificationMessage = `Purchase entry deleted by ${userName} for vendor ${vendorName}.`;
+        await createNotification(
+          notificationMessage,
+          adminUser._id,
+          req.auth.userId,
+          "delete", // action type
+          "purchase", // entry type
+          entry._id, // Use the original entry ID even though it's deleted
+          req.auth.clientId
+        );
+        console.log("Purchase delete notification created successfully.");
+      }
+    }
+
     // After deletion, clear the relevant cache for client and company
     const clientId = entry.client.toString();
     const companyId = entry.company.toString();
 
     // Call the cache deletion function
     await deletePurchaseEntryCache(clientId, companyId);
+    //  await deletePurchaseEntryCacheByUser(clientId, companyId);
     res.json({ message: "Purchase deleted" });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-

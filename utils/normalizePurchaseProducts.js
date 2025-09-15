@@ -27,12 +27,16 @@ module.exports = async (rawProducts = [], clientId) => {
     // Calculate tax and total for this line
     const lineTax = +(amount * gstPercentage / 100).toFixed(2);
     const lineTotal = +(amount + lineTax).toFixed(2);
+
+    // Handle the 'Other' unitType and ensure 'otherUnit' exists
+    const otherUnit = item.unitType === "Other" ? item.otherUnit : undefined;
     
     items.push({
       product: product._id,
       quantity,
       pricePerUnit,
       unitType: item.unitType || product.unitType || "Piece",
+      otherUnit,
       amount,
        gstPercentage, // NEW: Save GST percentage
       lineTax,       // NEW: Save calculated tax
