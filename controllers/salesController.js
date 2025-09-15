@@ -153,6 +153,196 @@ exports.getSalesEntriesByClient = async (req, res) => {
 };
 
 
+// exports.createSalesEntry = async (req, res) => {
+//   const session = await mongoose.startSession();
+//   let entry, companyDoc, partyDoc;
+
+//   try {
+//     await ensureAuthCaps(req);
+//     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
+//       return res
+//         .status(403)
+//         .json({ message: "Not allowed to create sales entries" });
+//     }
+
+//     const { company: companyId, paymentMethod, party, totalAmount } = req.body;
+
+//     if (!party) {
+//       return res.status(400).json({ message: "Customer ID is required" });
+//     }
+
+//     if (paymentMethod === "Credit") {
+//       partyDoc = await Party.findById(party);
+//       if (!partyDoc) {
+//         return res.status(404).json({ message: "Customer not found" });
+//       }
+//       partyDoc.balance += totalAmount;
+//       await partyDoc.save();
+//     }
+
+//     if (!companyAllowedForUser(req, companyId)) {
+//       return res
+//         .status(403)
+//         .json({ message: "You are not allowed to use this company" });
+//     }
+
+//     await session.withTransaction(async () => {
+//       const {
+//         party,
+//         company: companyId,
+//         date,
+//         products,
+//         services,
+//         totalAmount,
+//         description,
+//         referenceNumber,
+//         gstPercentage,
+//         gstRate,
+//         discountPercentage,
+//         invoiceType,
+//         taxAmount: taxAmountIn,
+//         invoiceTotal: invoiceTotalIn,
+//       } = req.body;
+
+//       companyDoc = await Company.findOne({
+//         _id: companyId,
+//         client: req.auth.clientId,
+//       }).session(session);
+//       if (!companyDoc) throw new Error("Invalid company selected");
+
+//       partyDoc = await Party.findOne({
+//         _id: party,
+//         createdByClient: req.auth.clientId,
+//       }).session(session);
+//       if (!partyDoc) throw new Error("Customer not found or unauthorized");
+
+//       if (paymentMethod === "Credit") {
+//   await Party.updateOne(
+//     { _id: partyDoc._id, createdByClient: req.auth.clientId },
+//     { $inc: { balance: finalTotal } },
+//     { session }
+//   );
+// }
+
+//       // Normalize products with GST calculations
+//       let normalizedProducts = [], productsTotal = 0, productsTax = 0;
+//       if (Array.isArray(products) && products.length > 0) {
+//         const { items, computedTotal, computedTax } = await normalizeProducts(
+//           products,
+//           req.auth.clientId
+//         );
+//         normalizedProducts = items;
+//         productsTotal = computedTotal;
+//         productsTax = computedTax;
+//       }
+
+//       // Normalize services with GST calculations
+//       let normalizedServices = [], servicesTotal = 0, servicesTax = 0;
+//       if (Array.isArray(services) && services.length > 0) {
+//         const { items, computedTotal, computedTax } = await normalizeServices(
+//           services,
+//           req.auth.clientId
+//         );
+//         normalizedServices = items;
+//         servicesTotal = computedTotal;
+//         servicesTax = computedTax;
+//       }
+
+//       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
+//       const computedTaxAmount = (productsTax || 0) + (servicesTax || 0);
+
+//       // Use computed values if not explicitly provided
+//       const finalTotal = typeof totalAmount === "number"
+//         ? totalAmount
+//         : typeof invoiceTotalIn === "number"
+//           ? invoiceTotalIn
+//           : +(computedSubtotal + computedTaxAmount).toFixed(2);
+
+//       const finalTaxAmount = typeof taxAmountIn === "number"
+//         ? taxAmountIn
+//         : computedTaxAmount;
+
+//       const atDate = date ? new Date(date) : new Date();
+
+//       let attempts = 0;
+//       while (true) {
+//         attempts++;
+//         const { invoiceNumber, yearYY, seq, prefix } =
+//           await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
+
+//         try {
+//           const docs = await SalesEntry.create(
+//             [
+//               {
+//                 party: partyDoc._id,
+//                 company: companyDoc._id,
+//                 client: req.auth.clientId,
+//                 date,
+//                 products: normalizedProducts,
+//                 services: normalizedServices,
+//                 totalAmount: finalTotal,
+//                 taxAmount: finalTaxAmount, // NEW: Save total tax amount
+//                 subTotal: computedSubtotal, // NEW: Save subtotal
+//                 description,
+//                 referenceNumber,
+//                 gstPercentage: computedTaxAmount > 0 ?
+//                   +((computedTaxAmount / computedSubtotal) * 100).toFixed(2) : 0,
+//                 discountPercentage,
+//                 invoiceType,
+//                 gstin: companyDoc.gstin || null,
+//                 invoiceNumber,
+//                 invoiceYearYY: yearYY,
+//                 paymentMethod,
+//                 createdByUser: req.auth.userId,
+//               },
+//             ],
+//             { session }
+//           );
+
+//           entry = docs[0];
+
+//           await IssuedInvoiceNumber.create(
+//             [
+//               {
+//                 company: companyDoc._id,
+//                 series: "sales",
+//                 invoiceNumber,
+//                 yearYY,
+//                 seq,
+//                 prefix,
+//               },
+//             ],
+//             { session }
+//           );
+
+//           break;
+//         } catch (e) {
+//           if (e?.code === 11000 && attempts < 20) {
+//             continue;
+//           }
+//           throw e;
+//         }
+//       }
+//     });
+
+//     const clientId = entry.client.toString();  // Retrieve clientId from the entry
+
+//     // Call the reusable cache deletion function
+//     await deleteSalesEntryCache(clientId, companyId);
+
+
+//     return res
+//       .status(201)
+//       .json({ message: "Sales entry created successfully", entry });
+//   } catch (err) {
+//     console.error("createSalesEntry error:", err);
+//     return res
+//       .status(500)
+//       .json({ message: "Something went wrong", error: err.message });
+//   } finally {
+//     session.endSession();
+//   }
+// };
 exports.createSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
   let entry, companyDoc, partyDoc;
@@ -160,31 +350,18 @@ exports.createSalesEntry = async (req, res) => {
   try {
     await ensureAuthCaps(req);
     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
-      return res
-        .status(403)
-        .json({ message: "Not allowed to create sales entries" });
+      return res.status(403).json({ message: "Not allowed to create sales entries" });
     }
 
-    const { company: companyId, paymentMethod, party, totalAmount } = req.body;
+    const { company: companyId, paymentMethod, party } = req.body;
 
-    if (!party) {
-      return res.status(400).json({ message: "Customer ID is required" });
-    }
-
-    if (paymentMethod === "Credit") {
-      partyDoc = await Party.findById(party);
-      if (!partyDoc) {
-        return res.status(404).json({ message: "Customer not found" });
-      }
-      partyDoc.balance += totalAmount;
-      await partyDoc.save();
-    }
-
+    if (!party) return res.status(400).json({ message: "Customer ID is required" });
     if (!companyAllowedForUser(req, companyId)) {
-      return res
-        .status(403)
-        .json({ message: "You are not allowed to use this company" });
+      return res.status(403).json({ message: "You are not allowed to use this company" });
     }
+
+    // 🔴 IMPORTANT: remove the pre-transaction save that caused validation
+    // if (paymentMethod === "Credit") { ... partyDoc.save() }  <-- DELETE THIS WHOLE BLOCK
 
     await session.withTransaction(async () => {
       const {
@@ -196,7 +373,6 @@ exports.createSalesEntry = async (req, res) => {
         totalAmount,
         description,
         referenceNumber,
-        gstPercentage,
         gstRate,
         discountPercentage,
         invoiceType,
@@ -204,55 +380,36 @@ exports.createSalesEntry = async (req, res) => {
         invoiceTotal: invoiceTotalIn,
       } = req.body;
 
-      companyDoc = await Company.findOne({
-        _id: companyId,
-        client: req.auth.clientId,
-      }).session(session);
+      companyDoc = await Company.findOne({ _id: companyId, client: req.auth.clientId }).session(session);
       if (!companyDoc) throw new Error("Invalid company selected");
 
-      partyDoc = await Party.findOne({
-        _id: party,
-        createdByClient: req.auth.clientId,
-      }).session(session);
+      partyDoc = await Party.findOne({ _id: party, createdByClient: req.auth.clientId }).session(session);
       if (!partyDoc) throw new Error("Customer not found or unauthorized");
 
-      // Normalize products with GST calculations
+      // Normalize products
       let normalizedProducts = [], productsTotal = 0, productsTax = 0;
       if (Array.isArray(products) && products.length > 0) {
-        const { items, computedTotal, computedTax } = await normalizeProducts(
-          products,
-          req.auth.clientId
-        );
-        normalizedProducts = items;
-        productsTotal = computedTotal;
-        productsTax = computedTax;
+        const { items, computedTotal, computedTax } = await normalizeProducts(products, req.auth.clientId);
+        normalizedProducts = items; productsTotal = computedTotal; productsTax = computedTax;
       }
 
-      // Normalize services with GST calculations
+      // Normalize services
       let normalizedServices = [], servicesTotal = 0, servicesTax = 0;
       if (Array.isArray(services) && services.length > 0) {
-        const { items, computedTotal, computedTax } = await normalizeServices(
-          services,
-          req.auth.clientId
-        );
-        normalizedServices = items;
-        servicesTotal = computedTotal;
-        servicesTax = computedTax;
+        const { items, computedTotal, computedTax } = await normalizeServices(services, req.auth.clientId);
+        normalizedServices = items; servicesTotal = computedTotal; servicesTax = computedTax;
       }
 
       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
       const computedTaxAmount = (productsTax || 0) + (servicesTax || 0);
 
-      // Use computed values if not explicitly provided
       const finalTotal = typeof totalAmount === "number"
         ? totalAmount
         : typeof invoiceTotalIn === "number"
           ? invoiceTotalIn
           : +(computedSubtotal + computedTaxAmount).toFixed(2);
 
-      const finalTaxAmount = typeof taxAmountIn === "number"
-        ? taxAmountIn
-        : computedTaxAmount;
+      const finalTaxAmount = typeof taxAmountIn === "number" ? taxAmountIn : computedTaxAmount;
 
       const atDate = date ? new Date(date) : new Date();
 
@@ -263,74 +420,65 @@ exports.createSalesEntry = async (req, res) => {
           await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
 
         try {
-          const docs = await SalesEntry.create(
-            [
-              {
-                party: partyDoc._id,
-                company: companyDoc._id,
-                client: req.auth.clientId,
-                date,
-                products: normalizedProducts,
-                services: normalizedServices,
-                totalAmount: finalTotal,
-                taxAmount: finalTaxAmount, // NEW: Save total tax amount
-                subTotal: computedSubtotal, // NEW: Save subtotal
-                description,
-                referenceNumber,
-                gstPercentage: computedTaxAmount > 0 ?
-                  +((computedTaxAmount / computedSubtotal) * 100).toFixed(2) : 0,
-                discountPercentage,
-                invoiceType,
-                gstin: companyDoc.gstin || null,
-                invoiceNumber,
-                invoiceYearYY: yearYY,
-                paymentMethod,
-                createdByUser: req.auth.userId,
-              },
-            ],
-            { session }
-          );
+          const docs = await SalesEntry.create([{
+            party: partyDoc._id,
+            company: companyDoc._id,
+            client: req.auth.clientId,
+            date,
+            products: normalizedProducts,
+            services: normalizedServices,
+            totalAmount: finalTotal,
+            taxAmount: finalTaxAmount,
+            subTotal: computedSubtotal,
+            description,
+            referenceNumber,
+            gstPercentage: computedSubtotal > 0
+              ? +((finalTaxAmount / computedSubtotal) * 100).toFixed(2)
+              : 0,
+            discountPercentage,
+            invoiceType,
+            gstin: companyDoc.gstin || null,
+            invoiceNumber,
+            invoiceYearYY: yearYY,
+            paymentMethod,
+            createdByUser: req.auth.userId,
+          }], { session });
 
           entry = docs[0];
 
-          await IssuedInvoiceNumber.create(
-            [
-              {
-                company: companyDoc._id,
-                series: "sales",
-                invoiceNumber,
-                yearYY,
-                seq,
-                prefix,
-              },
-            ],
-            { session }
-          );
+          await IssuedInvoiceNumber.create([{
+            company: companyDoc._id,
+            series: "sales",
+            invoiceNumber,
+            yearYY,
+            seq,
+            prefix,
+          }], { session });
+
+          // ✅ Do the balance increment atomically AFTER we know finalTotal
+          if ((paymentMethod || "").toLowerCase() === "credit") {
+            await Party.updateOne(
+              { _id: partyDoc._id, createdByClient: req.auth.clientId },
+              { $inc: { balance: finalTotal } },
+              { session }
+            );
+          }
 
           break;
         } catch (e) {
-          if (e?.code === 11000 && attempts < 20) {
-            continue;
-          }
+          if (e?.code === 11000 && attempts < 20) continue;
           throw e;
         }
       }
     });
 
-    const clientId = entry.client.toString();  // Retrieve clientId from the entry
+    const clientId = entry.client.toString();
+    await deleteSalesEntryCache(clientId, req.body.company);
 
-    // Call the reusable cache deletion function
-    await deleteSalesEntryCache(clientId, companyId);
-
-
-    return res
-      .status(201)
-      .json({ message: "Sales entry created successfully", entry });
+    return res.status(201).json({ message: "Sales entry created successfully", entry });
   } catch (err) {
     console.error("createSalesEntry error:", err);
-    return res
-      .status(500)
-      .json({ message: "Something went wrong", error: err.message });
+    return res.status(500).json({ message: "Something went wrong", error: err.message });
   } finally {
     session.endSession();
   }
