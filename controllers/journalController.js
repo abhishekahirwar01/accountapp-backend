@@ -3,7 +3,7 @@ const JournalEntry = require("../models/JournalEntry");
 const Company = require("../models/Company");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deleteJournalEntryCache } = require("../utils/cacheHelpers")
+const { deleteJournalEntryCache , deleteJournalEntryCacheByUser } = require("../utils/cacheHelpers")
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -62,6 +62,7 @@ function companyFilterForUser(req, requestedCompanyId) {
   return {};
 }
 
+
 /** CREATE */
 exports.createJournal = async (req, res) => {
   try {
@@ -91,11 +92,39 @@ exports.createJournal = async (req, res) => {
       createdByUser: req.auth.userId, // if present in schema
     });
 
+    // NEW: Create notification for admin after journal entry is created
+    const adminRole = await Role.findOne({ name: "admin" });
+    if (adminRole) {
+      const adminUser = await User.findOne({ role: adminRole._id });
+      if (adminUser) {
+        // Look up the user document to get the actual userName
+        const userDoc = await User.findById(req.auth.userId);
+        
+        // Use multiple fallback options for userName
+        const userName = userDoc?.userName || userDoc?.name || 
+                        userDoc?.username || req.auth.userName || 
+                        req.auth.name || 'Unknown User';
+
+        const notificationMessage = `New journal entry created by ${userName} for company ${companyDoc.name} of amount ₹${amount}.`;
+        await createNotification(
+          notificationMessage,
+          adminUser._id,
+          req.auth.userId,
+          "create", // action type
+          "journal", // entry type
+          journal._id,
+          req.auth.clientId
+        );
+        console.log("Journal notification created successfully.");
+      }
+    }
+
     // Access clientId and companyId after creation
     const clientId = journal.client.toString();
 
     // Call the cache deletion function
     await deleteJournalEntryCache(clientId, companyId);
+    // await deleteJournalEntryCacheByUser(clientId, companyId);
 
     res.status(201).json({ message: "Journal entry created", journal });
   } catch (err) {
@@ -203,25 +232,57 @@ exports.updateJournal = async (req, res) => {
 
     const { company: newCompanyId, ...rest } = req.body;
 
+    // Get company info for notification
+    let companyDoc;
     if (newCompanyId) {
       if (!companyAllowedForUser(req, newCompanyId)) {
         return res.status(403).json({ message: "You are not allowed to use this company" });
       }
-      const companyDoc = await Company.findOne({ _id: newCompanyId, client: req.auth.clientId });
+      companyDoc = await Company.findOne({ _id: newCompanyId, client: req.auth.clientId });
       if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
       journal.company = companyDoc._id;
+    } else {
+      // Get company info if not changing
+      companyDoc = await Company.findById(journal.company);
     }
 
     Object.assign(journal, rest);
     await journal.save();
 
-     // Access clientId and companyId after creation
-     const companyId = journal.company ? (journal.company._id || journal.company).toString() : null;
+    // NEW: Create notification for admin after journal entry is updated
+    const adminRole = await Role.findOne({ name: "admin" });
+    if (adminRole) {
+      const adminUser = await User.findOne({ role: adminRole._id });
+      if (adminUser) {
+        const userDoc = await User.findById(req.auth.userId);
+        const userName = userDoc?.userName || userDoc?.name || 
+                        userDoc?.username || req.auth.userName || 
+                        req.auth.name || 'Unknown User';
+        
+        const companyName = companyDoc?.name || companyDoc?.companyName || 
+                           'Unknown Company';
 
+        const notificationMessage = `Journal entry updated by ${userName} for company ${companyName}.`;
+        await createNotification(
+          notificationMessage,
+          adminUser._id,
+          req.auth.userId,
+          "update", // action type
+          "journal", // entry type
+          journal._id,
+          req.auth.clientId
+        );
+        console.log("Journal update notification created successfully.");
+      }
+    }
+
+    // Access clientId and companyId after creation
+    const companyId = journal.company ? (journal.company._id || journal.company).toString() : null;
     const clientId = journal.client.toString();
 
     // Call the cache deletion function
     await deleteJournalEntryCache(clientId, companyId);
+    // await deleteJournalEntryCacheByUser(clientId, companyId);
 
     res.json({ message: "Journal updated", journal });
   } catch (err) {
@@ -242,13 +303,45 @@ exports.deleteJournal = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
+    // NEW: Get company info before deletion for notification
+    const companyDoc = await Company.findById(journal.company);
+
     await journal.deleteOne();
-     // Access clientId and companyId after creation
-      const companyId = journal.company ? (journal.company._id || journal.company).toString() : null;
+
+    // NEW: Create notification for admin after journal entry is deleted
+    const adminRole = await Role.findOne({ name: "admin" });
+    if (adminRole) {
+      const adminUser = await User.findOne({ role: adminRole._id });
+      if (adminUser) {
+        const userDoc = await User.findById(req.auth.userId);
+        const userName = userDoc?.userName || userDoc?.name || 
+                        userDoc?.username || req.auth.userName || 
+                        req.auth.name || 'Unknown User';
+        
+        const companyName = companyDoc?.name || companyDoc?.companyName || 
+                           'Unknown Company';
+
+        const notificationMessage = `Journal entry deleted by ${userName} for company ${companyName}.`;
+        await createNotification(
+          notificationMessage,
+          adminUser._id,
+          req.auth.userId,
+          "delete", // action type
+          "journal", // entry type
+          journal._id, // Use the original journal ID
+          req.auth.clientId
+        );
+        console.log("Journal delete notification created successfully.");
+      }
+    }
+
+    // Access clientId and companyId after creation
+    const companyId = journal.company ? (journal.company._id || journal.company).toString() : null;
     const clientId = journal.client.toString();
 
     // Call the cache deletion function
     await deleteJournalEntryCache(clientId, companyId);
+    // await deleteJournalEntryCacheByUser(clientId, companyId);
 
     res.json({ message: "Journal deleted" });
   } catch (err) {

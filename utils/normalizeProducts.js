@@ -33,15 +33,20 @@ module.exports = async (rawProducts = [], clientId) => {
     const lineTax = +(amount * gstPercentage / 100).toFixed(2);
     const lineTotal = +(amount + lineTax).toFixed(2);
 
+    // Handle the 'Other' unitType - extract otherUnit from the request
+    const unitType = item.unitType || product.unitType || "Piece";
+    const otherUnit = unitType === "Other" ? item.otherUnit : undefined;
+
     items.push({
       product: product._id,
       quantity,
       pricePerUnit,
-      unitType: item.unitType || product.unitType || "Piece",
+      unitType,
+      otherUnit, // ✅ This was missing - now included
       amount,
-      gstPercentage, // NEW: Save GST percentage
-      lineTax,       // NEW: Save calculated tax
-      lineTotal      // NEW: Save line total (amount + tax)
+      gstPercentage,
+      lineTax,
+      lineTotal
     });
 
     computedTotal += amount;

@@ -3,14 +3,20 @@ const mongoose = require("mongoose");
 const SalesEntry = require("../models/SalesEntry");
 const Company = require("../models/Company");
 const Party = require("../models/Party");
+const BankDetail = require("../models/BankDetail");
 const normalizeProducts = require("../utils/normalizeProducts");
 const normalizeServices = require("../utils/normalizeServices");
 const IssuedInvoiceNumber = require("../models/IssuedInvoiceNumber");
 const { issueSalesInvoiceNumber } = require("../services/invoiceIssuer");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deleteSalesEntryCache } = require('../utils/cacheHelpers');
+const { deleteSalesEntryCache, deleteSalesEntryCacheByUser } = require('../utils/cacheHelpers');
 // at top of controllers/salesController.js
 const { getEffectivePermissions } = require("../services/effectivePermissions");
+const { createNotification } = require("./notificationController");
+const User = require("../models/User");
+const Client = require("../models/Client");
+const Role = require("../models/Role")
+
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -23,11 +29,13 @@ async function ensureAuthCaps(req) {
       role: req.user.role,
       caps: req.user.caps,
       allowedCompanies: req.user.allowedCompanies,
+      userName: req.user.userName || 'Unknown',  // Ensure userName is set here
     };
 
+  // If there's no auth context, throw error
   if (!req.auth) throw new Error("Unauthorized (no auth context)");
 
-  // If caps/allowedCompanies missing, load them
+  // If caps or allowedCompanies are missing, load them
   if (!req.auth.caps || !Array.isArray(req.auth.allowedCompanies)) {
     const { caps, allowedCompanies } = await getEffectivePermissions({
       clientId: req.auth.clientId,
@@ -35,6 +43,12 @@ async function ensureAuthCaps(req) {
     });
     req.auth.caps = req.auth.caps || caps;
     req.auth.allowedCompanies = req.auth.allowedCompanies || allowedCompanies;
+  }
+
+  // If userName is still not set, query the database for user details
+  if (!req.auth.userName) {
+    const user = await User.findById(req.auth.userId);  // Assuming the userId is correct
+    req.auth.userName = user ? user.userName : 'Unknown';  // Fallback to 'Unknown' if user is not found
   }
 }
 
@@ -151,6 +165,9 @@ exports.getSalesEntriesByClient = async (req, res) => {
       .json({ message: "Failed to fetch entries", error: err.message });
   }
 };
+
+
+
 
 
 // exports.createSalesEntry = async (req, res) => {
@@ -345,17 +362,31 @@ exports.getSalesEntriesByClient = async (req, res) => {
 // };
 exports.createSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
-  let entry, companyDoc, partyDoc;
+  let entry, companyDoc, partyDoc, selectedBank;
 
   try {
+    // Ensure the user has permission
     await ensureAuthCaps(req);
     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
       return res.status(403).json({ message: "Not allowed to create sales entries" });
     }
 
-    const { company: companyId, paymentMethod, party } = req.body;
+    // Destructure the request body
+    const { company: companyId, paymentMethod, party, totalAmount, bank } = req.body;
 
-    if (!party) return res.status(400).json({ message: "Customer ID is required" });
+    if (!party) {
+      return res.status(400).json({ message: "Customer ID is required" });
+    }
+
+    if (paymentMethod === "Credit") {
+      partyDoc = await Party.findById(party);
+      if (!partyDoc) {
+        return res.status(404).json({ message: "Customer not found" });
+      }
+      partyDoc.balance += totalAmount;
+      await partyDoc.save();
+    }
+
     if (!companyAllowedForUser(req, companyId)) {
       return res.status(403).json({ message: "You are not allowed to use this company" });
     }
@@ -364,6 +395,7 @@ exports.createSalesEntry = async (req, res) => {
     // if (paymentMethod === "Credit") { ... partyDoc.save() }  <-- DELETE THIS WHOLE BLOCK
 
     await session.withTransaction(async () => {
+      // Handle transaction logic here
       const {
         party,
         company: companyId,
@@ -380,24 +412,40 @@ exports.createSalesEntry = async (req, res) => {
         invoiceTotal: invoiceTotalIn,
       } = req.body;
 
-      companyDoc = await Company.findOne({ _id: companyId, client: req.auth.clientId }).session(session);
+      companyDoc = await Company.findOne({
+        _id: companyId,
+        client: req.auth.clientId,
+      }).session(session);
       if (!companyDoc) throw new Error("Invalid company selected");
 
-      partyDoc = await Party.findOne({ _id: party, createdByClient: req.auth.clientId }).session(session);
+      partyDoc = await Party.findOne({
+        _id: party,
+        createdByClient: req.auth.clientId,
+      }).session(session);
       if (!partyDoc) throw new Error("Customer not found or unauthorized");
 
-      // Normalize products
+      // Normalize products with GST calculations
       let normalizedProducts = [], productsTotal = 0, productsTax = 0;
       if (Array.isArray(products) && products.length > 0) {
-        const { items, computedTotal, computedTax } = await normalizeProducts(products, req.auth.clientId);
-        normalizedProducts = items; productsTotal = computedTotal; productsTax = computedTax;
+        const { items, computedTotal, computedTax } = await normalizeProducts(
+          products,
+          req.auth.clientId
+        );
+        normalizedProducts = items;
+        productsTotal = computedTotal;
+        productsTax = computedTax;
       }
 
-      // Normalize services
+      // Normalize services with GST calculations
       let normalizedServices = [], servicesTotal = 0, servicesTax = 0;
       if (Array.isArray(services) && services.length > 0) {
-        const { items, computedTotal, computedTax } = await normalizeServices(services, req.auth.clientId);
-        normalizedServices = items; servicesTotal = computedTotal; servicesTax = computedTax;
+        const { items, computedTotal, computedTax } = await normalizeServices(
+          services,
+          req.auth.clientId
+        );
+        normalizedServices = items;
+        servicesTotal = computedTotal;
+        servicesTax = computedTax;
       }
 
       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
@@ -416,55 +464,88 @@ exports.createSalesEntry = async (req, res) => {
       let attempts = 0;
       while (true) {
         attempts++;
-        const { invoiceNumber, yearYY, seq, prefix } =
-          await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
+        const { invoiceNumber, yearYY, seq, prefix } = await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
 
         try {
-          const docs = await SalesEntry.create([{
-            party: partyDoc._id,
-            company: companyDoc._id,
-            client: req.auth.clientId,
-            date,
-            products: normalizedProducts,
-            services: normalizedServices,
-            totalAmount: finalTotal,
-            taxAmount: finalTaxAmount,
-            subTotal: computedSubtotal,
-            description,
-            referenceNumber,
-            gstPercentage: computedSubtotal > 0
-              ? +((finalTaxAmount / computedSubtotal) * 100).toFixed(2)
-              : 0,
-            discountPercentage,
-            invoiceType,
-            gstin: companyDoc.gstin || null,
-            invoiceNumber,
-            invoiceYearYY: yearYY,
-            paymentMethod,
-            createdByUser: req.auth.userId,
-          }], { session });
+          const docs = await SalesEntry.create(
+            [
+              {
+                party: partyDoc._id,
+                company: companyDoc._id,
+                client: req.auth.clientId,
+                date,
+                products: normalizedProducts,
+                services: normalizedServices,
+                totalAmount: finalTotal,
+                taxAmount: finalTaxAmount, // NEW: Save total tax amount
+                subTotal: computedSubtotal, // NEW: Save subtotal
+                description,
+                referenceNumber,
+                gstPercentage: computedTaxAmount > 0 ?
+                  +((computedTaxAmount / computedSubtotal) * 100).toFixed(2) : 0,
+                discountPercentage,
+                invoiceType,
+                gstin: companyDoc.gstin || null,
+                invoiceNumber,
+                invoiceYearYY: yearYY,
+                paymentMethod,
+                createdByUser: req.auth.userId,
+              },
+            ],
+            { session }
+          );
 
           entry = docs[0];
 
-          await IssuedInvoiceNumber.create([{
-            company: companyDoc._id,
-            series: "sales",
-            invoiceNumber,
-            yearYY,
-            seq,
-            prefix,
-          }], { session });
+          // Ensure only one response is sent
+          if (!res.headersSent) {
+            // After sales entry is created, notify the admin
+            const adminRole = await Role.findOne({ name: "admin" });
+            console.log("Admin role:", adminRole);
+            if (!adminRole) {
+              console.error("Admin role not found");
+              return;
+            }
 
-          // ✅ Do the balance increment atomically AFTER we know finalTotal
-          if ((paymentMethod || "").toLowerCase() === "credit") {
-            await Party.updateOne(
-              { _id: partyDoc._id, createdByClient: req.auth.clientId },
-              { $inc: { balance: finalTotal } },
-              { session }
-            );
+            const adminUser = await User.findOne({
+              role: adminRole._id
+            });
+
+            console.log("Admin user lookup:", { companyId, adminUser: adminUser ? adminUser._id : "not found" });
+
+            console.log("Creating notification for admin user...");
+            if (adminUser) {
+              console.log("req.auth:", req.auth);
+              const notificationMessage = `New sales entry created by ${req.auth.userName} for party ${partyDoc.name}.`;
+              await createNotification(
+                notificationMessage,
+                adminUser._id,
+                req.auth.userId,
+                "create", // action type
+                "sales", // entry type
+                entry._id,
+                req.auth.clientId
+              );
+              console.log("Notification created successfully.");
+            }
+
+          await IssuedInvoiceNumber.create(
+            [
+              {
+                company: companyDoc._id,
+                series: "sales",
+                invoiceNumber,
+                yearYY,
+                seq,
+                prefix,
+              },
+            ],
+            { session }
+          );
+
+            // Send response after notification creation
+            return res.status(201).json({ message: "Sales entry created successfully", entry });
           }
-
-          break;
         } catch (e) {
           if (e?.code === 11000 && attempts < 20) continue;
           throw e;
@@ -472,10 +553,15 @@ exports.createSalesEntry = async (req, res) => {
       }
     });
 
-    const clientId = entry.client.toString();
-    await deleteSalesEntryCache(clientId, req.body.company);
+    const clientId = entry.client.toString();  // Retrieve clientId from the entry
 
-    return res.status(201).json({ message: "Sales entry created successfully", entry });
+    // Call the reusable cache deletion function
+    await deleteSalesEntryCache(clientId, companyId);
+
+
+    return res
+      .status(201)
+      .json({ message: "Sales entry created successfully", entry });
   } catch (err) {
     console.error("createSalesEntry error:", err);
     return res.status(500).json({ message: "Something went wrong", error: err.message });
@@ -486,12 +572,24 @@ exports.createSalesEntry = async (req, res) => {
 
 
 
+
+const sameTenant = (entryClientId, userClientId) => {
+  return entryClientId.toString() === userClientId.toString();
+};
+
+
 // UPDATE a sales entry (replace your current function)
 exports.updateSalesEntry = async (req, res) => {
+  const session = await mongoose.startSession();
+  
   try {
-    // Make sure req.auth.caps and allowedCompanies exist
+    // Ensure the user has permission
     await ensureAuthCaps(req);
+    if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
+      return res.status(403).json({ message: "Not allowed to update sales entries" });
+    }
 
+    // Find the sales entry by ID
     const entry = await SalesEntry.findById(req.params.id);
     if (!entry)
       return res.status(404).json({ message: "Sales entry not found" });
@@ -520,12 +618,13 @@ exports.updateSalesEntry = async (req, res) => {
     }
 
     // If party is being changed, validate it belongs to the same tenant
+    let partyDoc = null;
     if (otherUpdates.party) {
-      const party = await Party.findOne({
+      partyDoc = await Party.findOne({
         _id: otherUpdates.party,
         createdByClient: req.auth.clientId,
       });
-      if (!party) {
+      if (!partyDoc) {
         return res
           .status(400)
           .json({ message: "Customer not found or unauthorized" });
@@ -576,6 +675,36 @@ exports.updateSalesEntry = async (req, res) => {
       entry.totalAmount = sumProducts + sumServices;
     }
 
+    // After sales entry is updated, notify the admin and client
+    const adminRole = await Role.findOne({ name: "admin" });
+    if (!adminRole) {
+      console.error("Admin role not found");
+      return;
+    }
+
+    // Fetch admin user based on the company and admin role
+    const adminUser = await User.findOne({
+      role: adminRole._id,
+      "companies": entry.company, // Use the company from the entry
+    });
+
+    console.log("Admin user lookup:", { adminUser: adminUser ? adminUser._id : "not found" });
+
+    // Notify the admin if the adminUser is found
+    if (adminUser) {
+      const notificationMessage = `Sales entry updated by ${req.auth.userName || 'Unknown'} for party ${partyDoc ? partyDoc.name : 'Unknown Party'}.`;
+      await createNotification(
+        notificationMessage,
+        adminUser._id,
+        req.auth.userId,
+        "update", // action type is update for this case
+        "sales", // entry type
+        entry._id,
+        req.auth.clientId
+      );
+      console.log("Notification created successfully for admin.");
+    }
+
     await entry.save();
 
     // Retrieve companyId and clientId from the sales entry to delete related cache
@@ -593,8 +722,50 @@ exports.updateSalesEntry = async (req, res) => {
 };
 
 
+// exports.deleteSalesEntry = async (req, res) => {
+//   try {
+//     // Find the sales entry by ID
+//     const entry = await SalesEntry.findById(req.params.id);
+
+//     if (!entry) {
+//       return res.status(404).json({ message: "Sales entry not found" });
+//     }
+
+//     // Only allow clients to delete their own entries
+//     if (req.user.role === "client" && entry.client.toString() !== req.user.id) {
+//       return res.status(403).json({ message: "Unauthorized" });
+//     }
+
+//     // Delete the sales entry
+//     await entry.deleteOne();
+
+//     // Retrieve companyId and clientId from the sales entry to delete related cache
+//     const companyId = entry.company.toString();
+//     const clientId = entry.client.toString();  // Retrieve clientId from the entry
+
+//     // Check if the user field exists before trying to delete cache by user
+//     const user = entry.user ? entry.user.toString() : null;
+
+//     // Call the reusable cache deletion function
+//     await deleteSalesEntryCache(clientId, companyId);
+
+//     //  await deleteSalesEntryCacheByUser(clientId, companyId);
+
+
+//     res.status(200).json({ message: "Sales entry deleted successfully" });
+//   } catch (err) {
+//     console.error("Error deleting sales entry:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+
+
+
 exports.deleteSalesEntry = async (req, res) => {
+  const session = await mongoose.startSession();
+  
   try {
+     await ensureAuthCaps(req);
     // Find the sales entry by ID
     const entry = await SalesEntry.findById(req.params.id);
 
@@ -607,22 +778,67 @@ exports.deleteSalesEntry = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
-    // Delete the sales entry
-    await entry.deleteOne();
+    // Fetch the party document
+    const partyDoc = await Party.findById(entry.party);
+    if (!partyDoc) {
+      console.error("Party not found");
+      return res.status(400).json({ message: "Party not found" });
+    }
 
-    // Retrieve companyId and clientId from the sales entry to delete related cache
-    const companyId = entry.company.toString();
-    const clientId = entry.client.toString();  // Retrieve clientId from the entry
+    // Start the transaction
+    await session.withTransaction(async () => {
+      // Delete the sales entry
+      await entry.deleteOne();
 
-    // Call the reusable cache deletion function
-    await deleteSalesEntryCache(clientId, companyId);
+      // Retrieve companyId and clientId from the sales entry to delete related cache
+      const companyId = entry.company.toString();
+      const clientId = entry.client.toString();  // Retrieve clientId from the entry
 
-    res.status(200).json({ message: "Sales entry deleted successfully" });
+      // Fetch admin user and client user
+      const adminRole = await Role.findOne({ name: "admin" });
+      if (!adminRole) {
+        console.error("Admin role not found");
+        return;
+      }
+
+      // Find the admin user by role
+      const adminUser = await User.findOne({
+        role: adminRole._id,
+        "companies": companyId, // Ensure the admin is associated with the correct company
+      });
+
+      if (!adminUser) {
+        console.error("Admin user not found");
+        return;
+      }
+
+      // Create notification for admin
+      const notificationMessageForAdmin = `Sales entry deleted by ${req.auth.userName || 'Unknown'} for party ${partyDoc.name}.`;
+      await createNotification(
+        notificationMessageForAdmin,
+        adminUser._id,
+        req.auth.userId,
+        "delete", // action type
+        "sales", // entry type
+        entry._id,
+        req.auth.clientId
+      );
+      console.log("Notification created successfully for admin.");
+      // Call the reusable cache deletion function
+      await deleteSalesEntryCache(clientId, companyId);
+
+      // Send response after deletion and notification creation
+      res.status(200).json({ message: "Sales entry deleted successfully" });
+    });
+
   } catch (err) {
     console.error("Error deleting sales entry:", err);
     res.status(500).json({ error: err.message });
+  } finally {
+    session.endSession();
   }
 };
+
 
 
 
