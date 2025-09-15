@@ -5,7 +5,7 @@ const Company = require("../models/Company");
 const Party = require("../models/Party");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deleteReceiptEntryCache , deleteReceiptEntryCacheByUser} = require("../utils/cacheHelpers");
+const { deleteReceiptEntryCache, deleteReceiptEntryCacheByUser, flushAllCache } = require("../utils/cacheHelpers");
 
 const { createNotification } = require("./notificationController");
 const User = require("../models/User");
@@ -41,6 +41,7 @@ function userIsPriv(req) {
   return PRIV_ROLES.has(req.auth?.role);
 }
 
+
 async function ensureAuthCaps(req) {
   // Normalize: support stacks still setting req.user
   if (!req.auth && req.user) {
@@ -50,7 +51,9 @@ async function ensureAuthCaps(req) {
       role: req.user.role,
       caps: req.user.caps,
       allowedCompanies: req.user.allowedCompanies,
-       userName: req.user.userName || 'Unknown',
+      // ❌ don't default to "Unknown" — let resolver do the right thing
+      userName: req.user.userName,        // may be undefined for clients
+      clientName: req.user.contactName,   // if your auth layer provides it for clients
     };
   }
   if (!req.auth) throw new Error("Unauthorized (no auth context)");
@@ -63,7 +66,154 @@ async function ensureAuthCaps(req) {
     if (!req.auth.caps) req.auth.caps = caps;
     if (!req.auth.allowedCompanies) req.auth.allowedCompanies = allowedCompanies;
   }
+
+  // Only backfill staff names (not clients)
+  if (req.auth.role !== "client" && !req.auth.userName && req.auth.userId) {
+    const userDoc = await User.findById(req.auth.userId)
+      .select("displayName fullName name userName username email")
+      .lean();
+    req.auth.userName =
+      userDoc?.displayName ||
+      userDoc?.fullName ||
+      userDoc?.name ||
+      userDoc?.userName ||
+      userDoc?.username ||
+      userDoc?.email ||
+      undefined; // no "Unknown"
+  }
 }
+
+// ---- Actor resolver: supports staff users and clients ----
+async function resolveActor(req) {
+  const role = req.auth?.role;
+
+  // treat placeholders as invalid
+  const validName = (v) => {
+    const s = String(v ?? "").trim();
+    return s && !/^unknown$/i.test(s) && s !== "-";
+  };
+
+  // CLIENT path: prefer token's clientName; else fetch Client.contactName
+  if (role === "client") {
+    if (validName(req.auth?.clientName)) {
+      return {
+        id: req.auth?.clientId || null,
+        name: String(req.auth.clientName).trim(),
+        role,
+        kind: "client",
+      };
+    }
+    const clientId = req.auth?.clientId;
+    if (!clientId) return { id: null, name: "Unknown User", role, kind: "client" };
+
+    const clientDoc = await Client.findById(clientId)
+      .select("contactName clientUsername email phone")
+      .lean();
+
+    const name =
+      (validName(clientDoc?.contactName) && clientDoc.contactName) ||
+      (validName(clientDoc?.clientUsername) && clientDoc.clientUsername) ||
+      (validName(clientDoc?.email) && clientDoc.email) ||
+      (validName(clientDoc?.phone) && clientDoc.phone) ||
+      "Unknown User";
+
+    return { id: clientId, name: String(name).trim(), role, kind: "client" };
+  }
+
+  // STAFF path: claims first, else fetch User
+  const claimName =
+    req.auth?.displayName ||
+    req.auth?.fullName ||
+    req.auth?.name ||
+    req.auth?.userName ||
+    req.auth?.username ||
+    null;
+
+  if (validName(claimName)) {
+    return {
+      id: req.auth?.userId || req.auth?.id || req.user?.id || null,
+      name: String(claimName).trim(),
+      role,
+      kind: "user",
+    };
+  }
+
+  const userId = req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
+  if (!userId) return { id: null, name: "Unknown User", role, kind: "user" };
+
+  const userDoc = await User.findById(userId)
+    .select("displayName fullName name userName username email")
+    .lean();
+
+  const name =
+    (validName(userDoc?.displayName) && userDoc.displayName) ||
+    (validName(userDoc?.fullName) && userDoc.fullName) ||
+    (validName(userDoc?.name) && userDoc.name) ||
+    (validName(userDoc?.userName) && userDoc.userName) ||
+    (validName(userDoc?.username) && userDoc.username) ||
+    (validName(userDoc?.email) && userDoc.email) ||
+    "Unknown User";
+
+  return { id: userId, name: String(name).trim(), role, kind: "user" };
+}
+
+// Try to find an admin tied to company; fallback to any admin
+async function findAdminUser(companyId) {
+  const adminRole = await Role.findOne({ name: "admin" }).select("_id");
+  if (!adminRole) return null;
+
+  let adminUser = null;
+  if (companyId) {
+    adminUser = await User.findOne({ role: adminRole._id, companies: companyId }).select("_id");
+  }
+  if (!adminUser) {
+    adminUser = await User.findOne({ role: adminRole._id }).select("_id");
+  }
+  return adminUser;
+}
+
+// Build message text per action (receipt wording)
+function buildReceiptNotificationMessage(action, { actorName, customerName, oldAmount, newAmount }) {
+  const cName = customerName || "Unknown Customer";
+  switch (action) {
+    case "create":
+      return `New receipt entry created by ${actorName} for customer ${cName} of amount ₹${newAmount}.`;
+    case "update":
+      return `Receipt entry updated by ${actorName} for customer ${cName}. Amount changed from ₹${oldAmount} to ₹${newAmount}.`;
+    case "delete":
+      return `Receipt entry deleted by ${actorName} for customer ${cName}. Amount ₹${oldAmount} was refunded.`;
+    default:
+      return `Receipt entry ${action} by ${actorName} for customer ${cName}.`;
+  }
+}
+
+// Unified notifier for receipt module
+async function notifyAdminOnReceiptAction({ req, action, customerName, entryId, companyId, oldAmount, newAmount }) {
+  const actor = await resolveActor(req);
+  const adminUser = await findAdminUser(companyId);
+  if (!adminUser) {
+    console.warn("notifyAdminOnReceiptAction: no admin user found");
+    return;
+  }
+
+  const message = buildReceiptNotificationMessage(action, {
+    actorName: actor.name,
+    customerName,
+    oldAmount,
+    newAmount,
+  });
+
+  await createNotification(
+    message,
+    adminUser._id,     // recipient (admin)
+    actor.id,          // actor id (user OR client)
+    action,            // "create" | "update" | "delete"
+    "payment",         // category you're using for receipts
+    entryId,           // receipt _id
+    req.auth.clientId
+  );
+}
+
 
 function companyAllowedForUser(req, companyId) {
   if (userIsPriv(req)) return true;
@@ -71,6 +221,70 @@ function companyAllowedForUser(req, companyId) {
     ? req.auth.allowedCompanies.map(String)
     : [];
   return allowed.length === 0 || allowed.includes(String(companyId));
+}
+
+
+// ---- Actor resolver: supports staff users and clients ----
+async function resolveActor(req) {
+  // Fast path: use names from JWT if present
+  const claimName =
+    req.auth?.displayName ||
+    req.auth?.fullName ||
+    req.auth?.name ||
+    req.auth?.userName ||
+    req.auth?.username ||
+    req.auth?.clientName || // if you add this in JWT for clients
+    null;
+
+  const role = req.auth?.role;
+
+  // If the claim has a string, return with best-effort id as well
+  if (claimName && String(claimName).trim()) {
+    return {
+      id: req.auth?.userId || req.auth?.id || req.user?.id || req.auth?.clientId || null,
+      name: String(claimName).trim(),
+      role,
+      kind: role === "client" ? "client" : "user",
+    };
+  }
+
+  // If actor is a client, fetch from Client model
+  if (role === "client") {
+    const clientId = req.auth?.clientId;
+    if (!clientId) return { id: null, name: "Unknown User", role, kind: "client" };
+
+    const clientDoc = await Client.findById(clientId)
+      .select("contactName clientUsername email phone")
+      .lean();
+
+    const name =
+      clientDoc?.contactName ||
+      clientDoc?.clientUsername ||
+      clientDoc?.email ||
+      clientDoc?.phone ||
+      "Unknown User";
+
+    return { id: clientId, name: String(name).trim(), role, kind: "client" };
+  }
+
+  // Otherwise treat as internal user
+  const userId = req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
+  if (!userId) return { id: null, name: "Unknown User", role, kind: "user" };
+
+  const userDoc = await User.findById(userId)
+    .select("displayName fullName name userName username email")
+    .lean();
+
+  const name =
+    userDoc?.displayName ||
+    userDoc?.fullName ||
+    userDoc?.name ||
+    userDoc?.userName ||
+    userDoc?.username ||
+    userDoc?.email ||
+    "Unknown User";
+
+  return { id: userId, name: String(name).trim(), role, kind: "user" };
 }
 
 
@@ -120,47 +334,21 @@ exports.createReceipt = async (req, res) => {
         type: "receipt",
       }], { session });
 
-      // NEW: Create notification for admin after receipt entry is created
-      const adminRole = await Role.findOne({ name: "admin" });
-      if (adminRole) {
-        const adminUser = await User.findOne({ role: adminRole._id });
-        if (adminUser) {
-          try {
-            const userDoc = await User.findById(req.auth.userId);
-            const userName = userDoc?.userName || userDoc?.name || 
-                            userDoc?.username || req.auth.userName || 
-                            req.auth.name || 'Unknown User';
-            
-            const partyName = partyDoc?.name || partyDoc?.partyName || 
-                             partyDoc?.customerName || 'Unknown Customer';
+      // Notify admin AFTER commit
+      await notifyAdminOnReceiptAction({
+        req,
+        action: "create",
+        customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
+        entryId: receipt._id,
+        companyId: companyDoc._id.toString(),
+        newAmount: amt,
+      });
 
-            const notificationMessage = `New receipt entry created by ${userName} for customer ${partyName} of amount ₹${amt}.`;
-            await createNotification(
-              notificationMessage,
-              adminUser._id,
-              req.auth.userId,
-              "create",
-              "payment", // Using "payment" since "receipt" might not be valid
-              receipt._id,
-              req.auth.clientId
-            );
-            console.log("Receipt notification created successfully.");
-          } catch (notificationError) {
-            console.error("Error creating notification:", notificationError);
-          }
-        }
-      }
-
-      await session.commitTransaction();
-      session.endSession();
-
-      // Call the cache deletion function
+      // Invalidate cache next
       await deleteReceiptEntryCache(req.auth.clientId, companyDoc._id.toString());
 
-      return res.status(201).json({
-        message: "Receipt entry created",
-        receipt,
-      });
+      return res.status(201).json({ message: "Receipt entry created", receipt });
+
     } catch (txErr) {
 
       if (session) { try { await session.abortTransaction(); session.endSession(); } catch (_) { } }
@@ -179,36 +367,15 @@ exports.createReceipt = async (req, res) => {
           type: "receipt",
         });
 
-        // NEW: Create notification in fallback scenario too
-        const adminRole = await Role.findOne({ name: "admin" });
-        if (adminRole) {
-          const adminUser = await User.findOne({ role: adminRole._id });
-          if (adminUser) {
-            try {
-              const userDoc = await User.findById(req.auth.userId);
-              const userName = userDoc?.userName || userDoc?.name || 
-                              userDoc?.username || req.auth.userName || 
-                              req.auth.name || 'Unknown User';
-              
-              const partyName = partyDoc?.name || partyDoc?.partyName || 
-                               partyDoc?.customerName || 'Unknown Customer';
+        await notifyAdminOnReceiptAction({
+          req,
+          action: "create",
+          customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
+          entryId: receipt._id,
+          companyId: companyDoc._id.toString(),
+          newAmount: amt,
+        });
 
-              const notificationMessage = `New receipt entry created by ${userName} for customer ${partyName} of amount ₹${amt}.`;
-              await createNotification(
-                notificationMessage,
-                adminUser._id,
-                req.auth.userId,
-                "create",
-                "payment",
-                receipt._id,
-                req.auth.clientId
-              );
-              console.log("Receipt notification created successfully (fallback).");
-            } catch (notificationError) {
-              console.error("Error creating notification:", notificationError);
-            }
-          }
-        }
 
         return res.status(201).json({
           message: "Receipt entry created",
@@ -379,36 +546,15 @@ exports.updateReceipt = async (req, res) => {
 
       await receipt.save({ session });
 
-      // NEW: Create notification for admin after receipt entry is updated
-      const adminRole = await Role.findOne({ name: "admin" });
-      if (adminRole) {
-        const adminUser = await User.findOne({ role: adminRole._id });
-        if (adminUser) {
-          try {
-            const userDoc = await User.findById(req.auth.userId);
-            const userName = userDoc?.userName || userDoc?.name || 
-                            userDoc?.username || req.auth.userName || 
-                            req.auth.name || 'Unknown User';
-            
-            const partyName = partyDoc?.name || partyDoc?.partyName || 
-                             partyDoc?.customerName || 'Unknown Customer';
-
-            const notificationMessage = `Receipt entry updated by ${userName} for customer ${partyName}. Amount changed from ₹${oldAmount} to ₹${finalAmount}.`;
-            await createNotification(
-              notificationMessage,
-              adminUser._id,
-              req.auth.userId,
-              "update",
-              "payment",
-              receipt._id,
-              req.auth.clientId
-            );
-            console.log("Receipt update notification created successfully.");
-          } catch (notificationError) {
-            console.error("Error creating notification:", notificationError);
-          }
-        }
-      }
+      await notifyAdminOnReceiptAction({
+        req,
+        action: "update",
+        customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
+        entryId: receipt._id,
+        companyId: receipt.company.toString(),
+        oldAmount: oldAmount,
+        newAmount: finalAmount,
+      });
 
       await session.commitTransaction();
       session.endSession();
@@ -443,36 +589,16 @@ exports.updateReceipt = async (req, res) => {
 
         await receipt.save();
 
-        // NEW: Create notification in fallback scenario too
-        const adminRole = await Role.findOne({ name: "admin" });
-        if (adminRole) {
-          const adminUser = await User.findOne({ role: adminRole._id });
-          if (adminUser) {
-            try {
-              const userDoc = await User.findById(req.auth.userId);
-              const userName = userDoc?.userName || userDoc?.name || 
-                              userDoc?.username || req.auth.userName || 
-                              req.auth.name || 'Unknown User';
-              
-              const partyName = partyDoc?.name || partyDoc?.partyName || 
-                               partyDoc?.customerName || 'Unknown Customer';
+        await notifyAdminOnReceiptAction({
+          req,
+          action: "update",
+          customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
+          entryId: receipt._id,
+          companyId: receipt.company.toString(),
+          oldAmount: oldAmount,
+          newAmount: finalAmount,
+        });
 
-              const notificationMessage = `Receipt entry updated by ${userName} for customer ${partyName}. Amount changed from ₹${oldAmount} to ₹${finalAmount}.`;
-              await createNotification(
-                notificationMessage,
-                adminUser._id,
-                req.auth.userId,
-                "update",
-                "payment",
-                receipt._id,
-                req.auth.clientId
-              );
-              console.log("Receipt update notification created successfully (fallback).");
-            } catch (notificationError) {
-              console.error("Error creating notification:", notificationError);
-            }
-          }
-        }
 
         return res.json({ message: "Receipt updated", receipt });
       } catch (fallbackErr) {
@@ -520,36 +646,15 @@ exports.deleteReceipt = async (req, res) => {
         session,
       });
 
-      // NEW: Create notification for admin after receipt entry is deleted
-      const adminRole = await Role.findOne({ name: "admin" });
-      if (adminRole) {
-        const adminUser = await User.findOne({ role: adminRole._id });
-        if (adminUser) {
-          try {
-            const userDoc = await User.findById(req.auth.userId);
-            const userName = userDoc?.userName || userDoc?.name || 
-                            userDoc?.username || req.auth.userName || 
-                            req.auth.name || 'Unknown User';
-            
-            const partyName = partyDoc?.name || partyDoc?.partyName || 
-                             partyDoc?.customerName || 'Unknown Customer';
+      await notifyAdminOnReceiptAction({
+        req,
+        action: "delete",
+        customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
+        entryId: receipt._id,
+        companyId: receipt.company.toString(),
+        oldAmount: amt,
+      });
 
-            const notificationMessage = `Receipt entry deleted by ${userName} for customer ${partyName}. Amount ₹${amt} was refunded.`;
-            await createNotification(
-              notificationMessage,
-              adminUser._id,
-              req.auth.userId,
-              "delete",
-              "payment",
-              receipt._id,
-              req.auth.clientId
-            );
-            console.log("Receipt delete notification created successfully.");
-          } catch (notificationError) {
-            console.error("Error creating notification:", notificationError);
-          }
-        }
-      }
 
       await session.commitTransaction();
       session.endSession();
@@ -577,36 +682,15 @@ exports.deleteReceipt = async (req, res) => {
           session: undefined,
         });
 
-        // NEW: Create notification in fallback scenario too
-        const adminRole = await Role.findOne({ name: "admin" });
-        if (adminRole) {
-          const adminUser = await User.findOne({ role: adminRole._id });
-          if (adminUser) {
-            try {
-              const userDoc = await User.findById(req.auth.userId);
-              const userName = userDoc?.userName || userDoc?.name || 
-                              userDoc?.username || req.auth.userName || 
-                              req.auth.name || 'Unknown User';
-              
-              const partyName = partyDoc?.name || partyDoc?.partyName || 
-                               partyDoc?.customerName || 'Unknown Customer';
+        await notifyAdminOnReceiptAction({
+          req,
+          action: "delete",
+          customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
+          entryId: receipt._id,
+          companyId: receipt.company.toString(),
+          oldAmount: amt,
+        });
 
-              const notificationMessage = `Receipt entry deleted by ${userName} for customer ${partyName}. Amount ₹${amt} was refunded.`;
-              await createNotification(
-                notificationMessage,
-                adminUser._id,
-                req.auth.userId,
-                "delete",
-                "payment",
-                receipt._id,
-                req.auth.clientId
-              );
-              console.log("Receipt delete notification created successfully (fallback).");
-            } catch (notificationError) {
-              console.error("Error creating notification:", notificationError);
-            }
-          }
-        }
 
         return res.json({
           message: "Receipt deleted",
