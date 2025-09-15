@@ -3,7 +3,12 @@ const JournalEntry = require("../models/JournalEntry");
 const Company = require("../models/Company");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deleteJournalEntryCache , deleteJournalEntryCacheByUser } = require("../utils/cacheHelpers")
+const { deleteJournalEntryCache, deleteJournalEntryCacheByUser } = require("../utils/cacheHelpers");
+const { createNotification } = require("./notificationController");
+const User = require("../models/User");
+const Client = require("../models/Client");
+const Role = require("../models/Role");
+
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -23,6 +28,9 @@ async function ensureAuthCaps(req) {
       role: req.user.role,
       caps: req.user.caps,
       allowedCompanies: req.user.allowedCompanies,
+      // do NOT force "Unknown" – let resolver fetch names correctly
+      userName: req.user.userName,       // may be undefined for clients
+      clientName: req.user.contactName,  // if your auth layer sets it for clients
     };
   }
   if (!req.auth) throw new Error("Unauthorized (no auth context)");
@@ -35,7 +43,23 @@ async function ensureAuthCaps(req) {
     if (!req.auth.caps) req.auth.caps = caps;
     if (!req.auth.allowedCompanies) req.auth.allowedCompanies = allowedCompanies;
   }
+
+  // backfill staff names only (not clients)
+  if (req.auth.role !== "client" && !req.auth.userName && req.auth.userId) {
+    const userDoc = await User.findById(req.auth.userId)
+      .select("displayName fullName name userName username email")
+      .lean();
+    req.auth.userName =
+      userDoc?.displayName ||
+      userDoc?.fullName ||
+      userDoc?.name ||
+      userDoc?.userName ||
+      userDoc?.username ||
+      userDoc?.email ||
+      undefined; // no "Unknown"
+  }
 }
+
 
 function companyAllowedForUser(req, companyId) {
   if (userIsPriv(req)) return true;
@@ -60,6 +84,137 @@ function companyFilterForUser(req, requestedCompanyId) {
     return { company: { $in: allowed } };
   }
   return {};
+}
+
+
+// ---------- Helpers: actor + admin notification (journal) ----------
+
+// Robust actor resolver
+async function resolveActor(req) {
+  const role = req.auth?.role;
+  const validName = (v) => {
+    const s = String(v ?? "").trim();
+    return s && !/^unknown$/i.test(s) && s !== "-";
+  };
+
+  // Client path -> prefer token clientName, else fetch Client.contactName
+  if (role === "client") {
+    if (validName(req.auth?.clientName)) {
+      return { id: req.auth?.clientId || null, name: String(req.auth.clientName).trim(), role, kind: "client" };
+    }
+    const clientId = req.auth?.clientId;
+    if (!clientId) return { id: null, name: "Unknown User", role, kind: "client" };
+
+    const clientDoc = await Client.findById(clientId)
+      .select("contactName clientUsername email phone")
+      .lean();
+
+    const name =
+      (validName(clientDoc?.contactName) && clientDoc.contactName) ||
+      (validName(clientDoc?.clientUsername) && clientDoc.clientUsername) ||
+      (validName(clientDoc?.email) && clientDoc.email) ||
+      (validName(clientDoc?.phone) && clientDoc.phone) ||
+      "Unknown User";
+
+    return { id: clientId, name: String(name).trim(), role, kind: "client" };
+  }
+
+  // Staff path -> claims first, else fetch User
+  const claimName =
+    req.auth?.displayName ||
+    req.auth?.fullName ||
+    req.auth?.name ||
+    req.auth?.userName ||
+    req.auth?.username ||
+    null;
+
+  if (validName(claimName)) {
+    return {
+      id: req.auth?.userId || req.auth?.id || req.user?.id || null,
+      name: String(claimName).trim(),
+      role,
+      kind: "user",
+    };
+  }
+
+  const userId = req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
+  if (!userId) return { id: null, name: "Unknown User", role, kind: "user" };
+
+  const userDoc = await User.findById(userId)
+    .select("displayName fullName name userName username email")
+    .lean();
+
+  const name =
+    (validName(userDoc?.displayName) && userDoc.displayName) ||
+    (validName(userDoc?.fullName) && userDoc.fullName) ||
+    (validName(userDoc?.name) && userDoc.name) ||
+    (validName(userDoc?.userName) && userDoc.userName) ||
+    (validName(userDoc?.username) && userDoc.username) ||
+    (validName(userDoc?.email) && userDoc.email) ||
+    "Unknown User";
+
+  return { id: userId, name: String(name).trim(), role, kind: "user" };
+}
+
+// Find admin tied to company; fallback to any admin
+async function findAdminUser(companyId) {
+  const adminRole = await Role.findOne({ name: "admin" }).select("_id");
+  if (!adminRole) return null;
+
+  let adminUser = null;
+  if (companyId) {
+    adminUser = await User.findOne({ role: adminRole._id, companies: companyId }).select("_id");
+  }
+  if (!adminUser) {
+    adminUser = await User.findOne({ role: adminRole._id }).select("_id");
+  }
+  return adminUser;
+}
+
+// Message builder for journal module
+function buildJournalNotificationMessage(action, { actorName, companyName, oldAmount, newAmount }) {
+  const cName = companyName || "Unknown Company";
+  switch (action) {
+    case "create":
+      return `New journal entry created by ${actorName} for company ${cName}` +
+        (newAmount != null ? ` of ₹${newAmount}.` : ".");
+    case "update":
+      return (oldAmount != null && newAmount != null)
+        ? `Journal entry updated by ${actorName} for company ${cName}. Amount changed from ₹${oldAmount} to ₹${newAmount}.`
+        : `Journal entry updated by ${actorName} for company ${cName}.`;
+    case "delete":
+      return `Journal entry deleted by ${actorName} for company ${cName}` +
+        (oldAmount != null ? ` (₹${oldAmount}).` : ".");
+    default:
+      return `Journal entry ${action} by ${actorName} for company ${cName}.`;
+  }
+}
+
+// Unified notifier for journal
+async function notifyAdminOnJournalAction({ req, action, companyName, entryId, companyId, oldAmount, newAmount }) {
+  const actor = await resolveActor(req);
+  const adminUser = await findAdminUser(companyId);
+  if (!adminUser) {
+    console.warn("notifyAdminOnJournalAction: no admin user found");
+    return;
+  }
+
+  const message = buildJournalNotificationMessage(action, {
+    actorName: actor.name,
+    companyName,
+    oldAmount,
+    newAmount,
+  });
+
+  await createNotification(
+    message,
+    adminUser._id,    // recipient
+    actor.id,         // actor id (user OR client)
+    action,           // "create" | "update" | "delete"
+    "journal",        // category
+    entryId,          // journal _id
+    req.auth.clientId
+  );
 }
 
 
@@ -93,31 +248,18 @@ exports.createJournal = async (req, res) => {
     });
 
     // NEW: Create notification for admin after journal entry is created
-    const adminRole = await Role.findOne({ name: "admin" });
-    if (adminRole) {
-      const adminUser = await User.findOne({ role: adminRole._id });
-      if (adminUser) {
-        // Look up the user document to get the actual userName
-        const userDoc = await User.findById(req.auth.userId);
-        
-        // Use multiple fallback options for userName
-        const userName = userDoc?.userName || userDoc?.name || 
-                        userDoc?.username || req.auth.userName || 
-                        req.auth.name || 'Unknown User';
+    const companyName =
+      companyDoc?.businessName || companyDoc?.name || companyDoc?.companyName || "Unknown Company";
 
-        const notificationMessage = `New journal entry created by ${userName} for company ${companyDoc.name} of amount ₹${amount}.`;
-        await createNotification(
-          notificationMessage,
-          adminUser._id,
-          req.auth.userId,
-          "create", // action type
-          "journal", // entry type
-          journal._id,
-          req.auth.clientId
-        );
-        console.log("Journal notification created successfully.");
-      }
-    }
+    await notifyAdminOnJournalAction({
+      req,
+      action: "create",
+      companyName,
+      entryId: journal._id,
+      companyId: companyDoc._id.toString(),
+      newAmount: amount,
+    });
+
 
     // Access clientId and companyId after creation
     const clientId = journal.client.toString();
@@ -250,35 +392,21 @@ exports.updateJournal = async (req, res) => {
     await journal.save();
 
     // NEW: Create notification for admin after journal entry is updated
-    const adminRole = await Role.findOne({ name: "admin" });
-    if (adminRole) {
-      const adminUser = await User.findOne({ role: adminRole._id });
-      if (adminUser) {
-        const userDoc = await User.findById(req.auth.userId);
-        const userName = userDoc?.userName || userDoc?.name || 
-                        userDoc?.username || req.auth.userName || 
-                        req.auth.name || 'Unknown User';
-        
-        const companyName = companyDoc?.name || companyDoc?.companyName || 
-                           'Unknown Company';
-
-        const notificationMessage = `Journal entry updated by ${userName} for company ${companyName}.`;
-        await createNotification(
-          notificationMessage,
-          adminUser._id,
-          req.auth.userId,
-          "update", // action type
-          "journal", // entry type
-          journal._id,
-          req.auth.clientId
-        );
-        console.log("Journal update notification created successfully.");
-      }
-    }
-
+    const companyName =
+      companyDoc?.businessName || companyDoc?.name || companyDoc?.companyName || "Unknown Company";
+      
     // Access clientId and companyId after creation
     const companyId = journal.company ? (journal.company._id || journal.company).toString() : null;
     const clientId = journal.client.toString();
+
+    await notifyAdminOnJournalAction({
+      req,
+      action: "update",
+      companyName,
+      entryId: journal._id,
+      companyId,
+    });
+
 
     // Call the cache deletion function
     await deleteJournalEntryCache(clientId, companyId);
@@ -306,34 +434,20 @@ exports.deleteJournal = async (req, res) => {
     // NEW: Get company info before deletion for notification
     const companyDoc = await Company.findById(journal.company);
 
+    const companyName =
+      companyDoc?.businessName || companyDoc?.name || companyDoc?.companyName || "Unknown Company";
+    const oldAmount = Number(journal.amount ?? NaN);
+
     await journal.deleteOne();
 
-    // NEW: Create notification for admin after journal entry is deleted
-    const adminRole = await Role.findOne({ name: "admin" });
-    if (adminRole) {
-      const adminUser = await User.findOne({ role: adminRole._id });
-      if (adminUser) {
-        const userDoc = await User.findById(req.auth.userId);
-        const userName = userDoc?.userName || userDoc?.name || 
-                        userDoc?.username || req.auth.userName || 
-                        req.auth.name || 'Unknown User';
-        
-        const companyName = companyDoc?.name || companyDoc?.companyName || 
-                           'Unknown Company';
-
-        const notificationMessage = `Journal entry deleted by ${userName} for company ${companyName}.`;
-        await createNotification(
-          notificationMessage,
-          adminUser._id,
-          req.auth.userId,
-          "delete", // action type
-          "journal", // entry type
-          journal._id, // Use the original journal ID
-          req.auth.clientId
-        );
-        console.log("Journal delete notification created successfully.");
-      }
-    }
+    await notifyAdminOnJournalAction({
+      req,
+      action: "delete",
+      companyName,
+      entryId: journal._id,  // ok to reference deleted id
+      companyId: journal.company ? (journal.company._id || journal.company).toString() : null,
+      oldAmount: isNaN(oldAmount) ? undefined : oldAmount,
+    });
 
     // Access clientId and companyId after creation
     const companyId = journal.company ? (journal.company._id || journal.company).toString() : null;
@@ -363,7 +477,7 @@ exports.getJournalsByClient = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-  
+
     // Construct the query to filter journals by client
     const where = { client: clientId };
     if (companyId) where.company = companyId;
