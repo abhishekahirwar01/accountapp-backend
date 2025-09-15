@@ -4,7 +4,7 @@ const Company = require("../models/Company");
 const Vendor = require("../models/Vendor");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { getFromCache, setToCache } = require('../RedisCache');
-const { deletePaymentEntryCache , deletePaymentEntryCacheByUser } = require("../utils/cacheHelpers");
+const { deletePaymentEntryCache, deletePaymentEntryCacheByUser } = require("../utils/cacheHelpers");
 const { createNotification } = require("./notificationController");
 const User = require("../models/User");
 const Client = require("../models/Client");
@@ -30,6 +30,8 @@ async function ensureAuthCaps(req) {
       role: req.user.role,
       caps: req.user.caps,
       allowedCompanies: req.user.allowedCompanies,
+      userName: req.user.userName,       // may be undefined for clients
+      clientName: req.user.contactName,
     };
   }
   if (!req.auth) throw new Error("Unauthorized (no auth context)");
@@ -42,7 +44,150 @@ async function ensureAuthCaps(req) {
     if (!req.auth.caps) req.auth.caps = caps;
     if (!req.auth.allowedCompanies) req.auth.allowedCompanies = allowedCompanies;
   }
+
+  if (req.auth.role !== "client" && !req.auth.userName && req.auth.userId) {
+    const user = await User.findById(req.auth.userId)
+      .select("displayName fullName name userName username email")
+      .lean();
+    req.auth.userName =
+      user?.displayName ||
+      user?.fullName ||
+      user?.name ||
+      user?.userName ||
+      user?.username ||
+      user?.email ||
+      undefined; // no "Unknown" fallback
+  }
 }
+
+// ---------- Helpers: actor + admin notification (payment) ----------
+
+// Robust actor resolver (clients -> Client.contactName; staff -> User names)
+async function resolveActor(req) {
+  const role = req.auth?.role;
+
+  const validName = (v) => {
+    const s = String(v ?? '').trim();
+    return s && !/^unknown$/i.test(s) && s !== '-';
+  };
+
+  if (role === "client") {
+    // Prefer name from token if available
+    if (validName(req.auth?.clientName)) {
+      return { id: req.auth?.clientId || null, name: String(req.auth.clientName).trim(), role, kind: "client" };
+    }
+    // Fallback: fetch Client
+    const clientId = req.auth?.clientId;
+    if (!clientId) return { id: null, name: "Unknown User", role, kind: "client" };
+
+    const clientDoc = await Client.findById(clientId)
+      .select("contactName clientUsername email phone")
+      .lean();
+
+    const name =
+      (validName(clientDoc?.contactName) && clientDoc.contactName) ||
+      (validName(clientDoc?.clientUsername) && clientDoc.clientUsername) ||
+      (validName(clientDoc?.email) && clientDoc.email) ||
+      (validName(clientDoc?.phone) && clientDoc.phone) ||
+      "Unknown User";
+
+    return { id: clientId, name: String(name).trim(), role, kind: "client" };
+  }
+
+  // Staff (admin/master/etc.)
+  const claimName =
+    req.auth?.displayName ||
+    req.auth?.fullName ||
+    req.auth?.name ||
+    req.auth?.userName ||
+    req.auth?.username ||
+    null;
+
+  if (validName(claimName)) {
+    return {
+      id: req.auth?.userId || req.auth?.id || req.user?.id || null,
+      name: String(claimName).trim(),
+      role,
+      kind: "user",
+    };
+  }
+
+  const userId = req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
+  if (!userId) return { id: null, name: "Unknown User", role, kind: "user" };
+
+  const userDoc = await User.findById(userId)
+    .select("displayName fullName name userName username email")
+    .lean();
+
+  const name =
+    (validName(userDoc?.displayName) && userDoc.displayName) ||
+    (validName(userDoc?.fullName) && userDoc.fullName) ||
+    (validName(userDoc?.name) && userDoc.name) ||
+    (validName(userDoc?.userName) && userDoc.userName) ||
+    (validName(userDoc?.username) && userDoc.username) ||
+    (validName(userDoc?.email) && userDoc.email) ||
+    "Unknown User";
+
+  return { id: userId, name: String(name).trim(), role, kind: "user" };
+}
+
+// Find an admin associated with a company; fallback to any admin
+async function findAdminUser(companyId) {
+  const adminRole = await Role.findOne({ name: "admin" }).select("_id");
+  if (!adminRole) return null;
+
+  let adminUser = null;
+  if (companyId) {
+    adminUser = await User.findOne({ role: adminRole._id, companies: companyId }).select("_id");
+  }
+  if (!adminUser) {
+    adminUser = await User.findOne({ role: adminRole._id }).select("_id");
+  }
+  return adminUser;
+}
+
+// Build message per action (payment wording)
+function buildPaymentNotificationMessage(action, { actorName, vendorName, amount }) {
+  const vName = vendorName || "Unknown Vendor";
+  switch (action) {
+    case "create":
+      return `New payment entry created by ${actorName} for vendor ${vName}` +
+        (amount != null ? ` of ₹${amount}.` : ".");
+    case "update":
+      return `Payment entry updated by ${actorName} for vendor ${vName}.`;
+    case "delete":
+      return `Payment entry deleted by ${actorName} for vendor ${vName}.`;
+    default:
+      return `Payment entry ${action} by ${actorName} for vendor ${vName}.`;
+  }
+}
+
+// Unified notifier
+async function notifyAdminOnPaymentAction({ req, action, vendorName, entryId, companyId, amount }) {
+  const actor = await resolveActor(req);
+  const adminUser = await findAdminUser(companyId);
+  if (!adminUser) {
+    console.warn("notifyAdminOnPaymentAction: no admin user found");
+    return;
+  }
+
+  const message = buildPaymentNotificationMessage(action, {
+    actorName: actor.name,
+    vendorName,
+    amount,
+  });
+
+  await createNotification(
+    message,
+    adminUser._id,   // recipient (admin)
+    actor.id,        // actor id (user OR client)
+    action,          // "create" | "update" | "delete"
+    "payment",       // category
+    entryId,         // payment _id
+    req.auth.clientId
+  );
+}
+
 
 function companyAllowedForUser(req, companyId) {
   if (userIsPriv(req)) return true;
@@ -87,36 +232,17 @@ exports.createPayment = async (req, res) => {
       createdByUser: req.auth.userId, // optional if your schema has it
     });
 
-     // NEW: Create notification for admin after payment entry is created
-    const adminRole = await Role.findOne({ name: "admin" });
-    if (adminRole) {
-      const adminUser = await User.findOne({ role: adminRole._id });
-      if (adminUser) {
-        // Look up the user document to get the actual userName
-        const userDoc = await User.findById(req.auth.userId);
-        
-        // Use multiple fallback options for userName
-        const userName = userDoc?.userName || userDoc?.name || 
-                        userDoc?.username || req.auth.userName || 
-                        req.auth.name || 'Unknown User';
-        
-        // Use multiple fallback options for vendorName
-        const vendorName = vendorDoc?.name || vendorDoc?.vendorName || 
-                          vendorDoc?.title || 'Unknown Vendor';
+    // Notify admin AFTER creation succeeds
+    const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
+    await notifyAdminOnPaymentAction({
+      req,
+      action: "create",
+      vendorName,
+      entryId: payment._id,
+      companyId: companyDoc?._id?.toString(),
+      amount,
+    });
 
-        const notificationMessage = `New payment entry created by ${userName} for vendor ${vendorName} of amount ₹${amount}.`;
-        await createNotification(
-          notificationMessage,
-          adminUser._id,
-          req.auth.userId,
-          "create", // action type
-          "payment", // entry type
-          payment._id,
-          req.auth.clientId
-        );
-        console.log("Payment notification created successfully.");
-      }
-    }
 
 
     // Access clientId and companyId after creation
@@ -217,8 +343,6 @@ exports.getPayments = async (req, res) => {
 
 
 
-
-
 /** ADMIN / MASTER: list by client (optional company + pagination) */
 exports.getPaymentsByClient = async (req, res) => {
   try {
@@ -305,7 +429,7 @@ exports.updatePayment = async (req, res) => {
       payment.company = companyDoc._id;
     }
 
-      // Vendor move check
+    // Vendor move check
     let vendorDoc;
     if (vendor) {
       vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.auth.clientId });
@@ -318,39 +442,22 @@ exports.updatePayment = async (req, res) => {
 
     Object.assign(payment, rest);
     await payment.save();
-
-     // NEW: Create notification for admin after payment entry is updated
-    const adminRole = await Role.findOne({ name: "admin" });
-    if (adminRole) {
-      const adminUser = await User.findOne({ role: adminRole._id });
-      if (adminUser) {
-        const userDoc = await User.findById(req.auth.userId);
-        const userName = userDoc?.userName || userDoc?.name || 
-                        userDoc?.username || req.auth.userName || 
-                        req.auth.name || 'Unknown User';
-        
-        const vendorName = vendorDoc?.name || vendorDoc?.vendorName || 
-                          vendorDoc?.title || 'Unknown Vendor';
-
-        const notificationMessage = `Payment entry updated by ${userName} for vendor ${vendorName}.`;
-        await createNotification(
-          notificationMessage,
-          adminUser._id,
-          req.auth.userId,
-          "update", // action type
-          "payment", // entry type
-          payment._id,
-          req.auth.clientId
-        );
-        console.log("Payment update notification created successfully.");
-      }
-    }
-
-    // Call the cache deletion function after updating
     const companyId = payment.company.toString();
+    const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
+
+    await notifyAdminOnPaymentAction({
+      req,
+      action: "update",
+      vendorName,
+      entryId: payment._id,
+      companyId,
+    });
+
+    // Invalidate cache
     await deletePaymentEntryCache(payment.client.toString(), companyId);
-// await deletePaymentEntryCacheByUser(payment.client.toString(), companyId);
+
     res.json({ message: "Payment updated", payment });
+
   } catch (err) {
     console.error("updatePayment error:", err);
     res.status(500).json({ message: "Server error", error: err.message });
@@ -368,42 +475,27 @@ exports.deletePayment = async (req, res) => {
     if (!userIsPriv(req) && !sameTenant(payment.client, req.auth.clientId)) {
       return res.status(403).json({ message: "Not authorized" });
     }
-     // NEW: Get vendor info before deletion for notification
+    // NEW: Get vendor info before deletion for notification
     const vendorDoc = await Vendor.findById(payment.vendor);
 
     await payment.deleteOne();
 
-     // NEW: Create notification for admin after payment entry is deleted
-    const adminRole = await Role.findOne({ name: "admin" });
-    if (adminRole) {
-      const adminUser = await User.findOne({ role: adminRole._id });
-      if (adminUser) {
-        const userDoc = await User.findById(req.auth.userId);
-        const userName = userDoc?.userName || userDoc?.name || 
-                        userDoc?.username || req.auth.userName || 
-                        req.auth.name || 'Unknown User';
-        
-        const vendorName = vendorDoc?.name || vendorDoc?.vendorName || 
-                          vendorDoc?.title || 'Unknown Vendor';
+    const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
 
-        const notificationMessage = `Payment entry deleted by ${userName} for vendor ${vendorName}.`;
-        await createNotification(
-          notificationMessage,
-          adminUser._id,
-          req.auth.userId,
-          "delete", // action type
-          "payment", // entry type
-          payment._id, // Use the original payment ID
-          req.auth.clientId
-        );
-        console.log("Payment delete notification created successfully.");
-      }
-    }
-    // Call the cache deletion function after deletion
+    await notifyAdminOnPaymentAction({
+      req,
+      action: "delete",
+      vendorName,
+      entryId: payment._id,                 // ok to reference deleted id
+      companyId: payment.company.toString(),
+    });
+
+    // Invalidate cache
     const companyId = payment.company.toString();
     await deletePaymentEntryCache(payment.client.toString(), companyId);
-    // await deletePaymentEntryCacheByUser(payment.client.toString(), companyId);
+
     res.json({ message: "Payment deleted" });
+
   } catch (err) {
     console.error("deletePayment error:", err);
     res.status(500).json({ message: "Server error", error: err.message });
