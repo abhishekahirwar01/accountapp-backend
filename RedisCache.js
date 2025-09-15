@@ -38,7 +38,7 @@ const getFromCache = async (key) => {
 };
 
 // Function to set data in Redis cache
-const setToCache = async (key, value, ttl = 3600) => {
+const setToCache = async (key, value, ttl = 300) => {
   try {
     await redis.setex(key, ttl, JSON.stringify(value));  // Cache data for 'ttl' seconds
     console.log(`Data cached with key: ${key}`);

@@ -30,6 +30,7 @@ async function ensureAuthCaps(req) {
       caps: req.user.caps,
       allowedCompanies: req.user.allowedCompanies,
       userName: req.user.userName || 'Unknown',  // Ensure userName is set here
+       clientName: req.user.contactName,
     };
 
   // If there's no auth context, throw error
@@ -46,11 +47,28 @@ async function ensureAuthCaps(req) {
   }
 
   // If userName is still not set, query the database for user details
-  if (!req.auth.userName) {
-    const user = await User.findById(req.auth.userId);  // Assuming the userId is correct
-    req.auth.userName = user ? user.userName : 'Unknown';  // Fallback to 'Unknown' if user is not found
-  }
+  // if (!req.auth.userName) {
+  //   const user = await User.findById(req.auth.userId);  // Assuming the userId is correct
+  //   req.auth.userName = user ? user.userName : 'Unknown';  // Fallback to 'Unknown' if user is not found
+  // }
+
+  // updated: only for staff (non-client) logins
+if (req.auth.role !== 'client' && !req.auth.userName && req.auth.userId) {
+  const user = await User.findById(req.auth.userId)
+    .select('displayName fullName name userName username email')
+    .lean();
+  req.auth.userName =
+    user?.displayName ||
+    user?.fullName ||
+    user?.name ||
+    user?.userName ||
+    user?.username ||
+    user?.email ||
+    undefined; // no "Unknown" fallback here
 }
+
+}
+
 
 function userIsPriv(req) {
   return PRIV_ROLES.has(req.auth.role);
@@ -62,6 +80,132 @@ function companyAllowedForUser(req, companyId) {
     ? req.auth.allowedCompanies.map(String)
     : [];
   return allowed.length === 0 || allowed.includes(String(companyId));
+}
+
+
+// ---------- Helpers: actor + admin notification (sales) ----------
+
+// ---- Actor resolver: supports staff users and clients ----
+async function resolveActor(req) {
+  // Fast path: use names from JWT if present
+  const claimName =
+    req.auth?.displayName ||
+    req.auth?.fullName ||
+    req.auth?.name ||
+    req.auth?.userName ||
+    req.auth?.username ||
+    req.auth?.clientName || // if you add this in JWT for clients
+    null;
+
+  const role = req.auth?.role;
+
+  // If the claim has a string, return with best-effort id as well
+  if (claimName && String(claimName).trim()) {
+    return {
+      id: req.auth?.userId || req.auth?.id || req.user?.id || req.auth?.clientId || null,
+      name: String(claimName).trim(),
+      role,
+      kind: role === "client" ? "client" : "user",
+    };
+  }
+
+  // If actor is a client, fetch from Client model
+  if (role === "client") {
+    const clientId = req.auth?.clientId;
+    if (!clientId) return { id: null, name: "Unknown User", role, kind: "client" };
+
+    const clientDoc = await Client.findById(clientId)
+      .select("contactName clientUsername email phone")
+      .lean();
+
+    const name =
+      clientDoc?.contactName ||
+      clientDoc?.clientUsername ||
+      clientDoc?.email ||
+      clientDoc?.phone ||
+      "Unknown User";
+
+    return { id: clientId, name: String(name).trim(), role, kind: "client" };
+  }
+
+  // Otherwise treat as internal user
+  const userId = req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
+  if (!userId) return { id: null, name: "Unknown User", role, kind: "user" };
+
+  const userDoc = await User.findById(userId)
+    .select("displayName fullName name userName username email")
+    .lean();
+
+  const name =
+    userDoc?.displayName ||
+    userDoc?.fullName ||
+    userDoc?.name ||
+    userDoc?.userName ||
+    userDoc?.username ||
+    userDoc?.email ||
+    "Unknown User";
+
+  return { id: userId, name: String(name).trim(), role, kind: "user" };
+}
+
+
+// Optionally find an admin scoped to a company; fallback to any admin
+async function findAdminUser(companyId) {
+  const adminRole = await Role.findOne({ name: "admin" }).select("_id");
+  if (!adminRole) return null;
+
+  // First try admin mapped to this company (if you store it in "companies")
+  let adminUser = null;
+  if (companyId) {
+    adminUser = await User.findOne({ role: adminRole._id, companies: companyId }).select("_id");
+  }
+  // Fallback: any admin
+  if (!adminUser) {
+    adminUser = await User.findOne({ role: adminRole._id }).select("_id");
+  }
+  return adminUser;
+}
+
+// Build message text per action
+function buildSalesNotificationMessage(action, { actorName, partyName, invoiceNumber, amount }) {
+  const pName = partyName || "Unknown Party";
+  switch (action) {
+    case "create":
+      return `New sales entry created by ${actorName} for party ${pName}` +
+        (amount != null ? ` of ₹${amount}.` : ".");
+    case "update":
+      return `Sales entry updated by ${actorName} for party ${pName}.`;
+    case "delete":
+      return `Sales entry deleted by ${actorName} for party ${pName}.`;
+    default:
+      return `Sales entry ${action} by ${actorName} for party ${pName}.`;
+  }
+}
+
+// Unified notifier for sales module
+async function notifyAdminOnSalesAction({ req, action, partyName, entryId, companyId, amount }) {
+  const actor = await resolveActor(req);
+  const adminUser = await findAdminUser(companyId);
+  if (!adminUser) {
+    console.warn("notifyAdminOnSalesAction: no admin user found");
+    return;
+  }
+
+  const message = buildSalesNotificationMessage(action, {
+    actorName: actor.name,
+    partyName,
+    amount,
+  });
+
+  await createNotification(
+    message,
+    adminUser._id,        // recipient (admin)
+    actor.id,             // actor id (user OR client)
+    action,               // "create" | "update" | "delete"
+    "sales",              // entry type / category
+    entryId,              // sales entry id
+    req.auth.clientId
+  );
 }
 
 
@@ -318,34 +462,18 @@ exports.createSalesEntry = async (req, res) => {
           // Ensure only one response is sent
           if (!res.headersSent) {
             // After sales entry is created, notify the admin
-            const adminRole = await Role.findOne({ name: "admin" });
-            console.log("Admin role:", adminRole);
-            if (!adminRole) {
-              console.error("Admin role not found");
-              return;
-            }
 
-            const adminUser = await User.findOne({
-              role: adminRole._id
+
+            // Notify admin AFTER entry created (and before response)
+            await notifyAdminOnSalesAction({
+              req,
+              action: "create",
+              partyName: partyDoc?.name,
+              entryId: entry._id,
+              companyId: companyDoc?._id?.toString(),
+              amount: entry?.totalAmount,
             });
 
-            console.log("Admin user lookup:", { companyId, adminUser: adminUser ? adminUser._id : "not found" });
-
-            console.log("Creating notification for admin user...");
-            if (adminUser) {
-              console.log("req.auth:", req.auth);
-              const notificationMessage = `New sales entry created by ${req.auth.userName} for party ${partyDoc.name}.`;
-              await createNotification(
-                notificationMessage,
-                adminUser._id,
-                req.auth.userId,
-                "create", // action type
-                "sales", // entry type
-                entry._id,
-                req.auth.clientId
-              );
-              console.log("Notification created successfully.");
-            }
 
             await IssuedInvoiceNumber.create(
               [
@@ -392,7 +520,7 @@ const sameTenant = (entryClientId, userClientId) => {
 // UPDATE a sales entry (replace your current function)
 exports.updateSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
-  
+
   try {
     // Ensure the user has permission
     await ensureAuthCaps(req);
@@ -486,35 +614,13 @@ exports.updateSalesEntry = async (req, res) => {
       entry.totalAmount = sumProducts + sumServices;
     }
 
-    // After sales entry is updated, notify the admin and client
-    const adminRole = await Role.findOne({ name: "admin" });
-    if (!adminRole) {
-      console.error("Admin role not found");
-      return;
-    }
-
-    // Fetch admin user based on the company and admin role
-    const adminUser = await User.findOne({
-      role: adminRole._id,
-      "companies": entry.company, // Use the company from the entry
+    await notifyAdminOnSalesAction({
+      req,
+      action: "update",
+      partyName: (partyDoc ? partyDoc.name : null) || (entry?.party?.name) || "Unknown Party",
+      entryId: entry._id,
+      companyId: entry.company?.toString(),
     });
-
-    console.log("Admin user lookup:", { adminUser: adminUser ? adminUser._id : "not found" });
-
-    // Notify the admin if the adminUser is found
-    if (adminUser) {
-      const notificationMessage = `Sales entry updated by ${req.auth.userName || 'Unknown'} for party ${partyDoc ? partyDoc.name : 'Unknown Party'}.`;
-      await createNotification(
-        notificationMessage,
-        adminUser._id,
-        req.auth.userId,
-        "update", // action type is update for this case
-        "sales", // entry type
-        entry._id,
-        req.auth.clientId
-      );
-      console.log("Notification created successfully for admin.");
-    }
 
     await entry.save();
 
@@ -533,50 +639,12 @@ exports.updateSalesEntry = async (req, res) => {
 };
 
 
-// exports.deleteSalesEntry = async (req, res) => {
-//   try {
-//     // Find the sales entry by ID
-//     const entry = await SalesEntry.findById(req.params.id);
-
-//     if (!entry) {
-//       return res.status(404).json({ message: "Sales entry not found" });
-//     }
-
-//     // Only allow clients to delete their own entries
-//     if (req.user.role === "client" && entry.client.toString() !== req.user.id) {
-//       return res.status(403).json({ message: "Unauthorized" });
-//     }
-
-//     // Delete the sales entry
-//     await entry.deleteOne();
-
-//     // Retrieve companyId and clientId from the sales entry to delete related cache
-//     const companyId = entry.company.toString();
-//     const clientId = entry.client.toString();  // Retrieve clientId from the entry
-
-//     // Check if the user field exists before trying to delete cache by user
-//     const user = entry.user ? entry.user.toString() : null;
-
-//     // Call the reusable cache deletion function
-//     await deleteSalesEntryCache(clientId, companyId);
-
-//     //  await deleteSalesEntryCacheByUser(clientId, companyId);
-
-
-//     res.status(200).json({ message: "Sales entry deleted successfully" });
-//   } catch (err) {
-//     console.error("Error deleting sales entry:", err);
-//     res.status(500).json({ error: err.message });
-//   }
-// };
-
-
 
 exports.deleteSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
-  
+
   try {
-     await ensureAuthCaps(req);
+    await ensureAuthCaps(req);
     // Find the sales entry by ID
     const entry = await SalesEntry.findById(req.params.id);
 
@@ -605,41 +673,18 @@ exports.deleteSalesEntry = async (req, res) => {
       const companyId = entry.company.toString();
       const clientId = entry.client.toString();  // Retrieve clientId from the entry
 
-      // Fetch admin user and client user
-      const adminRole = await Role.findOne({ name: "admin" });
-      if (!adminRole) {
-        console.error("Admin role not found");
-        return;
-      }
-
-      // Find the admin user by role
-      const adminUser = await User.findOne({
-        role: adminRole._id,
-        "companies": companyId, // Ensure the admin is associated with the correct company
+      await notifyAdminOnSalesAction({
+        req,
+        action: "delete",
+        partyName: partyDoc?.name,
+        entryId: entry._id,
+        companyId,
       });
-
-      if (!adminUser) {
-        console.error("Admin user not found");
-        return;
-      }
-
-      // Create notification for admin
-      const notificationMessageForAdmin = `Sales entry deleted by ${req.auth.userName || 'Unknown'} for party ${partyDoc.name}.`;
-      await createNotification(
-        notificationMessageForAdmin,
-        adminUser._id,
-        req.auth.userId,
-        "delete", // action type
-        "sales", // entry type
-        entry._id,
-        req.auth.clientId
-      );
-      console.log("Notification created successfully for admin.");
-      // Call the reusable cache deletion function
+      // Invalidate cache next
       await deleteSalesEntryCache(clientId, companyId);
-
-      // Send response after deletion and notification creation
+      // Respond
       res.status(200).json({ message: "Sales entry deleted successfully" });
+
     });
 
   } catch (err) {
