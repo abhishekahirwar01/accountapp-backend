@@ -32,12 +32,14 @@ router.post('/settings/default-template', verifyClientOrAdmin, async (req, res) 
 });
 
 // GET endpoint to fetch the default template
-router.get('/settings/default-template', verifyMasterAdmin, async (req, res) => {
-  const clientId = req.user._id; // Extract clientId from decoded JWT token
+router.get('/settings/default-template', verifyClientOrAdmin, async (req, res) => {
+  const { clientId } = req.auth;  // Extract clientId from decoded JWT token
+  console.log("Client ID from token:", clientId);
 
   try {
     // Find the template for the current client
     const template = await Template.findOne({ clientId });
+    console.log("Template fetched from DB:", template);
 
     if (!template) {
       return res.status(404).json({ message: 'Template not found for this client' });
@@ -51,29 +53,29 @@ router.get('/settings/default-template', verifyMasterAdmin, async (req, res) => 
 });
 
 
-// PUT endpoint to explicitly update the default template
-router.put('/settings/default-template', verifyMasterAdmin, async (req, res) => {
-  const { defaultTemplate } = req.body;
-  const clientId = req.user._id; // Extract clientId from decoded JWT token
+// // PUT endpoint to explicitly update the default template
+// router.put('/settings/default-template', verifyMasterAdmin, async (req, res) => {
+//   const { defaultTemplate } = req.body;
+//   const clientId = req.user._id; // Extract clientId from decoded JWT token
 
-  try {
-    // Find the template for the current client
-    const template = await Template.findOne({ clientId });
+//   try {
+//     // Find the template for the current client
+//     const template = await Template.findOne({ clientId });
 
-    if (!template) {
-      return res.status(404).json({ message: 'Template not found for this client' });
-    }
+//     if (!template) {
+//       return res.status(404).json({ message: 'Template not found for this client' });
+//     }
 
-    // Update the existing template for this client
-    template.defaultTemplate = defaultTemplate;
-    await template.save();
+//     // Update the existing template for this client
+//     template.defaultTemplate = defaultTemplate;
+//     await template.save();
 
-    return res.status(200).json({ message: 'Default template updated successfully' });
-  } catch (error) {
-    console.error('Error updating template:', error);
-    return res.status(500).json({ error: 'Failed to update template' });
-  }
-});
+//     return res.status(200).json({ message: 'Default template updated successfully' });
+//   } catch (error) {
+//     console.error('Error updating template:', error);
+//     return res.status(500).json({ error: 'Failed to update template' });
+//   }
+// });
 
 
 module.exports = router;
