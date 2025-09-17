@@ -289,6 +289,130 @@ async function resolveActor(req) {
 
 
 
+// exports.createReceipt = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req);
+
+//     const { party, date, amount, description, referenceNumber, company: companyId } = req.body;
+
+//     if (!party || !companyId) {
+//       return res.status(400).json({ message: "party and company are required" });
+//     }
+    
+//     const amt = Number(amount || 0);
+//     if (!(amt > 0)) {
+//       return res.status(400).json({ message: "Amount must be > 0" });
+//     }
+    
+//     if (!companyAllowedForUser(req, companyId)) {
+//       return res.status(403).json({ message: "You are not allowed to use this company" });
+//     }
+
+//     // Ensure company & party belong to this tenant
+//     const [companyDoc, partyDoc] = await Promise.all([
+//       Company.findOne({ _id: companyId, client: req.auth.clientId }),
+//       Party.findOne({ _id: party, createdByClient: req.auth.clientId }).select({ balance: 1, name: 1 }),
+//     ]);
+    
+//     if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
+//     if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
+
+//     // DEBUG: Log current state
+//     console.log('Creating receipt:', {
+//       party: partyDoc._id,
+//       currentBalance: partyDoc.balance,
+//       amount: amt,
+//       expectedNewBalance: partyDoc.balance - amt
+//     });
+
+//     let session;
+//     let receipt;
+//     let updatedParty;
+
+//     try {
+//       // Try transaction approach first
+//       session = await mongoose.startSession();
+//       session.startTransaction();
+
+//       // 1) Deduct amount from party balance
+//       updatedParty = await Party.findOneAndUpdate(
+//         { _id: party, createdByClient: req.auth.clientId },
+//         { $inc: { balance: -amt } },
+//         { new: true, session }
+//       );
+
+//       if (!updatedParty) {
+//         throw new Error("Failed to update party balance");
+//       }
+
+//       // 2) Create receipt
+//       [receipt] = await ReceiptEntry.create([{
+//         party: partyDoc._id,
+//         date,
+//         amount: amt,
+//         description,
+//         referenceNumber,
+//         company: companyDoc._id,
+//         client: req.auth.clientId,
+//         createdByUser: req.auth.userId,
+//         type: "receipt",
+//       }], { session });
+
+//       await session.commitTransaction();
+      
+//       console.log('Transaction successful. New balance:', updatedParty.balance);
+
+//     } catch (txErr) {
+//       console.error('Transaction failed, trying fallback:', txErr);
+      
+//       if (session) {
+//         try { await session.abortTransaction(); } catch (abortErr) {}
+//         try { session.endSession(); } catch (endErr) {}
+//       }
+
+//       // Fallback: Non-transaction approach
+//       updatedParty = await Party.findOneAndUpdate(
+//         { _id: party, createdByClient: req.auth.clientId },
+//         { $inc: { balance: -amt } },
+//         { new: true }
+//       );
+
+//       if (!updatedParty) {
+//         return res.status(400).json({ message: "Failed to update party balance" });
+//       }
+
+//       receipt = await ReceiptEntry.create({
+//         party: partyDoc._id,
+//         date,
+//         amount: amt,
+//         description,
+//         referenceNumber,
+//         company: companyDoc._id,
+//         client: req.auth.clientId,
+//         createdByUser: req.auth.userId,
+//         type: "receipt",
+//       });
+
+//       console.log('Fallback successful. New balance:', updatedParty.balance);
+//     } finally {
+//       if (session) {
+//         try { session.endSession(); } catch (e) {}
+//       }
+//     }
+
+//     // Send response
+//     return res.status(201).json({
+//       message: "Receipt entry created",
+//       receipt,
+//       updatedBalance: updatedParty.balance
+//     });
+
+//   } catch (err) {
+//     console.error("createReceipt error:", err);
+//     res.status(500).json({ message: "Server error", error: err.message });
+//   }
+// };
+
 exports.createReceipt = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -305,7 +429,7 @@ exports.createReceipt = async (req, res) => {
     }
     
     if (!companyAllowedForUser(req, companyId)) {
-      return res.status(403).json({ message: "You are not allowed to use this company" });
+      return res.status(400).json({ message: "You are not allowed to use this company" });
     }
 
     // Ensure company & party belong to this tenant
@@ -317,13 +441,10 @@ exports.createReceipt = async (req, res) => {
     if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
     if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
 
-    // DEBUG: Log current state
-    console.log('Creating receipt:', {
-      party: partyDoc._id,
-      currentBalance: partyDoc.balance,
-      amount: amt,
-      expectedNewBalance: partyDoc.balance - amt
-    });
+    // ✅ SMART FIX: Calculate actual amount to deduct (cap at current balance)
+    const amountToDeduct = Math.min(amt, partyDoc.balance);
+    const willClearBalance = amountToDeduct === partyDoc.balance;
+    const hasExcess = amt > partyDoc.balance;
 
     let session;
     let receipt;
@@ -334,10 +455,10 @@ exports.createReceipt = async (req, res) => {
       session = await mongoose.startSession();
       session.startTransaction();
 
-      // 1) Deduct amount from party balance
+      // 1) Deduct amount from party balance (capped at current balance)
       updatedParty = await Party.findOneAndUpdate(
         { _id: party, createdByClient: req.auth.clientId },
-        { $inc: { balance: -amt } },
+        { $inc: { balance: -amountToDeduct } },
         { new: true, session }
       );
 
@@ -345,12 +466,15 @@ exports.createReceipt = async (req, res) => {
         throw new Error("Failed to update party balance");
       }
 
-      // 2) Create receipt
+      // 2) Create receipt for the FULL amount (even if we deducted less)
       [receipt] = await ReceiptEntry.create([{
         party: partyDoc._id,
         date,
-        amount: amt,
-        description,
+        amount: amt, // Store the original amount requested
+        actualAmountApplied: amountToDeduct, // Store how much was actually applied
+        description: hasExcess ? 
+          `${description} (Note: Only ₹${amountToDeduct} applied to balance. Customer had credit of ₹${amt - amountToDeduct})` : 
+          description,
         referenceNumber,
         company: companyDoc._id,
         client: req.auth.clientId,
@@ -360,7 +484,7 @@ exports.createReceipt = async (req, res) => {
 
       await session.commitTransaction();
       
-      console.log('Transaction successful. New balance:', updatedParty.balance);
+      console.log('Receipt processed. Amount requested:', amt, 'Amount applied:', amountToDeduct, 'New balance:', updatedParty.balance);
 
     } catch (txErr) {
       console.error('Transaction failed, trying fallback:', txErr);
@@ -373,7 +497,7 @@ exports.createReceipt = async (req, res) => {
       // Fallback: Non-transaction approach
       updatedParty = await Party.findOneAndUpdate(
         { _id: party, createdByClient: req.auth.clientId },
-        { $inc: { balance: -amt } },
+        { $inc: { balance: -amountToDeduct } },
         { new: true }
       );
 
@@ -385,26 +509,37 @@ exports.createReceipt = async (req, res) => {
         party: partyDoc._id,
         date,
         amount: amt,
-        description,
+        actualAmountApplied: amountToDeduct,
+        description: hasExcess ? 
+          `${description} (Note: Only ₹${amountToDeduct} applied to balance. Customer had credit of ₹${amt - amountToDeduct})` : 
+          description,
         referenceNumber,
         company: companyDoc._id,
         client: req.auth.clientId,
         createdByUser: req.auth.userId,
         type: "receipt",
       });
-
-      console.log('Fallback successful. New balance:', updatedParty.balance);
     } finally {
       if (session) {
         try { session.endSession(); } catch (e) {}
       }
     }
 
-    // Send response
+    // Return appropriate message based on what happened
+    let message = "Receipt entry created";
+    if (hasExcess) {
+      message = `Receipt created. Only ₹${amountToDeduct} applied to balance. Customer has credit of ₹${amt - amountToDeduct}`;
+    } else if (willClearBalance) {
+      message = "Receipt created. Customer balance is now zero.";
+    }
+
     return res.status(201).json({
-      message: "Receipt entry created",
+      message,
       receipt,
-      updatedBalance: updatedParty.balance
+      updatedBalance: updatedParty.balance,
+      amountRequested: amt,
+      amountApplied: amountToDeduct,
+      creditAmount: hasExcess ? amt - amountToDeduct : 0
     });
 
   } catch (err) {
@@ -412,7 +547,6 @@ exports.createReceipt = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-
 
 /** LIST (tenant filtered, supports company filter, q, date range, pagination) */
 exports.getReceipts = async (req, res) => {
