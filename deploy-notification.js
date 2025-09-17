@@ -1,16 +1,18 @@
 // deploy-notification.js
-// Run with: VERSION=2.1.0 MASTER_TOKEN=your_token BASE_URL=http://localhost:8745 node deploy-notification.js
+// Run with: node deploy-notification.js <master_token> <base_url> [version]
 
 const axios = require('axios');
 require('dotenv').config();
 
 async function notifyUpdate() {
-  const baseURL = process.env.BASE_URL || 'http://localhost:8745';
-  const version = process.env.VERSION || '2.1.0';
-  const masterToken = process.env.MASTER_TOKEN;
+  // Accept command line arguments
+  const masterToken = process.argv[2] || process.env.MASTER_TOKEN;
+  const baseURL = process.argv[3] || process.env.BASE_URL || 'http://localhost:8745';
+  const version = process.argv[4] || process.env.VERSION || '2.1.0';
 
   if (!masterToken) {
-    console.error('❌ MASTER_TOKEN environment variable is required');
+    console.error('❌ MASTER_TOKEN is required (as argument or env var)');
+    console.error('Usage: node deploy-notification.js <MASTER_TOKEN> [BASE_URL] [VERSION]');
     process.exit(1);
   }
 

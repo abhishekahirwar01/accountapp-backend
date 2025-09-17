@@ -47,8 +47,7 @@ jobs:
             pm2 restart accountbackend || exit
 
             # Create update notification for master admins
-            export VERSION=\$(node -p "require('./package.json').version") && \
-            export MASTER_TOKEN="${{ secrets.MASTER_TOKEN }}" && \
-            export BASE_URL="${{ secrets.BASE_URL }}" && \
-            node deploy-notification.js || exit
+            VERSION=\$(node -p "require('./package.json').version") && \
+            echo "Running deploy-notification.js with version: \$VERSION" && \
+            node deploy-notification.js "${{ secrets.MASTER_TOKEN }}" "${{ secrets.BASE_URL }}" "\$VERSION" || exit
           EOF
