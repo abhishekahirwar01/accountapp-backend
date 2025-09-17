@@ -29,6 +29,7 @@ const userPermissionsRoutes = require("./routes/userPermissionsRoutes");
 const bankDetailRoutes = require("./routes/bankDetailRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 
+
 const updateNotificationRoutes = require("./routes/updateNotificationRoutes");
 
 
@@ -36,6 +37,8 @@ const whatsappRoutes = require("./routes/whatsappRoutes")
 
 
 const templateRouter = require('./routes/templateRoutes');
+const reportRoutes = require('./routes/reportRoutes')
+const { startSchedulers, testReportImmediately } = require('./services/schedulerService'); 
 
 
 dotenv.config();
@@ -52,6 +55,15 @@ const allowedOrigins = [
 ];
 
 
+if (process.env.NODE_ENV === 'production') {
+  startSchedulers();
+}else {
+  // For development/testing, you can run immediately
+  console.log('Development mode - Reports will run immediately');
+ 
+  // testReportImmediately();
+  startSchedulers();
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -119,7 +131,7 @@ app.use("/api/whatsapp", whatsappRoutes);
 
 app.use('/api', templateRouter);
 
-
+app.use('./api', reportRoutes)
 
 app.get('/', (req, res) => {
   res.send("Account App CI/CD is working...error fixes in getJournalsByClient");
