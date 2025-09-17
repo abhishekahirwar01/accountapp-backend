@@ -78,6 +78,10 @@ const salesSchema = new mongoose.Schema({
     type: String,
     enum: ["Cash", "Credit", "UPI", "Bank Transfer"]
   },
+  notes: {
+    type: String,
+    default: ""
+  },
 }, { timestamps: true });
 
 // Unique per company + year + number (ignore when not set)
