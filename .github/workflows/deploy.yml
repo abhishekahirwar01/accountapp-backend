@@ -43,4 +43,11 @@ jobs:
             git pull origin main || exit
             npm install || exit
             pm2 restart accountbackend || exit
+
+            # Wait for server to be ready
+            sleep 10
+
+            # Create update notification for new deployment
+            echo "🚀 Creating deployment notification..."
+            node deploy-notification.js "${{ secrets.MASTER_TOKEN }}" "https://accountbackend.sharda.co.in" "$(date +%Y.%m.%d-%H%M)" || echo "⚠️  Notification creation failed, but deployment continues"
           EOF
