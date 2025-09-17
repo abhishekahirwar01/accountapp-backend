@@ -13,8 +13,9 @@ const { getEffectivePermissions } = require("../services/effectivePermissions");
 
 const { createNotification } = require("./notificationController");
 const User = require("../models/User");
-const Client = require("../models/Client");
 const Role = require("../models/Role")
+const Client = require("../models/Client"); // ⬅️ add this
+
 
 
 // --- helpers -----------------------------------------------------
@@ -31,6 +32,7 @@ async function ensureAuthCaps(req) {
       caps: req.user.caps,
       allowedCompanies: req.user.allowedCompanies,
       userName: req.user.userName || 'Unknown',
+      clientName: req.user.contactName,
     };
   }
   if (!req.auth) throw new Error("Unauthorized (no auth context)");
@@ -45,19 +47,18 @@ async function ensureAuthCaps(req) {
   }
 
   // NEW: Ensure userName is always set
-  if (!req.auth.userName) {
-    // Try to get the user's name from the database if not available in auth
-    try {
-      const user = await User.findById(req.auth.userId);
-      if (user) {
-        req.auth.userName = user.name || user.username || user.email || 'Unknown User';
-      } else {
-        req.auth.userName = 'Unknown User';
-      }
-    } catch (error) {
-      console.error("Error fetching user for userName:", error);
-      req.auth.userName = 'Unknown User';
-    }
+  if (req.auth.role !== "client" && !req.auth.userName && req.auth.userId) {
+    const user = await User.findById(req.auth.userId)
+      .select("displayName fullName name userName username email")
+      .lean();
+    req.auth.userName =
+      user?.displayName ||
+      user?.fullName ||
+      user?.name ||
+      user?.userName ||
+      user?.username ||
+      user?.email ||
+      undefined; // no "Unknown" here
   }
 }
 
@@ -76,6 +77,136 @@ function companyAllowedForUser(req, companyId) {
     ? req.auth.allowedCompanies.map(String)
     : [];
   return allowed.length === 0 || allowed.includes(String(companyId));
+}
+
+
+// ---------- Helpers: actor + admin notification (purchase) ----------
+
+// Robust actor resolver (works for clients and staff)
+async function resolveActor(req) {
+  const role = req.auth?.role;
+
+  // treat placeholders as invalid
+  const validName = (v) => {
+    const s = String(v ?? '').trim();
+    return s && !/^unknown$/i.test(s) && s !== '-';
+  };
+
+  // Client path: prefer token clientName, else fetch Client.contactName
+  if (role === 'client') {
+    if (validName(req.auth?.clientName)) {
+      return { id: req.auth?.clientId || null, name: String(req.auth.clientName).trim(), role, kind: 'client' };
+    }
+
+    const clientId = req.auth?.clientId;
+    if (!clientId) return { id: null, name: 'Unknown User', role, kind: 'client' };
+
+    const clientDoc = await Client.findById(clientId)
+      .select('contactName clientUsername email phone')
+      .lean();
+
+    const name =
+      (validName(clientDoc?.contactName) && clientDoc.contactName) ||
+      (validName(clientDoc?.clientUsername) && clientDoc.clientUsername) ||
+      (validName(clientDoc?.email) && clientDoc.email) ||
+      (validName(clientDoc?.phone) && clientDoc.phone) ||
+      'Unknown User';
+
+    return { id: clientId, name: String(name).trim(), role, kind: 'client' };
+  }
+
+  // Staff path
+  const claimName =
+    req.auth?.displayName ||
+    req.auth?.fullName ||
+    req.auth?.name ||
+    req.auth?.userName ||
+    req.auth?.username ||
+    null;
+
+  if (validName(claimName)) {
+    return {
+      id: req.auth?.userId || req.auth?.id || req.user?.id || null,
+      name: String(claimName).trim(),
+      role,
+      kind: 'user',
+    };
+  }
+
+  const userId = req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
+  if (!userId) return { id: null, name: 'Unknown User', role, kind: 'user' };
+
+  const userDoc = await User.findById(userId)
+    .select('displayName fullName name userName username email')
+    .lean();
+
+  const name =
+    (validName(userDoc?.displayName) && userDoc.displayName) ||
+    (validName(userDoc?.fullName) && userDoc.fullName) ||
+    (validName(userDoc?.name) && userDoc.name) ||
+    (validName(userDoc?.userName) && userDoc.userName) ||
+    (validName(userDoc?.username) && userDoc.username) ||
+    (validName(userDoc?.email) && userDoc.email) ||
+    'Unknown User';
+
+  return { id: userId, name: String(name).trim(), role, kind: 'user' };
+}
+
+// Try to find an admin for a company; fallback to any admin
+async function findAdminUser(companyId) {
+  const adminRole = await Role.findOne({ name: "admin" }).select("_id");
+  if (!adminRole) return null;
+
+  let adminUser = null;
+  if (companyId) {
+    adminUser = await User.findOne({ role: adminRole._id, companies: companyId }).select("_id");
+  }
+  if (!adminUser) {
+    adminUser = await User.findOne({ role: adminRole._id }).select("_id");
+  }
+  return adminUser;
+}
+
+// Build message per action (purchase wording)
+function buildPurchaseNotificationMessage(action, { actorName, vendorName, amount }) {
+  const vName = vendorName || "Unknown Vendor";
+  switch (action) {
+    case "create":
+      return `New purchase entry created by ${actorName} for vendor ${vName}` +
+        (amount != null ? ` of ₹${amount}.` : ".");
+    case "update":
+      return `Purchase entry updated by ${actorName} for vendor ${vName}.`;
+    case "delete":
+      return `Purchase entry deleted by ${actorName} for vendor ${vName}.`;
+    default:
+      return `Purchase entry ${action} by ${actorName} for vendor ${vName}.`;
+  }
+}
+
+// Unified notifier for purchase module
+async function notifyAdminOnPurchaseAction({ req, action, vendorName, entryId, companyId, amount }) {
+  const actor = await resolveActor(req);
+  const adminUser = await findAdminUser(companyId);
+  if (!adminUser) {
+    console.warn("notifyAdminOnPurchaseAction: no admin user found");
+    return;
+  }
+
+  const message = buildPurchaseNotificationMessage(action, {
+    actorName: actor.name,
+    vendorName,
+    amount,
+  });
+
+  await createNotification(
+    message,
+    adminUser._id,       // recipient (admin)
+    actor.id,            // actor id (user OR client)
+    action,              // "create" | "update" | "delete"
+    "purchase",          // category
+    entryId,             // purchase entry id
+    req.auth.clientId
+  );
 }
 
 
@@ -161,63 +292,30 @@ exports.createPurchaseEntry = async (req, res) => {
           }], { session });
           entry = docs[0];
 
-          // NEW: Create notification for admin after purchase entry is created
-          const adminRole = await Role.findOne({ name: "admin" });
-          console.log("Admin role:", adminRole);
-          if (!adminRole) {
-            console.error("Admin role not found");
-            return;
-          }
 
-          const adminUser = await User.findOne({
-            role: adminRole._id
-          });
-
-          console.log("Admin user lookup:", { companyId, adminUser: adminUser ? adminUser._id : "not found" });
-
-          console.log("Creating notification for admin user...");
-          if (adminUser) {
-            console.log("req.auth:", req.auth);
-
-            // DEBUG: Look up the user document to get the actual userName
-            const userDoc = await User.findById(req.auth.userId);
-            console.log("User document found:", userDoc);
-
-            // FIX: Use multiple fallback options for userName
-            const userName = userDoc?.userName || userDoc?.name ||
-              userDoc?.username || req.auth.userName ||
-              req.auth.name || 'Unknown User';
-
-            // FIX: Use multiple fallback options for vendorName
-            const vendorName = vendorDoc?.name || vendorDoc?.vendorName ||
-              vendorDoc?.title || 'Unknown Vendor';
-
-            console.log("Final values - UserName:", userName, "VendorName:", vendorName);
-
-            const notificationMessage = `New purchase entry created by ${userName} for vendor ${vendorName}.`;
-
-            await createNotification(
-              notificationMessage,
-              adminUser._id,
-              req.auth.userId,
-              "create", // action type
-              "purchase", // entry type
-              entry._id,
-              req.auth.clientId
-            );
-            console.log("Purchase notification created successfully.");
-          }
 
         }, txnOpts);
 
         // Access clientId and companyId after creation
         const clientId = entry.client.toString();
+        const companyIdStr = companyId?.toString?.() || companyId;
 
-        // Call the cache deletion function
-        await deletePurchaseEntryCache(clientId, companyId);
-        // await deletePurchaseEntryCacheByUser(clientId, companyId);
+        // Notify admin (outside the transaction, after success)
+        const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
+        await notifyAdminOnPurchaseAction({
+          req,
+          action: "create",
+          vendorName,
+          entryId: entry._id,
+          companyId: companyIdStr,
+          amount: entry?.totalAmount,
+        });
+
+        // Invalidate cache
+        await deletePurchaseEntryCache(clientId, companyIdStr);
 
         return res.status(201).json({ message: "Purchase entry created successfully", entry });
+
 
       } catch (e) {
         const labels = new Set(e?.errorLabels || e?.errorLabelSet || []);
@@ -446,55 +544,25 @@ exports.updatePurchaseEntry = async (req, res) => {
     }
 
     await entry.save();
-    // NEW: Create notification for admin after purchase entry is updated
-    const adminRole = await Role.findOne({ name: "admin" });
-    if (adminRole) {
-      const adminUser = await User.findOne({ role: adminRole._id });
-      if (adminUser) {
-        // Get vendor info
-        const vendorDoc = await Vendor.findById(entry.vendor);
-        const vendorName = vendorDoc?.name || vendorDoc?.vendorName || "Unknown Vendor";
-
-        // DEBUG: Check what entry contains
-        console.log("Purchase entry structure:", entry);
-
-        // FIX: Use the correct user reference
-        // Option 1: Use the user who made the request (usually the correct approach)
-        const requestingUserDoc = await User.findById(req.auth.userId);
-
-        // Option 2: If entry has a createdByUser field, use that
-        // const requestingUserDoc = await User.findById(entry.createdByUser);
-
-        // Use safe fallback with multiple possible field names
-        const userName = requestingUserDoc?.userName || requestingUserDoc?.name ||
-          requestingUserDoc?.username || 'Unknown User';
-
-        console.log("Found user document:", requestingUserDoc);
-        console.log("Extracted user name:", userName);
-
-        const notificationMessage = `Purchase entry updated by ${userName} for vendor ${vendorName}.`;
-
-        await createNotification(
-          notificationMessage,
-          adminUser._id,
-          req.auth.userId,
-          "update", // action type
-          "purchase", // entry type
-          entry._id,
-          req.auth.clientId
-        );
-        console.log("Purchase update notification created successfully.");
-      }
-    }
-
-    // After deletion, clear the relevant cache for client and company
-    const clientId = entry.client.toString();
+    // Notify after save
     const companyId = entry.company.toString();
+    const clientId = entry.client.toString();
 
-    // Call the cache deletion function
+    const vendorDoc = await Vendor.findById(entry.vendor).select("vendorName name title").lean();
+    const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
+
+    await notifyAdminOnPurchaseAction({
+      req,
+      action: "update",
+      vendorName,
+      entryId: entry._id,
+      companyId,
+    });
+
+    // clear cache
     await deletePurchaseEntryCache(clientId, companyId);
-    //  await deletePurchaseEntryCacheByUser(clientId, companyId);
-    res.json({ message: "Purchase entry updated successfully", entry });
+    return res.json({ message: "Purchase entry updated successfully", entry });
+
   } catch (err) {
     console.error("updatePurchaseEntry error:", err);
     res.status(500).json({ error: err.message });
@@ -516,51 +584,41 @@ exports.deletePurchaseEntry = async (req, res) => {
 
     // NEW: Get vendor info before deletion for notification
     const vendorDoc = await Vendor.findById(entry.vendor);
-    
+
     // DEBUG: Look up the user document to get the actual userName
     const userDoc = await User.findById(req.auth.userId);
     console.log("User document found for delete:", userDoc);
-    
+
     // FIX: Use multiple fallback options for userName
-    const userName = userDoc?.userName || userDoc?.name || 
-                    userDoc?.username || req.auth.userName || 
-                    req.auth.name || 'Unknown User';
-    
+    const userName = userDoc?.userName || userDoc?.name ||
+      userDoc?.username || req.auth.userName ||
+      req.auth.name || 'Unknown User';
+
     // FIX: Use multiple fallback options for vendorName
-    const vendorName = vendorDoc?.name || vendorDoc?.vendorName || 
-                      vendorDoc?.title || 'Unknown Vendor';
+    const vendorName = vendorDoc?.name || vendorDoc?.vendorName ||
+      vendorDoc?.title || 'Unknown Vendor';
 
     console.log("Final values - UserName:", userName, "VendorName:", vendorName);
 
     await entry.deleteOne();
 
-    // NEW: Create notification for admin after purchase entry is deleted
-    const adminRole = await Role.findOne({ name: "admin" });
-    if (adminRole) {
-      const adminUser = await User.findOne({ role: adminRole._id });
-      if (adminUser) {
-        const notificationMessage = `Purchase entry deleted by ${userName} for vendor ${vendorName}.`;
-        await createNotification(
-          notificationMessage,
-          adminUser._id,
-          req.auth.userId,
-          "delete", // action type
-          "purchase", // entry type
-          entry._id, // Use the original entry ID even though it's deleted
-          req.auth.clientId
-        );
-        console.log("Purchase delete notification created successfully.");
-      }
-    }
-
-    // After deletion, clear the relevant cache for client and company
     const clientId = entry.client.toString();
     const companyId = entry.company.toString();
 
-    // Call the cache deletion function
+
+    await notifyAdminOnPurchaseAction({
+      req,
+      action: "delete",
+      vendorName,
+      entryId: entry._id,
+      companyId,
+    });
+
+    // Invalidate cache
     await deletePurchaseEntryCache(clientId, companyId);
-    //  await deletePurchaseEntryCacheByUser(clientId, companyId);
-    res.json({ message: "Purchase deleted" });
+
+    return res.json({ message: "Purchase deleted" });
+
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
