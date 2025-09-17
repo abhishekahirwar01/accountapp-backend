@@ -26,6 +26,7 @@ const roleRoutes = require('./routes/roleRoutes')
 const userPermissionsRoutes = require("./routes/userPermissionsRoutes");
 const bankDetailRoutes = require("./routes/bankDetailRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const whatsappRoutes = require("./routes/whatsappRoutes")
 
 dotenv.config();
 connectDB();
@@ -88,6 +89,7 @@ app.use("/api/account", AccountValidityRoutes);
 app.use("/api/user-permissions", userPermissionsRoutes);
 app.use("/api/bank-details", bankDetailRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/whatsapp", whatsappRoutes);
 
 
 app.get('/', (req, res) => {
