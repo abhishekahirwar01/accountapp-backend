@@ -3,6 +3,8 @@ const mongoose = require('mongoose'); // Add this at the top
 const dotenv = require("dotenv");
 const cors = require("cors");
 const path = require("path");
+const http = require("http");
+const socketIo = require("socket.io");
 const connectDB = require("./config/db");
 const masterAdminRoutes = require("./routes/masterAdminRoutes");
 const clientRoutes = require("./routes/clientRoutes");
@@ -27,7 +29,11 @@ const userPermissionsRoutes = require("./routes/userPermissionsRoutes");
 const bankDetailRoutes = require("./routes/bankDetailRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
 
+const updateNotificationRoutes = require("./routes/updateNotificationRoutes");
+
+
 const whatsappRoutes = require("./routes/whatsappRoutes")
+
 
 const templateRouter = require('./routes/templateRoutes');
 
@@ -36,16 +42,28 @@ dotenv.config();
 connectDB();
 
 
-const app = express();
 
 
-// app.use(cors());
 // Enhanced CORS configuration
 const allowedOrigins = [
   'https://accountapp-theta.vercel.app',
   'http://localhost:3000',
   'http://localhost:8678'
 ];
+
+
+
+const app = express();
+const server = http.createServer(app);
+const io = socketIo(server, {
+  cors: {
+    origin: allowedOrigins,
+    methods: ["GET", "POST"]
+  }
+});
+
+// Make io globally available for controllers
+global.io = io;
 
 
 
@@ -93,6 +111,9 @@ app.use("/api/account", AccountValidityRoutes);
 app.use("/api/user-permissions", userPermissionsRoutes);
 app.use("/api/bank-details", bankDetailRoutes);
 app.use("/api/notifications", notificationRoutes);
+
+app.use("/api/update-notifications", updateNotificationRoutes);
+
 
 app.use("/api/whatsapp", whatsappRoutes);
 
@@ -146,7 +167,7 @@ module.exports = app;
 // This should only run locally
 if (require.main === module) {
   const PORT = process.env.PORT || 8745;
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`🚀 Server running locally at http://localhost:${PORT}`);
   });
 }
@@ -154,5 +175,26 @@ if (require.main === module) {
 app.use((err, req, res, next) => {
   console.error("❌ Error:", err.stack);
   res.status(500).json({ message: "Something went wrong", error: err.message });
+});
+
+// Socket.io connection handling
+io.on('connection', (socket) => {
+  console.log('🔌 User connected:', socket.id);
+
+  // Join user-specific rooms for targeted notifications
+  socket.on('joinRoom', (data) => {
+    const { userId, role, clientId } = data;
+    if (role === 'master') {
+      socket.join(`master-${userId}`);
+    } else if (role === 'client' || role === 'user') {
+      socket.join(`client-${clientId}`);
+      socket.join(`user-${userId}`);
+    }
+    console.log(`👤 User ${userId} joined room(s)`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('🔌 User disconnected:', socket.id);
+  });
 });
 
