@@ -1,0 +1,59 @@
+// deploy-notification.js
+// Run with: VERSION=2.1.0 MASTER_TOKEN=your_token BASE_URL=http://localhost:8745 node deploy-notification.js
+
+const axios = require('axios');
+require('dotenv').config();
+
+async function notifyUpdate() {
+  const baseURL = process.env.BASE_URL || 'http://localhost:8745';
+  const version = process.env.VERSION || '2.1.0';
+  const masterToken = process.env.MASTER_TOKEN;
+
+  if (!masterToken) {
+    console.error('❌ MASTER_TOKEN environment variable is required');
+    process.exit(1);
+  }
+
+  const updateData = {
+    title: `Version ${version} Deployed`,
+    description: "New features and improvements are now available",
+    version: version,
+    features: [
+      {
+        name: "Enhanced Dashboard",
+        sectionUrl: "/admin/dashboard",
+        gifUrl: "https://example.com/dashboard-demo.gif",
+        description: "Improved analytics and new KPI cards"
+      },
+      {
+        name: "Advanced Reporting",
+        sectionUrl: "/app/reports",
+        gifUrl: "https://example.com/reports-demo.gif",
+        description: "Generate detailed reports with custom filters"
+      }
+      // Add more features as needed for each deployment
+    ]
+  };
+
+  try {
+    console.log('🚀 Creating update notification...');
+    console.log('📊 Version:', version);
+    console.log('🌐 API URL:', `${baseURL}/api/update-notifications`);
+
+    const response = await axios.post(`${baseURL}/api/update-notifications`, updateData, {
+      headers: {
+        Authorization: `Bearer ${masterToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    console.log('✅ Update notification created successfully!');
+    console.log('📊 Response:', response.data);
+  } catch (error) {
+    console.error('❌ Failed to create update notification:');
+    console.error('Error:', error.response?.data || error.message);
+    process.exit(1);
+  }
+}
+
+notifyUpdate();
