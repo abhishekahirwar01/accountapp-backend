@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main  # Trigger deployment on push to main branch
+  release:
+    types: [published]  # Also trigger on GitHub releases for major updates
 
 jobs:
   deploy:
@@ -43,4 +45,10 @@ jobs:
             git pull origin main || exit
             npm install || exit
             pm2 restart accountbackend || exit
+
+            # Create update notification for master admins
+            VERSION=\$(node -p "require('./package.json').version") \
+            MASTER_TOKEN=${{ secrets.MASTER_TOKEN }} \
+            BASE_URL=${{ secrets.BASE_URL }} \
+            node deploy-notification.js || exit
           EOF
