@@ -554,6 +554,7 @@ exports.createSalesEntry = async (req, res) => {
         invoiceType,
         taxAmount: taxAmountIn,
         invoiceTotal: invoiceTotalIn,
+        notes,
       } = req.body;
 
       companyDoc = await Company.findOne({
@@ -634,6 +635,7 @@ exports.createSalesEntry = async (req, res) => {
                 invoiceYearYY: yearYY,
                 paymentMethod,
                 createdByUser: req.auth.userId,
+                notes: notes || "",
               },
             ],
             { session }
@@ -779,10 +781,13 @@ exports.updateSalesEntry = async (req, res) => {
     }
 
     // Don’t allow changing invoiceNumber/year from payload
-    const { totalAmount, invoiceNumber, invoiceYearYY, gstRate, ...rest } =
+    const { totalAmount, invoiceNumber, invoiceYearYY, gstRate, notes, ...rest } =
       otherUpdates;
     if (typeof gstRate === "number") {
       entry.gstPercentage = gstRate;
+    }
+    if (notes !== undefined) {
+      entry.notes = notes;
     }
     Object.assign(entry, rest);
 
