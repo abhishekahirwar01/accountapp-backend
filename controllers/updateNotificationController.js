@@ -97,18 +97,7 @@ exports.markSectionAsExplored = async (req, res) => {
       await notification.save();
     }
 
-    // Check if fully explored and auto-dismiss
-    if (notification.isFullyExplored && !notification.dismissed) {
-      notification.dismissed = true;
-      await notification.save();
-
-      // Emit dismissal event
-      if (global.io) {
-        global.io.to(`master-${notification.recipient}`).emit('updateNotificationDismissed', {
-          notificationId: notification._id
-        });
-      }
-    }
+    // Removed auto-dismissal - dismissal is now manual via "Remove Notification" button
 
     res.status(200).json({ notification });
   } catch (err) {
@@ -121,22 +110,38 @@ exports.markSectionAsExplored = async (req, res) => {
 exports.dismissUpdateNotification = async (req, res) => {
   try {
     const { notificationId } = req.params;
+    const userId = req.user?.id || req.body.userId; // Get user ID from auth or body
 
-    const notification = await UpdateNotification.findByIdAndUpdate(
-      notificationId,
-      { dismissed: true },
-      { new: true }
-    );
+    const notification = await UpdateNotification.findById(notificationId);
 
     if (!notification) {
       return res.status(404).json({ message: "Update notification not found" });
     }
 
-    // Emit dismissal event
+    // Check if user is the recipient (master admin)
+    if (notification.recipient.toString() === userId) {
+      // Master admin dismissing their own notification
+      notification.dismissed = true;
+    } else {
+      // Client dismissing the notification
+      if (!notification.dismissedUsers.includes(userId)) {
+        notification.dismissedUsers.push(userId);
+      }
+    }
+
+    await notification.save();
+
+    // Emit dismissal event to the appropriate user
     if (global.io) {
-      global.io.to(`master-${notification.recipient}`).emit('updateNotificationDismissed', {
-        notificationId: notification._id
-      });
+      if (notification.recipient.toString() === userId) {
+        global.io.to(`master-${notification.recipient}`).emit('updateNotificationDismissed', {
+          notificationId: notification._id
+        });
+      } else {
+        global.io.to(`user-${userId}`).emit('updateNotificationDismissed', {
+          notificationId: notification._id
+        });
+      }
     }
 
     res.status(200).json({ notification });

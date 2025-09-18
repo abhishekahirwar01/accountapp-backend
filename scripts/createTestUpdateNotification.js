@@ -44,19 +44,26 @@ async function createTestNotification() {
 
     // Create test update notification
     const testNotification = {
-      title: "New Dashboard Features Available",
-      description: "Stay informed with the latest updates to your dashboard. Here's what’s new in version v2.0.0:",
-      version: "v2.0.0",
+      title: "🚀 New Dashboard Features Available",
+      description: "Stay informed with the latest updates to your dashboard. Here's what's new:",
+      version: version,
       features: [
         {
-          name: "New Update Notifications",
+          name: "Enhanced Dashboard Experience",
           sectionUrl: "/dashboard",
           gifUrl: "https://via.placeholder.com/400x200?text=Dashboard+Demo",
           description: `
-        - **Instant Alerts**: Get notified as soon as new updates are available for the dashboard.
-        - **Easy Access**: Click on the notification to directly access the latest features and enhancements.
-        - **Stay Updated**: Ensure you never miss out on the latest improvements and optimizations.
-      `
+**✨ Instant Alerts**: Get notified as soon as new updates are available for the dashboard.
+
+**🎯 Easy Access**: Click on the notification to directly access the latest features and enhancements.
+
+**📈 Stay Updated**: Ensure you never miss out on the latest improvements and optimizations.
+
+**🔧 New Features Include**:
+• Advanced analytics with real-time data
+• Improved navigation and user experience
+• Enhanced performance and reliability
+          `.trim()
         },
       ]
     };
