@@ -44,6 +44,11 @@ const updateNotificationSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
+  dismissedUsers: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User', // For clients who have dismissed
+    default: []
+  }],
   propagatedToClients: {
     type: Boolean,
     default: false
@@ -68,12 +73,6 @@ updateNotificationSchema.virtual('isFullyExplored').get(function() {
   return this.exploredSections.length === this.features.length;
 });
 
-// Pre-save middleware to auto-dismiss when fully explored
-updateNotificationSchema.pre('save', function(next) {
-  if (this.isFullyExplored && !this.dismissed) {
-    this.dismissed = true;
-  }
-  next();
-});
+// Removed auto-dismiss middleware - dismissal is now manual
 
 module.exports = mongoose.model('UpdateNotification', updateNotificationSchema);
