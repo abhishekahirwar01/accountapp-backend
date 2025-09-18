@@ -1,9 +1,12 @@
-// Script to create a test update notification
+// Script to create a test update notification for master admins (they can then propagate to clients)
 // Run with: node scripts/createTestUpdateNotification.js
 
 const mongoose = require('mongoose');
 const UpdateNotification = require('../models/UpdateNotification');
 const MasterAdmin = require('../models/MasterAdmin');
+const Client = require('../models/Client');
+const User = require('../models/User');
+const Notification = require('../models/Notification');
 require('dotenv').config();
 
 async function createTestNotification() {
@@ -32,35 +35,41 @@ async function createTestNotification() {
     // Create test update notification
     const testNotification = {
       title: "New Dashboard Features Available",
-      description: "We've enhanced the dashboard with new analytics and improved navigation",
+      description: "Stay informed with the latest updates to your dashboard. Here's what’s new in version v2.0.0:",
       version: "v2.0.0",
       features: [
         {
-          name: "Advanced Analytics",
-          sectionUrl: "/admin/dashboard",
-          gifUrl: "https://example.com/analytics-demo.gif",
-          description: "View detailed analytics with new charts and metrics"
+          name: "New Update Notifications",
+          sectionUrl: "/dashboard",
+          gifUrl: "https://via.placeholder.com/400x200?text=Dashboard+Demo",
+          description: `
+        - **Instant Alerts**: Get notified as soon as new updates are available for the dashboard.
+        - **Easy Access**: Click on the notification to directly access the latest features and enhancements.
+        - **Stay Updated**: Ensure you never miss out on the latest improvements and optimizations.
+      `
         },
-        {
-          name: "Quick Actions",
-          sectionUrl: "/admin/dashboard",
-          gifUrl: "https://example.com/quick-actions-demo.gif",
-          description: "Access common actions directly from the dashboard"
-        }
       ]
     };
 
-    // Create notification for each master admin
+
+    // Create UpdateNotification for each master admin
+    const createdNotifications = [];
     for (const admin of masterAdmins) {
       const notification = new UpdateNotification({
         ...testNotification,
         recipient: admin._id
       });
       await notification.save();
-      console.log(`Created notification for master admin: ${admin.userName}`);
+      createdNotifications.push(notification);
+      console.log(`Created UpdateNotification for master admin: ${admin.userName}`);
     }
 
-    console.log('Test update notification created successfully!');
+    console.log(`Created ${createdNotifications.length} UpdateNotification records for master admins.`);
+    console.log('Master admins can now propagate these to clients using the API endpoint:');
+    console.log('POST /api/update-notifications/propagate/:notificationId');
+
+    console.log(`Test update notifications created for ${createdNotifications.length} master admins successfully!`);
+    console.log('Use the master admin interface to propagate these notifications to clients when ready.');
   } catch (error) {
     console.error('Error creating test notification:', error);
   } finally {

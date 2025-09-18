@@ -23,15 +23,27 @@ async function notifyUpdate() {
     features: [
       {
         name: "Enhanced Dashboard",
-        sectionUrl: "/admin/dashboard",
+        sectionUrl: "/dashboard",
         gifUrl: "https://example.com/dashboard-demo.gif",
         description: "Improved analytics and new KPI cards"
       },
       {
-        name: "Advanced Reporting",
-        sectionUrl: "/app/reports",
+        name: "Advanced Reports",
+        sectionUrl: "/reports",
         gifUrl: "https://example.com/reports-demo.gif",
         description: "Generate detailed reports with custom filters"
+      },
+      {
+        name: "Transaction Management",
+        sectionUrl: "/transactions",
+        gifUrl: "https://example.com/transactions-demo.gif",
+        description: "Enhanced transaction tracking and management"
+      },
+      {
+        name: "User Management",
+        sectionUrl: "/users",
+        gifUrl: "https://example.com/users-demo.gif",
+        description: "Improved user administration and permissions"
       }
       // Add more features as needed for each deployment
     ]

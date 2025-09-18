@@ -51,7 +51,8 @@ connectDB();
 const allowedOrigins = [
   'https://accountapp-theta.vercel.app',
   'http://localhost:3000',
-  'http://localhost:8678'
+  'http://localhost:8678',
+  'https://accountapp-theta.vercel.app' // Add production frontend URL if different
 ];
 
 

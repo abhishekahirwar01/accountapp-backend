@@ -182,7 +182,8 @@ exports.propagateToClients = async (req, res) => {
         read: false,
         metadata: {
           updateVersion: updateNotification.version,
-          featuresCount: updateNotification.features.length
+          featuresCount: updateNotification.features.length,
+          features: updateNotification.features // Include features for walkthrough
         }
       });
       await clientNotification.save();
@@ -204,7 +205,8 @@ exports.propagateToClients = async (req, res) => {
           read: false,
           metadata: {
             updateVersion: updateNotification.version,
-            featuresCount: updateNotification.features.length
+            featuresCount: updateNotification.features.length,
+            features: updateNotification.features // Include features for walkthrough
           }
         });
         await userNotification.save();
