@@ -27,7 +27,7 @@ const getFromCache = async (key) => {
     const cachedData = await redis.get(key);
 
     if (cachedData) {
-      console.log('data fetched from redis');
+      // console.log('data fetched from redis');
       return JSON.parse(cachedData);  // Return parsed data from Redis cache
     }
     return null;  // If data not found in cache, return null
