@@ -6,10 +6,10 @@ const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
 exports.createVendor = async (req, res) => {
   try {
-    // permission gate (non-privileged must have explicit capability)
-    if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateVendors) {
-      return res.status(403).json({ message: "Not allowed to create vendors" });
-    }
+    // // permission gate (non-privileged must have explicit capability)
+    // if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateVendors) {
+    //   return res.status(403).json({ message: "Not allowed to create vendors" });
+    // }
 
     const {
       vendorName,
@@ -40,8 +40,8 @@ exports.createVendor = async (req, res) => {
     });
 
     // Invalidate cache for vendors list
-    const vendorsCacheKey = `vendors:client:${req.auth.clientId}`;
-    await deleteFromCache(vendorsCacheKey);
+    // const vendorsCacheKey = `vendors:client:${req.auth.clientId}`;
+    // await deleteFromCache(vendorsCacheKey);
 
     res.status(201).json({ message: "Vendor created", vendor });
   } catch (err) {
@@ -62,15 +62,15 @@ exports.getVendors = async (req, res) => {
       limit = 100,
     } = req.query;
 
-    const cacheKey = `vendors:client:${req.auth.clientId}:${JSON.stringify({ q, page, limit })}`;
+    // const cacheKey = `vendors:client:${req.auth.clientId}:${JSON.stringify({ q, page, limit })}`;
 
-    // Check cache first
-    const cached = await getFromCache(cacheKey);
-    if (cached) {
-      res.set('X-Cache', 'HIT');
-      res.set('X-Cache-Key', cacheKey);
-      return res.json(cached);
-    }
+    // // Check cache first
+    // const cached = await getFromCache(cacheKey);
+    // if (cached) {
+    //   res.set('X-Cache', 'HIT');
+    //   res.set('X-Cache-Key', cacheKey);
+    //   return res.json(cached);
+    // }
 
     const where = { createdByClient: req.auth.clientId };
 
@@ -94,9 +94,9 @@ exports.getVendors = async (req, res) => {
     const result = { vendors, total, page: Number(page), limit: perPage };
 
     // Cache the result
-    await setToCache(cacheKey, result);
-    res.set('X-Cache', 'MISS');
-    res.set('X-Cache-Key', cacheKey);
+    // await setToCache(cacheKey, result);
+    // res.set('X-Cache', 'MISS');
+    // res.set('X-Cache-Key', cacheKey);
 
     res.json(result);
   } catch (err) {
@@ -128,9 +128,9 @@ exports.updateVendor = async (req, res) => {
 
     await doc.save();
 
-    // Invalidate cache for vendors list
-    const vendorsCacheKey = `vendors:client:${req.auth.clientId}`;
-    await deleteFromCache(vendorsCacheKey);
+    // // Invalidate cache for vendors list
+    // const vendorsCacheKey = `vendors:client:${req.auth.clientId}`;
+    // await deleteFromCache(vendorsCacheKey);
 
     res.json({ message: "Vendor updated", vendor: doc });
   } catch (err) {
@@ -153,9 +153,9 @@ exports.deleteVendor = async (req, res) => {
 
     await doc.deleteOne();
 
-    // Invalidate cache for vendors list
-    const vendorsCacheKey = `vendors:client:${req.auth.clientId}`;
-    await deleteFromCache(vendorsCacheKey);
+    // // Invalidate cache for vendors list
+    // const vendorsCacheKey = `vendors:client:${req.auth.clientId}`;
+    // await deleteFromCache(vendorsCacheKey);
 
     res.json({ message: "Vendor deleted successfully" });
   } catch (err) {
