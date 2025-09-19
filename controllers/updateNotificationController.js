@@ -29,7 +29,8 @@ exports.createUpdateNotification = async (req, res) => {
         description,
         version,
         features,
-        recipient: admin._id
+        recipient: admin._id,
+        visibility: 'all' // Explicitly set default visibility
       });
       await notification.save();
       notifications.push(notification);
@@ -112,15 +113,19 @@ exports.dismissUpdateNotification = async (req, res) => {
     const { notificationId } = req.params;
     const userId = req.auth?.userId || req.user?.id || req.body.userId; // Get user ID from auth or body
 
+
     if (!userId) {
+      console.log("User ID not found");
       return res.status(400).json({ message: "User ID not found" });
     }
+
 
     const notification = await UpdateNotification.findById(notificationId);
 
     if (!notification) {
       return res.status(404).json({ message: "Update notification not found" });
     }
+
 
     // Check if user is the recipient (master admin)
     if (notification.recipient.toString() === userId) {
@@ -155,10 +160,11 @@ exports.dismissUpdateNotification = async (req, res) => {
   }
 };
 
-// Propagate update notification to clients and their users
+// Propagate update notification to clients and their users based on visibility
 exports.propagateToClients = async (req, res) => {
   try {
     const { notificationId } = req.params;
+    const { visibility = 'all', force = false } = req.body; // Default to 'all' for backward compatibility
 
     const updateNotification = await UpdateNotification.findById(notificationId);
 
@@ -166,41 +172,87 @@ exports.propagateToClients = async (req, res) => {
       return res.status(404).json({ message: "Update notification not found" });
     }
 
-    if (updateNotification.propagatedToClients) {
-      return res.status(400).json({ message: "Already propagated to clients" });
+    if (updateNotification.propagatedToClients && !force) {
+      return res.status(400).json({ message: "Already propagated to clients. Use force=true to re-propagate." });
     }
 
-    // Get all clients
+    // Get all clients and users first
     const clients = await Client.find({});
+    const allUsers = await User.find({}).populate('role');
 
-    // Create regular notifications for each client and their users
-    const propagatedNotifications = [];
+    // Set visibility
+    updateNotification.visibility = visibility;
+    await updateNotification.save();
 
-    for (const client of clients) {
-      // Create notification for the client
-      const clientNotification = new Notification({
-        title: `New Update Available: ${updateNotification.title}`,
-        message: `Version ${updateNotification.version} is now available. Check out the new features!`,
+    // If force re-propagation, handle existing notifications
+    if (force) {
+      const existingNotifications = await Notification.find({
+        entityId: updateNotification._id,
         type: 'system',
         action: 'update',
-        entityId: updateNotification._id,
-        entityType: 'UpdateNotification',
-        recipient: client._id, // Assuming client can receive notifications
-        triggeredBy: updateNotification.recipient, // Master admin who propagated
-        client: client._id,
-        read: false,
-        metadata: {
-          updateVersion: updateNotification.version,
-          featuresCount: updateNotification.features.length,
-          features: updateNotification.features // Include features for walkthrough
-        }
+        entityType: 'UpdateNotification'
       });
-      await clientNotification.save();
-      propagatedNotifications.push(clientNotification);
 
-      // Also notify users of this client
-      const users = await User.find({ client: client._id });
-      for (const user of users) {
+      for (const existingNotif of existingNotifications) {
+        // Check if it's a user notification (not client)
+        const user = allUsers.find(u => u._id.toString() === existingNotif.recipient.toString());
+        if (user) {
+          const userRoleName = (user.role?.name || '').toLowerCase();
+          const shouldNotify = visibility === 'all' || (visibility === 'admins' && userRoleName === 'admin');
+
+          if (!shouldNotify) {
+            // Remove notification from user who shouldn't see it
+            await Notification.findByIdAndDelete(existingNotif._id);
+          } else {
+            // Update visibility in metadata
+            existingNotif.metadata.visibility = visibility;
+            await existingNotif.save();
+          }
+        } else {
+          // For client notifications, just update visibility
+          existingNotif.metadata.visibility = visibility;
+          await existingNotif.save();
+        }
+      }
+    }
+
+    // Create regular notifications for clients and users based on visibility
+    const propagatedNotifications = [];
+
+    // Notify clients based on visibility
+    if (visibility === 'all') {
+      for (const client of clients) {
+        const clientNotification = new Notification({
+          title: `New Update Available: ${updateNotification.title}`,
+          message: `Version ${updateNotification.version} is now available. Check out the new features!`,
+          type: 'system',
+          action: 'update',
+          entityId: updateNotification._id,
+          entityType: 'UpdateNotification',
+          recipient: client._id,
+          triggeredBy: updateNotification.recipient,
+          client: client._id,
+          read: false,
+          metadata: {
+            updateVersion: updateNotification.version,
+            featuresCount: updateNotification.features.length,
+            features: updateNotification.features,
+            visibility: visibility,
+            propagatedAt: new Date().toISOString()
+          }
+        });
+        await clientNotification.save();
+        propagatedNotifications.push(clientNotification);
+      }
+    }
+
+    // Notify users based on visibility
+    for (const user of allUsers) {
+      const userRoleName = (user.role?.name || '').toLowerCase();
+      const shouldNotify = visibility === 'all' ||
+        (visibility === 'admins' && userRoleName === 'admin');
+
+      if (shouldNotify) {
         const userNotification = new Notification({
           title: `New Update Available: ${updateNotification.title}`,
           message: `Version ${updateNotification.version} is now available for your account.`,
@@ -210,12 +262,14 @@ exports.propagateToClients = async (req, res) => {
           entityType: 'UpdateNotification',
           recipient: user._id,
           triggeredBy: updateNotification.recipient,
-          client: client._id,
+          client: user.createdByClient || null,
           read: false,
           metadata: {
             updateVersion: updateNotification.version,
             featuresCount: updateNotification.features.length,
-            features: updateNotification.features // Include features for walkthrough
+            features: updateNotification.features,
+            visibility: visibility,
+            propagatedAt: new Date().toISOString()
           }
         });
         await userNotification.save();
@@ -244,11 +298,64 @@ exports.propagateToClients = async (req, res) => {
 
     res.status(200).json({
       message: `Propagated to ${propagatedNotifications.length} recipients`,
-      propagatedCount: propagatedNotifications.length
+      propagatedCount: propagatedNotifications.length,
+      visibility: visibility
     });
   } catch (err) {
     console.error("Error propagating to clients:", err);
     res.status(500).json({ message: "Failed to propagate to clients" });
+  }
+};
+
+// Propagate to all users (clients, users, admins)
+exports.propagateToAllUsers = async (req, res) => {
+  req.body.visibility = 'all';
+  return exports.propagateToClients(req, res);
+};
+
+// Propagate to admins only (clients and admins)
+exports.propagateToAdminsOnly = async (req, res) => {
+  req.body.visibility = 'admins';
+  return exports.propagateToClients(req, res);
+};
+
+// Get update notifications for clients based on visibility
+exports.getUpdateNotificationsForClient = async (req, res) => {
+  try {
+    const userId = req.auth?.userId || req.user?.id;
+    const userRole = (req.auth?.role || req.user?.role || "").toLowerCase();
+
+    if (!userId) {
+      return res.status(400).json({ message: "User ID not found" });
+    }
+
+    // Find update notifications that have been propagated to clients and not dismissed by this user
+    const notifications = await UpdateNotification.find({
+      propagatedToClients: true,
+      dismissedUsers: { $ne: userId }, // Not dismissed by this user
+      $or: [
+        { visibility: 'all' },
+        { visibility: 'admins' }
+      ]
+    })
+    .sort({ createdAt: -1 })
+    .lean();
+
+    // Filter based on visibility and user role
+    const filteredNotifications = notifications.filter(notification => {
+      if (notification.visibility === 'all') {
+        return true;
+      } else if (notification.visibility === 'admins') {
+        // For admins visibility, show to clients and admins
+        return ['client', 'admin', 'manager'].includes(userRole);
+      }
+      return false;
+    });
+
+    res.status(200).json({ notifications: filteredNotifications });
+  } catch (err) {
+    console.error("Error fetching update notifications for client:", err);
+    res.status(500).json({ message: "Failed to fetch update notifications" });
   }
 };
 
