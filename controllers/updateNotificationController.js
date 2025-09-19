@@ -110,7 +110,11 @@ exports.markSectionAsExplored = async (req, res) => {
 exports.dismissUpdateNotification = async (req, res) => {
   try {
     const { notificationId } = req.params;
-    const userId = req.user?.id || req.body.userId; // Get user ID from auth or body
+    const userId = req.auth?.userId || req.user?.id || req.body.userId; // Get user ID from auth or body
+
+    if (!userId) {
+      return res.status(400).json({ message: "User ID not found" });
+    }
 
     const notification = await UpdateNotification.findById(notificationId);
 

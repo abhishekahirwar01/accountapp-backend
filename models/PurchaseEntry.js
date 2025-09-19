@@ -16,7 +16,7 @@ const purchaseItemSchema = new mongoose.Schema({
 }, { _id: false });
 
 const purchaseServiceSchema = new mongoose.Schema({
-  serviceName: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
+  service: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
   amount: { type: Number, required: true, min: 1 },
   description: { type: String },
     // New fields to store GST-related information for services

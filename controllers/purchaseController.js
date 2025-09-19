@@ -350,10 +350,9 @@ exports.getPurchaseEntries = async (req, res) => {
       limit = 100,
     } = req.query;
 
-    const clientId = req.auth.clientId;  // Extract clientId correctly
-
+    // For master admin, don't filter by client to allow viewing all clients' data
     const where = {
-      client: clientId,
+      ...(req.auth.role !== "master" ? { client: req.auth.clientId } : {}),
       ...(companyAllowedForUser(req, companyId) ? { ...(companyId && { company: companyId }) } : { company: { $in: [] } }),
     };
 
@@ -373,17 +372,30 @@ exports.getPurchaseEntries = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a cache key based on the query parameters
-    const cacheKey = `purchaseEntries:${JSON.stringify({ clientId, companyId })}`;
+    // Construct a more predictable cache key
+    const cacheKeyData = {
+      client: req.auth.role === "master" ? "all" : req.auth.clientId,
+      company: companyId || null,
+      dateFrom: dateFrom || null,
+      dateTo: dateTo || null,
+      q: q || null,
+      page: Number(page) || 1,
+      limit: perPage
+    };
+    const cacheKey = `purchaseEntries:${JSON.stringify(cacheKeyData)}`;
 
     // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
+    const cached = await getFromCache(cacheKey);
+    if (cached) {
+      // Handle both old and new cache formats for backward compatibility
+      const data = cached.data || cached;
+      const total = cached.total || (Array.isArray(data) ? data.length : 0);
       return res.status(200).json({
         success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
+        total,
+        page: Number(page),
+        limit: perPage,
+        data,
       });
     }
 
@@ -394,8 +406,7 @@ exports.getPurchaseEntries = async (req, res) => {
       .limit(perPage)
       .populate({ path: "vendor", select: "vendorName" })
       .populate({ path: "products.product", select: "name unitType" })
-      .populate({ path: "services.serviceName", select: "serviceName" })
-      .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
+      .populate({ path: "services.service", select: "serviceName" })
       .populate({ path: "company", select: "businessName" });
 
     const [entries, total] = await Promise.all([
@@ -404,7 +415,7 @@ exports.getPurchaseEntries = async (req, res) => {
     ]);
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, entries);
+    await setToCache(cacheKey, { data: entries, total });
 
     res.status(200).json({
       success: true,
@@ -442,17 +453,27 @@ exports.getPurchaseEntriesByClient = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a cache key based on clientId and query parameters
-    const cacheKey = `purchaseEntriesByClient:${JSON.stringify({ client: clientId, company: companyId })}`;
+    // Construct a consistent cache key
+    const cacheKeyData = {
+      clientId: clientId,
+      companyId: companyId || null,
+      page: Number(page) || 1,
+      limit: perPage
+    };
+    const cacheKey = `purchaseEntriesByClient:${JSON.stringify(cacheKeyData)}`;
 
     // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
+    const cached = await getFromCache(cacheKey);
+    if (cached) {
+      // Handle both old and new cache formats for backward compatibility
+      const data = cached.data || cached;
+      const total = cached.total || (Array.isArray(data) ? data.length : 0);
       return res.status(200).json({
         success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
+        total,
+        page: Number(page),
+        limit: perPage,
+        data,
       });
     }
 
@@ -463,16 +484,23 @@ exports.getPurchaseEntriesByClient = async (req, res) => {
         .limit(perPage)
         .populate({ path: "vendor", select: "vendorName" })
         .populate({ path: "products.product", select: "name unitType" })
-        .populate({ path: "services.serviceName", select: "serviceName" })
-        .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
+        .populate({ path: "services.service", select: "serviceName" })
         .populate({ path: "company", select: "businessName" })
         .lean(),
       PurchaseEntry.countDocuments(where),
     ]);
 
-    await setToCache(cacheKey, entries);
+    // Cache the fetched data in Redis for future requests
+    await setToCache(cacheKey, { data: entries, total });
 
-    res.status(200).json({ entries, total, page: Number(page), limit: perPage });
+    // Return the data in consistent format
+    res.status(200).json({
+      success: true,
+      total,
+      page: Number(page),
+      limit: perPage,
+      data: entries,
+    });
   } catch (err) {
     console.error("getPurchaseEntriesByClient error:", err);
     res.status(500).json({ error: err.message });

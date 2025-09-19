@@ -3,6 +3,7 @@ const router = express.Router();
 const updateNotificationController = require("../controllers/updateNotificationController");
 
 const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
+const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
 const auth = require("../middleware/auth");
 
 // Create a new update notification (only master admin can create)
@@ -14,8 +15,8 @@ router.get("/master/:masterId", verifyMasterAdmin, updateNotificationController.
 // Mark a section as explored
 router.patch("/explore-section", verifyMasterAdmin, updateNotificationController.markSectionAsExplored);
 
-// Dismiss an update notification
-router.patch("/dismiss/:notificationId", verifyMasterAdmin, updateNotificationController.dismissUpdateNotification);
+// Dismiss an update notification (allow both master and clients)
+router.patch("/dismiss/:notificationId", verifyClientOrAdmin, updateNotificationController.dismissUpdateNotification);
 
 // Propagate update notification to clients
 router.post("/propagate/:notificationId", verifyMasterAdmin, updateNotificationController.propagateToClients);
