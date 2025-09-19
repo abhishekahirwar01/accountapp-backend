@@ -1,4 +1,3 @@
-// utils/normalizePurchaseServices.js
 const Service = require("../models/Service");
 
 module.exports = async (rawServices = [], clientId) => {
@@ -12,7 +11,7 @@ module.exports = async (rawServices = [], clientId) => {
   for (const item of rawServices) {
     // Check both service and serviceName for compatibility
     const serviceId = item.service || item.serviceName;
-    
+
     if (!serviceId) {
       throw new Error("Service ID is required for each service item");
     }
@@ -28,20 +27,21 @@ module.exports = async (rawServices = [], clientId) => {
 
     const amount = Number(item.amount ?? service.amount ?? 0);
     if (isNaN(amount)) throw new Error("Invalid amount");
+    
     // Get GST percentage from the request or use service default
-    const gstPercentage = Number(r.gstPercentage ?? svc.gstPercentage ?? 18);
+    const gstPercentage = Number(item.gstPercentage ?? service.gstPercentage ?? 18); // Updated line
     
     // Calculate tax and total for this line
     const lineTax = +(amount * gstPercentage / 100).toFixed(2);
     const lineTotal = +(amount + lineTax).toFixed(2);
 
     items.push({ 
-      service: svc._id, 
+      service: service._id, 
       amount, 
-      description,
-      gstPercentage, // NEW: Save GST percentage
-      lineTax,       // NEW: Save calculated tax
-      lineTotal      // NEW: Save line total (amount + tax)
+      description: item.description, // Ensure you define 'description' in the item
+      gstPercentage, // Save GST percentage
+      lineTax,       // Save calculated tax
+      lineTotal      // Save line total (amount + tax)
     });
 
     computedTotal += amount;

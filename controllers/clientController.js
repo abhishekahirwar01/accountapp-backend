@@ -6,7 +6,7 @@ const slugifyUsername = require("../utils/slugify");
 const Permission = require("../models/Permission");
 const AccountValidity = require("../models/AccountValidity");
 const { randomInt } = require("crypto");
-const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");
+const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
 
 // Create Client (Only Master Admin)
 // controllers/clientController.js
@@ -144,7 +144,8 @@ exports.createClient = async (req, res) => {
 
       await session.commitTransaction();
       // CACHE: invalidate the list for this master
-      invalidateClientsForMaster(req.user.id);
+      const clientsCacheKey = `clients:master:${req.user.id}`;
+      await deleteFromCache(clientsCacheKey);
       return res
         .status(201)
         .json({
@@ -166,9 +167,9 @@ exports.createClient = async (req, res) => {
 // Get All Clients (Only Master Admin)
 exports.getClients = async (req, res) => {
   try {
-    const cacheKey = key.clientsList(req.user.id);
+    const cacheKey = `clients:master:${req.user.id}`;
 
-    const cached = myCache.get(cacheKey);
+    const cached = await getFromCache(cacheKey);
     if (cached) {
       // ✅ add these 2 lines
       res.set('X-Cache', 'HIT');
@@ -179,7 +180,7 @@ exports.getClients = async (req, res) => {
 
     const clients = await Client.find({ masterAdmin: req.user.id }).select("-password");
 
-    myCache.set(cacheKey, clients);
+    await setToCache(cacheKey, clients);
 
     // ✅ add these 2 lines
     res.set('X-Cache', 'MISS');
@@ -302,7 +303,11 @@ exports.updateClient = async (req, res) => {
       client.canSendInvoiceWhatsapp = canSendInvoiceWhatsapp;
 
     await client.save();
-    invalidateClient(req.user.id, client._id);
+    // Invalidate cache for this client and the clients list
+    const clientCacheKey = `clients:master:${req.user.id}`;
+    const singleClientCacheKey = `client:master:${req.user.id}:${client._id}`;
+    await deleteFromCache(clientCacheKey);
+    await deleteFromCache(singleClientCacheKey);
     res.status(200).json({ message: "Client updated successfully", client });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -324,8 +329,10 @@ exports.deleteClient = async (req, res) => {
 
     await Client.deleteOne({ _id: id });
     // CACHE: invalidate both this single client + the list
-    invalidateClient(req.user.id, id);
-
+    const clientsCacheKey = `clients:master:${req.user.id}`;
+    const singleClientCacheKey = `client:master:${req.user.id}:${id}`;
+    await deleteFromCache(clientsCacheKey);
+    await deleteFromCache(singleClientCacheKey);
 
     res.status(200).json({ message: "Client deleted successfully" });
   } catch (err) {
@@ -366,10 +373,10 @@ exports.resetPassword = async (req, res) => {
 exports.getClientById = async (req, res) => {
   try {
     const { id } = req.params;
-    const cacheKey = key.client(req.user.id, id);
+    const cacheKey = `client:master:${req.user.id}:${id}`;
 
     // 1) Try cache
-    const cached = myCache.get(cacheKey);
+    const cached = await getFromCache(cacheKey);
     if (cached) {
       return res.status(200).json(cached);
     }
@@ -384,7 +391,7 @@ exports.getClientById = async (req, res) => {
       return res.status(404).json({ message: "Client not found" });
     }
     // 3) Cache it
-    myCache.set(cacheKey, client);
+    await setToCache(cacheKey, client);
     res.status(200).json(client);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -405,7 +412,9 @@ exports.setUserLimit = async (req, res) => {
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
-    invalidateClient(req.user.id, client._id);
+    // Invalidate cache for this client
+    const singleClientCacheKey = `client:master:${req.user.id}:${clientId}`;
+    await deleteFromCache(singleClientCacheKey);
     res.json({ message: "User limit updated", client });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });

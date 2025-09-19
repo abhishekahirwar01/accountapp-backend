@@ -8,6 +8,7 @@ const mongoose = require("mongoose");
 const Role = require("../models/Role");
 const UserPermission = require("../models/UserPermission");
 const { CAP_KEYS } = require("../services/effectivePermissions");
+const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
 
 
 async function getActorRoleDoc(req) {
@@ -178,6 +179,10 @@ exports.createUser = async (req, res) => {
       { upsert: true, new: true }
     );
 
+    // Invalidate cache for users list
+    const usersCacheKey = `users:client:${clientId}`;
+    await deleteFromCache(usersCacheKey);
+
     return res
       .status(201)
       .json({ message: "User created", user: newUser, userPermission });
@@ -196,12 +201,27 @@ exports.getUsers = async (req, res) => {
     const actorRoleName = String(req.user.role || "").toLowerCase();
     const clientId = req.user.createdByClient || req.user.id;
 
+    const cacheKey = `users:client:${clientId}`;
+
+    // Check cache first
+    const cached = await getFromCache(cacheKey);
+    if (cached) {
+      res.set('X-Cache', 'HIT');
+      res.set('X-Cache-Key', cacheKey);
+      return res.status(200).json(cached);
+    }
+
     const query =
       actorRoleName === "admin" || actorRoleName === "master"
         ? { createdByClient: clientId } // or {} if you want admin to see all tenants
         : { createdByClient: clientId };
 
     const users = await User.find(query).populate("companies").populate("role");
+
+    // Cache the result
+    await setToCache(cacheKey, users);
+    res.set('X-Cache', 'MISS');
+    res.set('X-Cache-Key', cacheKey);
 
     res.status(200).json(users);
   } catch (err) {
@@ -335,6 +355,11 @@ exports.updateUser = async (req, res) => {
     }
 
     await doc.save();
+
+    // Invalidate cache for users list
+    const usersCacheKey = `users:client:${clientId}`;
+    await deleteFromCache(usersCacheKey);
+
     return res.status(200).json({ message: "User updated", user: doc });
   } catch (err) {
     console.error("updateUser error:", err);
@@ -361,6 +386,11 @@ exports.deleteUser = async (req, res) => {
     }
 
     await doc.deleteOne();
+
+    // Invalidate cache for users list
+    const usersCacheKey = `users:client:${clientId}`;
+    await deleteFromCache(usersCacheKey);
+
     res.status(200).json({ message: "User deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -433,10 +463,25 @@ exports.getUsersByClient = async (req, res) => {
     const clientExists = await Client.exists({ _id: clientId });
     if (!clientExists) return res.status(404).json({ message: "Client not found" });
 
+    const cacheKey = `users:client:${clientId}`;
+
+    // Check cache first
+    const cached = await getFromCache(cacheKey);
+    if (cached) {
+      res.set('X-Cache', 'HIT');
+      res.set('X-Cache-Key', cacheKey);
+      return res.status(200).json(cached);
+    }
+
     const users = await User.find({ createdByClient: clientId })
       .populate({ path: "companies", select: "_id businessName" })
       .populate("role")
       .lean();
+
+    // Cache the result
+    await setToCache(cacheKey, users);
+    res.set('X-Cache', 'MISS');
+    res.set('X-Cache-Key', cacheKey);
 
     return res.status(200).json(users);
   } catch (err) {

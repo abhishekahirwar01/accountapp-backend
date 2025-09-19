@@ -212,50 +212,99 @@ async function notifyAdminOnSalesAction({ req, action, partyName, entryId, compa
 // In your getSalesEntries controller
 exports.getSalesEntries = async (req, res) => {
   try {
+    await ensureAuthCaps(req);
     const filter = {};
 
-    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
-    if (req.user.role === "client") {
-      filter.client = req.user.id;
+    // For master admin, don't filter by client to allow viewing all clients' data
+    if (req.auth.role !== "master") {
+      if (req.auth.role === "client") {
+        filter.client = req.auth.clientId;
+      } else {
+        filter.client = req.auth.clientId; // For staff users, still filter by their client
+      }
     }
+
     if (req.query.companyId) {
       filter.company = req.query.companyId;
     }
 
-    // Construct a cache key based on the filter
-    const cacheKey = `salesEntries:${JSON.stringify(filter)}`;
+    // Add date range filter if provided
+    if (req.query.dateFrom || req.query.dateTo) {
+      filter.date = {};
+      if (req.query.dateFrom) filter.date.$gte = new Date(req.query.dateFrom);
+      if (req.query.dateTo) filter.date.$lte = new Date(req.query.dateTo);
+    }
+
+    // Add search query filter if provided
+    if (req.query.q) {
+      filter.$or = [
+        { description: { $regex: String(req.query.q), $options: "i" } },
+        { referenceNumber: { $regex: String(req.query.q), $options: "i" } },
+      ];
+    }
+
+    const perPage = Math.min(Number(req.query.limit) || 100, 500);
+    const skip = (Number(req.query.page) - 1) * perPage;
+
+    // Construct a more predictable cache key
+    const cacheKeyData = {
+      client: req.auth.role === "master" ? "all" : (req.auth.clientId || req.auth.userId || "unknown"),
+      company: req.query.companyId || null,
+      dateFrom: req.query.dateFrom || null,
+      dateTo: req.query.dateTo || null,
+      q: req.query.q || null,
+      page: Number(req.query.page) || 1,
+      limit: perPage
+    };
+    const cacheKey = `salesEntries:${JSON.stringify(cacheKeyData)}`;
+
+    console.log('Sales req.auth:', req.auth); // Debug log
+    console.log('Sales cache key data:', cacheKeyData); // Debug log
+    console.log('Sales cache key:', cacheKey); // Debug log
 
     // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
+    const cached = await getFromCache(cacheKey);
+    if (cached) {
+      // Handle both old and new cache formats for backward compatibility
+      const data = cached.data || cached;
+      const total = cached.total || (Array.isArray(data) ? data.length : 0);
       return res.status(200).json({
         success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
+        total,
+        page: Number(req.query.page),
+        limit: perPage,
+        data,
       });
     }
 
     // If not cached, fetch the data from the database
-    const entries = await SalesEntry.find(filter)
+    const query = SalesEntry.find(filter)
+      .sort({ date: -1 })
+      .skip(skip)
+      .limit(perPage)
       .populate("party", "name")
       .populate("products.product", "name")
       .populate({
         path: "services.service",
         select: "serviceName",
         strictPopulate: false,
-      }) // ✅
-      .populate("company", "businessName")
-      .sort({ date: -1 });
-    // Return consistent format
+      })
+      .populate("company", "businessName");
+
+    const [data, total] = await Promise.all([
+      query.lean(),
+      SalesEntry.countDocuments(filter),
+    ]);
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, entries);
+    await setToCache(cacheKey, { data, total });
 
     res.status(200).json({
       success: true,
-      count: entries.length,
-      data: entries, // Use consistent key
+      total,
+      page: Number(req.query.page),
+      limit: perPage,
+      data,
     });
   } catch (err) {
     console.error("Error fetching sales entries:", err.message);
@@ -270,24 +319,50 @@ exports.getSalesEntries = async (req, res) => {
 // GET Sales Entries by clientId (for master admin)
 exports.getSalesEntriesByClient = async (req, res) => {
   try {
-    const { clientId } = req.params;
+    await ensureAuthCaps(req);
+    if (!userIsPriv(req)) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
 
-    // Construct a cache key based on clientId
-    const cacheKey = `salesEntriesByClient:${clientId}`;
+    const { clientId } = req.params;
+    const { companyId, page = 1, limit = 100 } = req.query;
+
+    // Construct query with optional company filter
+    const where = { client: clientId };
+    if (companyId) where.company = companyId;
+
+    const perPage = Math.min(Number(limit) || 100, 500);
+    const skip = (Number(page) - 1) * perPage;
+
+    // Construct a consistent cache key
+    const cacheKeyData = {
+      clientId: clientId,
+      companyId: companyId || null,
+      page: Number(page) || 1,
+      limit: perPage
+    };
+    const cacheKey = `salesEntriesByClient:${JSON.stringify(cacheKeyData)}`;
 
     // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
+    const cached = await getFromCache(cacheKey);
+    if (cached) {
+      // Handle both old and new cache formats for backward compatibility
+      const data = cached.data || cached;
+      const total = cached.total || (Array.isArray(data) ? data.length : 0);
       return res.status(200).json({
         success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
+        total,
+        page: Number(page),
+        limit: perPage,
+        data,
       });
     }
 
     // Fetch data from database if not cached
-    const entries = await SalesEntry.find({ client: clientId })
+    const query = SalesEntry.find(where)
+      .sort({ date: -1 })
+      .skip(skip)
+      .limit(perPage)
       .populate("party", "name")
       .populate("products.product", "name")
       .populate({
@@ -295,18 +370,27 @@ exports.getSalesEntriesByClient = async (req, res) => {
         select: "serviceName",
         strictPopulate: false,
       })
-      .populate("company", "businessName")
-      .sort({ date: -1 });
+      .populate("company", "businessName");
+
+    const [data, total] = await Promise.all([
+      query.lean(),
+      SalesEntry.countDocuments(where),
+    ]);
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, entries);
+    await setToCache(cacheKey, { data, total });
 
-    // Return the fetched data
-    res.status(200).json({ entries });
+    // Return the data in consistent format
+    res.status(200).json({
+      success: true,
+      total,
+      page: Number(page),
+      limit: perPage,
+      data,
+    });
   } catch (err) {
-    res
-      .status(500)
-      .json({ message: "Failed to fetch entries", error: err.message });
+    console.error("getSalesEntriesByClient error:", err);
+    res.status(500).json({ message: "Failed to fetch entries", error: err.message });
   }
 };
 
@@ -673,6 +757,10 @@ exports.createSalesEntry = async (req, res) => {
             { session }
           );
 
+            // Invalidate cache before response
+            const clientId = entry.client.toString();
+            await deleteSalesEntryCache(clientId, companyId);
+
             // Send response after notification creation
             return res.status(201).json({ message: "Sales entry created successfully", entry });
           }
@@ -683,15 +771,6 @@ exports.createSalesEntry = async (req, res) => {
       }
     });
 
-    const clientId = entry.client.toString();  // Retrieve clientId from the entry
-
-    // Call the reusable cache deletion function
-    await deleteSalesEntryCache(clientId, companyId);
-
-
-    return res
-      .status(201)
-      .json({ message: "Sales entry created successfully", entry });
   } catch (err) {
     console.error("createSalesEntry error:", err);
     return res.status(500).json({ message: "Something went wrong", error: err.message });
