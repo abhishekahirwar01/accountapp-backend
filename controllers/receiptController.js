@@ -501,6 +501,7 @@ exports.createReceipt = async (req, res) => {
         { new: true }
       );
 
+
       if (!updatedParty) {
         return res.status(400).json({ message: "Failed to update party balance" });
       }
@@ -533,10 +534,12 @@ exports.createReceipt = async (req, res) => {
       message = "Receipt created. Customer balance is now zero.";
     }
 
+
     // Invalidate cache before response
     const clientId = receipt.client.toString();
     const companyIdFromReceipt = receipt.company.toString();
     await deleteReceiptEntryCache(clientId, companyIdFromReceipt);
+
 
     return res.status(201).json({
       message,
