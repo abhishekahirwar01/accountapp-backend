@@ -32,32 +32,9 @@ async function cleanupTestNotifications() {
     const allNotifications = await UpdateNotification.find({});
     console.log(`Found ${allNotifications.length} update notifications`);
 
-    // Group by recipient
-    const byRecipient = {};
-    allNotifications.forEach(notification => {
-      const recipientId = notification.recipient.toString();
-      if (!byRecipient[recipientId]) {
-        byRecipient[recipientId] = [];
-      }
-      byRecipient[recipientId].push(notification);
-    });
-
-    // For each recipient, keep only the most recent notification
-    for (const [recipientId, notifications] of Object.entries(byRecipient)) {
-      if (notifications.length > 1) {
-        console.log(`Recipient ${recipientId} has ${notifications.length} notifications`);
-
-        // Sort by createdAt descending
-        notifications.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-
-        // Keep the first (most recent), delete the rest
-        const toDelete = notifications.slice(1);
-        for (const notification of toDelete) {
-          await UpdateNotification.findByIdAndDelete(notification._id);
-          console.log(`Deleted duplicate notification: ${notification._id}`);
-        }
-      }
-    }
+    // Delete all UpdateNotification records
+    const deleteResult = await UpdateNotification.deleteMany({});
+    console.log(`Deleted ${deleteResult.deletedCount} UpdateNotification records`);
 
     // Final count
     const remaining = await UpdateNotification.find({});
