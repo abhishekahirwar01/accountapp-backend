@@ -40,8 +40,6 @@ exports.createClient = async (req, res) => {
       contactName,
       phone,
       email,
-      maxCompanies = 5,
-      maxUsers = 10,
       canSendInvoiceEmail = false,
       canSendInvoiceWhatsapp = false,
       canCreateCompanies = false,
@@ -91,8 +89,6 @@ exports.createClient = async (req, res) => {
             contactName,
             phone,
             email,
-            maxCompanies,
-            maxUsers,
             canSendInvoiceEmail,
             canSendInvoiceWhatsapp,
             role: "client",
@@ -107,8 +103,8 @@ exports.createClient = async (req, res) => {
         {
           $setOnInsert: {
             client: createdClient._id,
-            maxCompanies,
-            maxUsers,
+            maxCompanies: 5,
+            maxUsers: 10,
             canSendInvoiceEmail,
             canSendInvoiceWhatsapp,
             canCreateCompanies,
@@ -270,8 +266,6 @@ exports.updateClient = async (req, res) => {
       contactName,
       email,
       phone,
-      maxCompanies,
-      maxUsers,
       canSendInvoiceEmail,
       canSendInvoiceWhatsapp,
     } = req.body;
@@ -295,8 +289,6 @@ exports.updateClient = async (req, res) => {
     }
 
     if (contactName) client.contactName = contactName;
-    if (typeof maxCompanies === "number") client.maxCompanies = maxCompanies;
-    if (typeof maxUsers === "number") client.maxUsers = maxUsers;
     if (typeof canSendInvoiceEmail === "boolean")
       client.canSendInvoiceEmail = canSendInvoiceEmail;
     if (typeof canSendInvoiceWhatsapp === "boolean")
@@ -404,18 +396,18 @@ exports.setUserLimit = async (req, res) => {
   const { userLimit } = req.body;
 
   try {
-    const client = await Client.findByIdAndUpdate(
-      clientId,
-      { userLimit },
+    const permission = await Permission.findOneAndUpdate(
+      { client: clientId },
+      { maxUsers: userLimit },
       { new: true }
     );
-    if (!client) {
-      return res.status(404).json({ message: "Client not found" });
+    if (!permission) {
+      return res.status(404).json({ message: "Client permissions not found" });
     }
     // Invalidate cache for this client
     const singleClientCacheKey = `client:master:${req.user.id}:${clientId}`;
     await deleteFromCache(singleClientCacheKey);
-    res.json({ message: "User limit updated", client });
+    res.json({ message: "User limit updated", permission });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }

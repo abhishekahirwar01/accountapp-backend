@@ -34,7 +34,7 @@ const updateNotificationRoutes = require("./routes/updateNotificationRoutes");
 
 
 const whatsappRoutes = require("./routes/whatsappRoutes")
-
+const unitRoutes = require("./routes/unitRoutes");
 
 const templateRouter = require('./routes/templateRoutes');
 const reportRoutes = require('./routes/reportRoutes')
@@ -129,6 +129,7 @@ app.use("/api/update-notifications", updateNotificationRoutes);
 
 
 app.use("/api/whatsapp", whatsappRoutes);
+app.use("/api/units", unitRoutes);
 
 app.use('/api', templateRouter);
 
