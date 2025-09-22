@@ -43,31 +43,31 @@ async function createTestNotification() {
     }
 
     // Create test update notification
+    // Create test update notification
     const testNotification = {
-      title: "🚀 New Dashboard Features Available",
-      description: "Stay informed with the latest updates to your dashboard. Here's what's new:",
+      title: "📱 Mobile Experience Enhanced",
+      description: "We've optimized your dashboard for mobile devices. Enjoy better performance on the go!",
       version: version,
       features: [
         {
-          name: "Enhanced Dashboard Experience",
+          name: "Mobile-Responsive Design",
           sectionUrl: "/dashboard",
-          gifUrl: "https://via.placeholder.com/400x200?text=Dashboard+Demo",
+          gifUrl: `${baseURL}/api/placeholder/300/150?text=Mobile+View`,
           description: `
-**✨ Instant Alerts**: Get notified as soon as new updates are available for the dashboard.
-
-**🎯 Easy Access**: Click on the notification to directly access the latest features and enhancements.
-
-**📈 Stay Updated**: Ensure you never miss out on the latest improvements and optimizations.
-
-**🔧 New Features Include**:
-• Advanced analytics with real-time data
-• Improved navigation and user experience
-• Enhanced performance and reliability
-          `.trim()
-        },
-      ]
+• Responsive dashboard layout for all screen sizes
+• Touch-friendly buttons and navigation
+• Faster loading on mobile networks
+• Improved mobile form interactions
+      `.trim()
+        }
+      ],
+      additionalInfo: {
+        releaseDate: new Date().toISOString(),
+        updateType: "enhancement",
+        priority: "medium",
+        compatibleDevices: ["mobile", "tablet"]
+      }
     };
-
 
     // Create UpdateNotification for each master admin
     const createdNotifications = [];
