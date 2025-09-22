@@ -127,7 +127,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/update-notifications", updateNotificationRoutes);
 
 
-app.use("/api/whatsapp", whatsappRoutes);
+app.use("/", whatsappRoutes);
 
 app.use('/api', templateRouter);
 

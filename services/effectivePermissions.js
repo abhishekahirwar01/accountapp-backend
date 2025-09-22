@@ -18,6 +18,8 @@ const CAP_KEYS = [           // tenant-only
   "canCreateJournalEntries",
   "canCreateReceiptEntries",
   "canCreatePaymentEntries",
+  "canShowCustomers",
+  "canShowVendors",
 ];
 
 // keys that are allowed to be overridden at the user level
@@ -34,6 +36,8 @@ const USER_OVERRIDE_KEYS = new Set([
   "canCreateJournalEntries",
   "canCreateReceiptEntries",
   "canCreatePaymentEntries",
+  "canShowCustomers",
+  "canShowVendors",
 ]);
 
 /**

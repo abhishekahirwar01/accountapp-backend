@@ -1,4 +1,3 @@
-// routes/whatsappRoutes.js
 const express = require("express");
 const router = express.Router();
 const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");

@@ -25,6 +25,8 @@ const USER_OVERRIDE_KEYS = new Set([
   "canCreateJournalEntries",
   "canCreateReceiptEntries",
   "canCreatePaymentEntries",
+  "canShowCustomers",
+  "canShowVendors",
 ]);
 
 function pickOverrideFlags(body) {

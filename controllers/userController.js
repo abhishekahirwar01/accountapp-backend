@@ -369,10 +369,55 @@ exports.deleteUser = async (req, res) => {
 
 
 
+// exports.resetPassword = async (req, res) => {
+//   try {
+//     const { userId } = req.params; // URL param: /api/users/:userId/reset-password
+//     const { oldPassword, newPassword } = req.body;
+
+//     if (!newPassword || newPassword.length < 6) {
+//       return res.status(400).json({ message: "New password is too short." });
+//     }
+
+//     const doc = await User.findById(userId);
+//     if (!doc) return res.status(404).json({ message: "User not found." });
+
+//     const actorRole = normalizeRoleName(req.user.role);
+//     const isPrivileged = actorRole === "admin" || actorRole === "master";
+//     const isSelf = String(req.user.id) === String(doc._id);
+
+//     const clientId = req.user.createdByClient || req.user.id;
+//     const isSameTenant = String(doc.createdByClient) === String(clientId);
+
+//     // permission to reset
+//     if (!isSelf && !(isPrivileged && isSameTenant)) {
+//       return res.status(403).json({ message: "Not authorized to reset this user's password" });
+//     }
+
+//     // if not privileged, must verify old password
+//     if (!isPrivileged) {
+//       if (!oldPassword) {
+//         return res.status(400).json({ message: "Current password is required." });
+//       }
+//       const ok = await bcrypt.compare(oldPassword, doc.password);
+//       if (!ok) return res.status(401).json({ message: "Current password is incorrect." });
+//     }
+
+//     const salt = await bcrypt.genSalt(10);
+//     doc.password = await bcrypt.hash(newPassword, salt);
+//     doc.passwordChangedAt = new Date();       // add this field to your User schema if you want token invalidation
+//     await doc.save();
+
+//     return res.json({ message: "Password reset successfully." });
+//   } catch (error) {
+//     console.error("resetPassword error:", error);
+//     return res.status(500).json({ message: "Server error." });
+//   }
+// };
+
 exports.resetPassword = async (req, res) => {
   try {
     const { userId } = req.params; // URL param: /api/users/:userId/reset-password
-    const { oldPassword, newPassword } = req.body;
+    const { newPassword } = req.body;
 
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({ message: "New password is too short." });
@@ -381,38 +426,33 @@ exports.resetPassword = async (req, res) => {
     const doc = await User.findById(userId);
     if (!doc) return res.status(404).json({ message: "User not found." });
 
-    const actorRole = normalizeRoleName(req.user.role);
+    const actorRole = normalizeRoleName(req.user.role); // 'admin', 'client', 'user', etc.
     const isPrivileged = actorRole === "admin" || actorRole === "master";
-    const isSelf = String(req.user.id) === String(doc._id);
 
+    const actorId = req.user.id;
     const clientId = req.user.createdByClient || req.user.id;
+
+    const isSelf = String(actorId) === String(doc._id);
     const isSameTenant = String(doc.createdByClient) === String(clientId);
 
-    // permission to reset
-    if (!isSelf && !(isPrivileged && isSameTenant)) {
+    // 🛡️ Permission Check: Only self, same-tenant, or privileged users can reset
+    if (!isSelf && !isSameTenant && !isPrivileged) {
       return res.status(403).json({ message: "Not authorized to reset this user's password" });
-    }
-
-    // if not privileged, must verify old password
-    if (!isPrivileged) {
-      if (!oldPassword) {
-        return res.status(400).json({ message: "Current password is required." });
-      }
-      const ok = await bcrypt.compare(oldPassword, doc.password);
-      if (!ok) return res.status(401).json({ message: "Current password is incorrect." });
     }
 
     const salt = await bcrypt.genSalt(10);
     doc.password = await bcrypt.hash(newPassword, salt);
-    doc.passwordChangedAt = new Date();       // add this field to your User schema if you want token invalidation
+    doc.passwordChangedAt = new Date(); // Optional: helps with token invalidation
     await doc.save();
 
     return res.json({ message: "Password reset successfully." });
+
   } catch (error) {
     console.error("resetPassword error:", error);
     return res.status(500).json({ message: "Server error." });
   }
 };
+
 
 
 

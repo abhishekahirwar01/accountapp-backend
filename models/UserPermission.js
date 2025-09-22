@@ -22,6 +22,8 @@ const userPermissionSchema = new mongoose.Schema(
     canCreateJournalEntries:  { type: Boolean, default: null },
     canCreateReceiptEntries:  { type: Boolean, default: null },
     canCreatePaymentEntries:  { type: Boolean, default: null },
+    canShowCustomers:         { type: Boolean, default: null }, // New field for showing customers in the sales section
+    canShowVendors:           { type: Boolean, default: null }, 
 
     // optional scoping
     allowedCompanies: [{ type: mongoose.Schema.Types.ObjectId, ref: "Company" }],

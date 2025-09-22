@@ -8,15 +8,17 @@ const normalizeProducts = require("../utils/normalizeProducts");
 const normalizeServices = require("../utils/normalizeServices");
 const IssuedInvoiceNumber = require("../models/IssuedInvoiceNumber");
 const { issueSalesInvoiceNumber } = require("../services/invoiceIssuer");
-const { getFromCache, setToCache } = require('../RedisCache');
-const { deleteSalesEntryCache, deleteSalesEntryCacheByUser } = require('../utils/cacheHelpers');
+const { getFromCache, setToCache } = require("../RedisCache");
+const {
+  deleteSalesEntryCache,
+  deleteSalesEntryCacheByUser,
+} = require("../utils/cacheHelpers");
 // at top of controllers/salesController.js
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { createNotification } = require("./notificationController");
 const User = require("../models/User");
 const Client = require("../models/Client");
-const Role = require("../models/Role")
-
+const Role = require("../models/Role");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -29,8 +31,8 @@ async function ensureAuthCaps(req) {
       role: req.user.role,
       caps: req.user.caps,
       allowedCompanies: req.user.allowedCompanies,
-      userName: req.user.userName || 'Unknown',  // Ensure userName is set here
-       clientName: req.user.contactName,
+      userName: req.user.userName || "Unknown", // Ensure userName is set here
+      clientName: req.user.contactName,
     };
 
   // If there's no auth context, throw error
@@ -53,22 +55,20 @@ async function ensureAuthCaps(req) {
   // }
 
   // updated: only for staff (non-client) logins
-if (req.auth.role !== 'client' && !req.auth.userName && req.auth.userId) {
-  const user = await User.findById(req.auth.userId)
-    .select('displayName fullName name userName username email')
-    .lean();
-  req.auth.userName =
-    user?.displayName ||
-    user?.fullName ||
-    user?.name ||
-    user?.userName ||
-    user?.username ||
-    user?.email ||
-    undefined; // no "Unknown" fallback here
+  if (req.auth.role !== "client" && !req.auth.userName && req.auth.userId) {
+    const user = await User.findById(req.auth.userId)
+      .select("displayName fullName name userName username email")
+      .lean();
+    req.auth.userName =
+      user?.displayName ||
+      user?.fullName ||
+      user?.name ||
+      user?.userName ||
+      user?.username ||
+      user?.email ||
+      undefined; // no "Unknown" fallback here
+  }
 }
-
-}
-
 
 function userIsPriv(req) {
   return PRIV_ROLES.has(req.auth.role);
@@ -82,8 +82,6 @@ function companyAllowedForUser(req, companyId) {
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
 
-
-// ---------- Helpers: actor + admin notification (sales) ----------
 
 // ---- Actor resolver: supports staff users and clients ----
 async function resolveActor(req) {
@@ -102,7 +100,12 @@ async function resolveActor(req) {
   // If the claim has a string, return with best-effort id as well
   if (claimName && String(claimName).trim()) {
     return {
-      id: req.auth?.userId || req.auth?.id || req.user?.id || req.auth?.clientId || null,
+      id:
+        req.auth?.userId ||
+        req.auth?.id ||
+        req.user?.id ||
+        req.auth?.clientId ||
+        null,
       name: String(claimName).trim(),
       role,
       kind: role === "client" ? "client" : "user",
@@ -112,7 +115,8 @@ async function resolveActor(req) {
   // If actor is a client, fetch from Client model
   if (role === "client") {
     const clientId = req.auth?.clientId;
-    if (!clientId) return { id: null, name: "Unknown User", role, kind: "client" };
+    if (!clientId)
+      return { id: null, name: "Unknown User", role, kind: "client" };
 
     const clientDoc = await Client.findById(clientId)
       .select("contactName clientUsername email phone")
@@ -129,7 +133,8 @@ async function resolveActor(req) {
   }
 
   // Otherwise treat as internal user
-  const userId = req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
+  const userId =
+    req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
   if (!userId) return { id: null, name: "Unknown User", role, kind: "user" };
 
   const userDoc = await User.findById(userId)
@@ -148,7 +153,6 @@ async function resolveActor(req) {
   return { id: userId, name: String(name).trim(), role, kind: "user" };
 }
 
-
 // Optionally find an admin scoped to a company; fallback to any admin
 async function findAdminUser(companyId) {
   const adminRole = await Role.findOne({ name: "admin" }).select("_id");
@@ -157,7 +161,10 @@ async function findAdminUser(companyId) {
   // First try admin mapped to this company (if you store it in "companies")
   let adminUser = null;
   if (companyId) {
-    adminUser = await User.findOne({ role: adminRole._id, companies: companyId }).select("_id");
+    adminUser = await User.findOne({
+      role: adminRole._id,
+      companies: companyId,
+    }).select("_id");
   }
   // Fallback: any admin
   if (!adminUser) {
@@ -167,12 +174,17 @@ async function findAdminUser(companyId) {
 }
 
 // Build message text per action
-function buildSalesNotificationMessage(action, { actorName, partyName, invoiceNumber, amount }) {
+function buildSalesNotificationMessage(
+  action,
+  { actorName, partyName, invoiceNumber, amount }
+) {
   const pName = partyName || "Unknown Party";
   switch (action) {
     case "create":
-      return `New sales entry created by ${actorName} for party ${pName}` +
-        (amount != null ? ` of ₹${amount}.` : ".");
+      return (
+        `New sales entry created by ${actorName} for party ${pName}` +
+        (amount != null ? ` of ₹${amount}.` : ".")
+      );
     case "update":
       return `Sales entry updated by ${actorName} for party ${pName}.`;
     case "delete":
@@ -183,7 +195,14 @@ function buildSalesNotificationMessage(action, { actorName, partyName, invoiceNu
 }
 
 // Unified notifier for sales module
-async function notifyAdminOnSalesAction({ req, action, partyName, entryId, companyId, amount }) {
+async function notifyAdminOnSalesAction({
+  req,
+  action,
+  partyName,
+  entryId,
+  companyId,
+  amount,
+}) {
   const actor = await resolveActor(req);
   const adminUser = await findAdminUser(companyId);
   if (!adminUser) {
@@ -199,15 +218,14 @@ async function notifyAdminOnSalesAction({ req, action, partyName, entryId, compa
 
   await createNotification(
     message,
-    adminUser._id,        // recipient (admin)
-    actor.id,             // actor id (user OR client)
-    action,               // "create" | "update" | "delete"
-    "sales",              // entry type / category
-    entryId,              // sales entry id
+    adminUser._id, // recipient (admin)
+    actor.id, // actor id (user OR client)
+    action, // "create" | "update" | "delete"
+    "sales", // entry type / category
+    entryId, // sales entry id
     req.auth.clientId
   );
 }
-
 
 // In your getSalesEntries controller
 exports.getSalesEntries = async (req, res) => {
@@ -266,7 +284,6 @@ exports.getSalesEntries = async (req, res) => {
   }
 };
 
-
 // GET Sales Entries by clientId (for master admin)
 exports.getSalesEntriesByClient = async (req, res) => {
   try {
@@ -309,10 +326,6 @@ exports.getSalesEntriesByClient = async (req, res) => {
       .json({ message: "Failed to fetch entries", error: err.message });
   }
 };
-
-
-
-
 
 // exports.createSalesEntry = async (req, res) => {
 //   const session = await mongoose.startSession();
@@ -491,7 +504,6 @@ exports.getSalesEntriesByClient = async (req, res) => {
 //     // Call the reusable cache deletion function
 //     await deleteSalesEntryCache(clientId, companyId);
 
-
 //     return res
 //       .status(201)
 //       .json({ message: "Sales entry created successfully", entry });
@@ -512,11 +524,19 @@ exports.createSalesEntry = async (req, res) => {
     // Ensure the user has permission
     await ensureAuthCaps(req);
     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
-      return res.status(403).json({ message: "Not allowed to create sales entries" });
+      return res
+        .status(403)
+        .json({ message: "Not allowed to create sales entries" });
     }
 
     // Destructure the request body
-    const { company: companyId, paymentMethod, party, totalAmount, bank } = req.body;
+    const {
+      company: companyId,
+      paymentMethod,
+      party,
+      totalAmount,
+      bank,
+    } = req.body;
 
     if (!party) {
       return res.status(400).json({ message: "Customer ID is required" });
@@ -532,7 +552,9 @@ exports.createSalesEntry = async (req, res) => {
     }
 
     if (!companyAllowedForUser(req, companyId)) {
-      return res.status(403).json({ message: "You are not allowed to use this company" });
+      return res
+        .status(403)
+        .json({ message: "You are not allowed to use this company" });
     }
 
     // 🔴 IMPORTANT: remove the pre-transaction save that caused validation
@@ -570,7 +592,9 @@ exports.createSalesEntry = async (req, res) => {
       if (!partyDoc) throw new Error("Customer not found or unauthorized");
 
       // Normalize products with GST calculations
-      let normalizedProducts = [], productsTotal = 0, productsTax = 0;
+      let normalizedProducts = [],
+        productsTotal = 0,
+        productsTax = 0;
       if (Array.isArray(products) && products.length > 0) {
         const { items, computedTotal, computedTax } = await normalizeProducts(
           products,
@@ -582,7 +606,9 @@ exports.createSalesEntry = async (req, res) => {
       }
 
       // Normalize services with GST calculations
-      let normalizedServices = [], servicesTotal = 0, servicesTax = 0;
+      let normalizedServices = [],
+        servicesTotal = 0,
+        servicesTax = 0;
       if (Array.isArray(services) && services.length > 0) {
         const { items, computedTotal, computedTax } = await normalizeServices(
           services,
@@ -596,20 +622,23 @@ exports.createSalesEntry = async (req, res) => {
       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
       const computedTaxAmount = (productsTax || 0) + (servicesTax || 0);
 
-      const finalTotal = typeof totalAmount === "number"
-        ? totalAmount
-        : typeof invoiceTotalIn === "number"
+      const finalTotal =
+        typeof totalAmount === "number"
+          ? totalAmount
+          : typeof invoiceTotalIn === "number"
           ? invoiceTotalIn
           : +(computedSubtotal + computedTaxAmount).toFixed(2);
 
-      const finalTaxAmount = typeof taxAmountIn === "number" ? taxAmountIn : computedTaxAmount;
+      const finalTaxAmount =
+        typeof taxAmountIn === "number" ? taxAmountIn : computedTaxAmount;
 
       const atDate = date ? new Date(date) : new Date();
 
       let attempts = 0;
       while (true) {
         attempts++;
-        const { invoiceNumber, yearYY, seq, prefix } = await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
+        const { invoiceNumber, yearYY, seq, prefix } =
+          await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
 
         try {
           const docs = await SalesEntry.create(
@@ -626,8 +655,10 @@ exports.createSalesEntry = async (req, res) => {
                 subTotal: computedSubtotal, // NEW: Save subtotal
                 description,
                 referenceNumber,
-                gstPercentage: computedTaxAmount > 0 ?
-                  +((computedTaxAmount / computedSubtotal) * 100).toFixed(2) : 0,
+                gstPercentage:
+                  computedTaxAmount > 0
+                    ? +((computedTaxAmount / computedSubtotal) * 100).toFixed(2)
+                    : 0,
                 discountPercentage,
                 invoiceType,
                 gstin: companyDoc.gstin || null,
@@ -647,7 +678,6 @@ exports.createSalesEntry = async (req, res) => {
           if (!res.headersSent) {
             // After sales entry is created, notify the admin
 
-
             // Notify admin AFTER entry created (and before response)
             await notifyAdminOnSalesAction({
               req,
@@ -658,23 +688,24 @@ exports.createSalesEntry = async (req, res) => {
               amount: entry?.totalAmount,
             });
 
-
-          await IssuedInvoiceNumber.create(
-            [
-              {
-                company: companyDoc._id,
-                series: "sales",
-                invoiceNumber,
-                yearYY,
-                seq,
-                prefix,
-              },
-            ],
-            { session }
-          );
+            await IssuedInvoiceNumber.create(
+              [
+                {
+                  company: companyDoc._id,
+                  series: "sales",
+                  invoiceNumber,
+                  yearYY,
+                  seq,
+                  prefix,
+                },
+              ],
+              { session }
+            );
 
             // Send response after notification creation
-            return res.status(201).json({ message: "Sales entry created successfully", entry });
+            return res
+              .status(201)
+              .json({ message: "Sales entry created successfully", entry });
           }
         } catch (e) {
           if (e?.code === 11000 && attempts < 20) continue;
@@ -683,32 +714,197 @@ exports.createSalesEntry = async (req, res) => {
       }
     });
 
-    const clientId = entry.client.toString();  // Retrieve clientId from the entry
+    const clientId = entry.client.toString(); // Retrieve clientId from the entry
 
     // Call the reusable cache deletion function
     await deleteSalesEntryCache(clientId, companyId);
-
 
     return res
       .status(201)
       .json({ message: "Sales entry created successfully", entry });
   } catch (err) {
     console.error("createSalesEntry error:", err);
-    return res.status(500).json({ message: "Something went wrong", error: err.message });
+    return res
+      .status(500)
+      .json({ message: "Something went wrong", error: err.message });
   } finally {
     session.endSession();
   }
 };
 
-
-
-
 const sameTenant = (entryClientId, userClientId) => {
   return entryClientId.toString() === userClientId.toString();
 };
 
-
 // UPDATE a sales entry (replace your current function)
+// exports.updateSalesEntry = async (req, res) => {
+//   const session = await mongoose.startSession();
+
+//   try {
+//     // Ensure the user has permission
+//     await ensureAuthCaps(req);
+//     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
+//       return res
+//         .status(403)
+//         .json({ message: "Not allowed to update sales entries" });
+//     }
+
+//     // Find the sales entry by ID
+//     const entry = await SalesEntry.findById(req.params.id);
+//     if (!entry)
+//       return res.status(404).json({ message: "Sales entry not found" });
+
+//     // Tenant auth: allow privileged roles or same tenant only
+//     if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
+//       return res.status(403).json({ message: "Unauthorized" });
+//     }
+
+//     const { products, services, ...otherUpdates } = req.body;
+
+//     // If company is being changed, check permission + existence
+//     if (otherUpdates.company) {
+//       if (!companyAllowedForUser(req, otherUpdates.company)) {
+//         return res
+//           .status(403)
+//           .json({ message: "You are not allowed to use this company" });
+//       }
+//       const company = await Company.findOne({
+//         _id: otherUpdates.company,
+//         client: req.auth.clientId,
+//       });
+//       if (!company) {
+//         return res.status(400).json({ message: "Invalid company selected" });
+//       }
+//     }
+
+//     // If party is being changed, validate it belongs to the same tenant
+//     let partyDoc = null;
+//     if (otherUpdates.party) {
+//       partyDoc = await Party.findOne({
+//         _id: otherUpdates.party,
+//         createdByClient: req.auth.clientId,
+//       });
+//       if (!partyDoc) {
+//         return res
+//           .status(400)
+//           .json({ message: "Customer not found or unauthorized" });
+//       }
+//     }
+
+//     let productsTotal = 0;
+//     let servicesTotal = 0;
+
+//     // Normalize product lines only if provided (Array.isArray allows clearing with [])
+//     if (Array.isArray(products)) {
+//       const { items: normalizedProducts, computedTotal } =
+//         await normalizeProducts(products, req.auth.clientId);
+//       entry.products = normalizedProducts;
+//       productsTotal = computedTotal;
+//     }
+
+//     // Normalize service lines only if provided (Array.isArray allows clearing with [])
+//     if (Array.isArray(services)) {
+//       const { items: normalizedServices, computedTotal } =
+//         await normalizeServices(services, req.auth.clientId);
+//       entry.services = normalizedServices;
+//       servicesTotal = computedTotal;
+//     }
+
+//     // Don’t allow changing invoiceNumber/year from payload
+//     const {
+//       totalAmount,
+//       invoiceNumber,
+//       invoiceYearYY,
+//       gstRate,
+//       notes,
+//       ...rest
+//     } = otherUpdates;
+//     if (typeof gstRate === "number") {
+//       entry.gstPercentage = gstRate;
+//     }
+//     if (notes !== undefined) {
+//       entry.notes = notes;
+//     }
+//     Object.assign(entry, rest);
+
+//     // Recalculate total if not explicitly provided
+//     if (typeof totalAmount === "number") {
+//       entry.totalAmount = totalAmount;
+//     } else {
+//       const sumProducts =
+//         productsTotal ||
+//         (Array.isArray(entry.products)
+//           ? entry.products.reduce((s, it) => s + (Number(it.amount) || 0), 0)
+//           : 0);
+//       const sumServices =
+//         servicesTotal ||
+//         (Array.isArray(entry.services)
+//           ? entry.services.reduce((s, it) => s + (Number(it.amount) || 0), 0)
+//           : 0);
+//       entry.totalAmount = sumProducts + sumServices;
+//     }
+
+//     await notifyAdminOnSalesAction({
+//       req,
+//       action: "update",
+//       partyName:
+//         (partyDoc ? partyDoc.name : null) ||
+//         entry?.party?.name ||
+//         "Unknown Party",
+//       entryId: entry._id,
+//       companyId: entry.company?.toString(),
+//     });
+
+//     // Adjust party balance on payment method update
+//     if (!partyDoc) {
+//       partyDoc = await Party.findOne({
+//         _id: entry.party,
+//         createdByClient: req.auth.clientId,
+//       });
+//     }
+
+//     const originalPaymentMethod = entry.paymentMethod;
+//     const originalAmount = entry.totalAmount || 0;
+//     const newPaymentMethod =
+//       otherUpdates.paymentMethod || originalPaymentMethod;
+//     const newAmount =
+//       typeof totalAmount === "number" ? totalAmount : entry.totalAmount;
+
+//     if (originalPaymentMethod !== "Credit" && newPaymentMethod === "Credit") {
+//       partyDoc.balance += newAmount;
+//       await partyDoc.save();
+//     } else if (
+//       originalPaymentMethod === "Credit" &&
+//       newPaymentMethod !== "Credit"
+//     ) {
+//       partyDoc.balance -= originalAmount;
+//       await partyDoc.save();
+//     } else if (
+//       originalPaymentMethod === "Credit" &&
+//       newPaymentMethod === "Credit" &&
+//       originalAmount !== newAmount
+//     ) {
+//       const difference = newAmount - originalAmount;
+//       partyDoc.balance += difference;
+//       await partyDoc.save();
+//     }
+
+//     await entry.save();
+
+//     // Retrieve companyId and clientId from the sales entry to delete related cache
+//     const companyId = entry.company.toString();
+//     const clientId = entry.client.toString(); // Retrieve clientId from the entry
+
+//     // Call the reusable cache deletion function
+//     await deleteSalesEntryCache(clientId, companyId);
+
+//     res.json({ message: "Sales entry updated successfully", entry });
+//   } catch (err) {
+//     console.error("Error updating sales entry:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+
 exports.updateSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
 
@@ -729,7 +925,12 @@ exports.updateSalesEntry = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
-    const { products, services, ...otherUpdates } = req.body;
+    const { products, services, paymentMethod, totalAmount, party, ...otherUpdates } = req.body;
+
+    // Store original values for credit adjustment
+    const originalPaymentMethod = entry.paymentMethod;
+    const originalTotalAmount = entry.totalAmount;
+    const originalPartyId = entry.party.toString();
 
     // If company is being changed, check permission + existence
     if (otherUpdates.company) {
@@ -780,9 +981,8 @@ exports.updateSalesEntry = async (req, res) => {
       servicesTotal = computedTotal;
     }
 
-    // Don’t allow changing invoiceNumber/year from payload
-    const { totalAmount, invoiceNumber, invoiceYearYY, gstRate, notes, ...rest } =
-      otherUpdates;
+    // Don't allow changing invoiceNumber/year from payload
+    const { invoiceNumber, invoiceYearYY, gstRate, notes, ...rest } = otherUpdates;
     if (typeof gstRate === "number") {
       entry.gstPercentage = gstRate;
     }
@@ -790,6 +990,15 @@ exports.updateSalesEntry = async (req, res) => {
       entry.notes = notes;
     }
     Object.assign(entry, rest);
+
+    // Handle payment method and party changes for credit adjustment
+    if (paymentMethod !== undefined) {
+      entry.paymentMethod = paymentMethod;
+    }
+
+    if (party !== undefined) {
+      entry.party = party;
+    }
 
     // Recalculate total if not explicitly provided
     if (typeof totalAmount === "number") {
@@ -808,6 +1017,63 @@ exports.updateSalesEntry = async (req, res) => {
       entry.totalAmount = sumProducts + sumServices;
     }
 
+    // CREDIT BALANCE ADJUSTMENT LOGIC
+    await session.withTransaction(async () => {
+      const currentPartyId = party || originalPartyId;
+      const currentPaymentMethod = paymentMethod || originalPaymentMethod;
+      const currentTotalAmount = entry.totalAmount;
+
+      // Find the current party document
+      const currentPartyDoc = await Party.findOne({
+        _id: currentPartyId,
+        createdByClient: req.auth.clientId,
+      }).session(session);
+      
+      if (!currentPartyDoc) {
+        throw new Error("Party not found");
+      }
+
+      // Handle credit balance adjustments
+      if (originalPaymentMethod === "Credit" && currentPaymentMethod === "Credit") {
+        // Both old and new are Credit - adjust the balance by the difference
+        if (originalPartyId === currentPartyId) {
+          // Same party - adjust balance by amount difference
+          const amountDifference = currentTotalAmount - originalTotalAmount;
+          currentPartyDoc.balance += amountDifference;
+        } else {
+          // Different parties - remove from old party, add to new party
+          const originalPartyDoc = await Party.findOne({
+            _id: originalPartyId,
+            createdByClient: req.auth.clientId,
+          }).session(session);
+          
+          if (originalPartyDoc) {
+            originalPartyDoc.balance -= originalTotalAmount;
+            await originalPartyDoc.save({ session });
+          }
+          
+          currentPartyDoc.balance += currentTotalAmount;
+        }
+      } else if (originalPaymentMethod === "Credit" && currentPaymentMethod !== "Credit") {
+        // Changed from Credit to non-Credit - remove from party balance
+        const originalPartyDoc = await Party.findOne({
+          _id: originalPartyId,
+          createdByClient: req.auth.clientId,
+        }).session(session);
+        
+        if (originalPartyDoc) {
+          originalPartyDoc.balance -= originalTotalAmount;
+          await originalPartyDoc.save({ session });
+        }
+      } else if (originalPaymentMethod !== "Credit" && currentPaymentMethod === "Credit") {
+        // Changed from non-Credit to Credit - add to party balance
+        currentPartyDoc.balance += currentTotalAmount;
+      }
+      // If both are non-Credit, no balance adjustment needed
+
+      await currentPartyDoc.save({ session });
+    });
+
     await notifyAdminOnSalesAction({
       req,
       action: "update",
@@ -820,7 +1086,7 @@ exports.updateSalesEntry = async (req, res) => {
 
     // Retrieve companyId and clientId from the sales entry to delete related cache
     const companyId = entry.company.toString();
-    const clientId = entry.client.toString();  // Retrieve clientId from the entry
+    const clientId = entry.client.toString();
 
     // Call the reusable cache deletion function
     await deleteSalesEntryCache(clientId, companyId);
@@ -829,6 +1095,8 @@ exports.updateSalesEntry = async (req, res) => {
   } catch (err) {
     console.error("Error updating sales entry:", err);
     res.status(500).json({ error: err.message });
+  } finally {
+    session.endSession();
   }
 };
 
@@ -865,7 +1133,7 @@ exports.deleteSalesEntry = async (req, res) => {
 
       // Retrieve companyId and clientId from the sales entry to delete related cache
       const companyId = entry.company.toString();
-      const clientId = entry.client.toString();  // Retrieve clientId from the entry
+      const clientId = entry.client.toString(); // Retrieve clientId from the entry
 
       await notifyAdminOnSalesAction({
         req,
@@ -878,9 +1146,7 @@ exports.deleteSalesEntry = async (req, res) => {
       await deleteSalesEntryCache(clientId, companyId);
       // Respond
       res.status(200).json({ message: "Sales entry deleted successfully" });
-
     });
-
   } catch (err) {
     console.error("Error deleting sales entry:", err);
     res.status(500).json({ error: err.message });
@@ -888,7 +1154,3 @@ exports.deleteSalesEntry = async (req, res) => {
     session.endSession();
   }
 };
-
-
-
-
