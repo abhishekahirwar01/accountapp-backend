@@ -18,7 +18,7 @@ exports.createService = async (req, res) => {
 
     // Invalidate cache for services list
     const servicesCacheKey = `services:client:${req.auth.clientId}`;
-    await deleteFromCache(servicesCacheKey);
+    // await deleteFromCache(servicesCacheKey);
 
     res.status(201).json({ message: "Service created", service });
   } catch (err) {
@@ -44,12 +44,12 @@ exports.getServices = async (req, res) => {
     const cacheKey = `services:client:${clientId}:${JSON.stringify({ q, companyId, page, limit })}`;
 
     // Check cache first
-    const cached = await getFromCache(cacheKey);
-    if (cached) {
-      res.set('X-Cache', 'HIT');
-      res.set('X-Cache-Key', cacheKey);
-      return res.json(cached);
-    }
+    // const cached = await getFromCache(cacheKey);
+    // if (cached) {
+    //   res.set('X-Cache', 'HIT');
+    //   res.set('X-Cache-Key', cacheKey);
+    //   return res.json(cached);
+    // }
 
     const where = { createdByClient: clientId };
 
@@ -76,9 +76,9 @@ exports.getServices = async (req, res) => {
     };
 
     // Cache the result
-    await setToCache(cacheKey, result);
-    res.set('X-Cache', 'MISS');
-    res.set('X-Cache-Key', cacheKey);
+    // await setToCache(cacheKey, result);
+    // res.set('X-Cache', 'MISS');
+    // res.set('X-Cache-Key', cacheKey);
 
     return res.json(result);
   } catch (err) {
@@ -107,7 +107,7 @@ exports.updateService = async (req, res) => {
 
     // Invalidate cache for services list
     const servicesCacheKey = `services:client:${req.auth.clientId}`;
-    await deleteFromCache(servicesCacheKey);
+    // await deleteFromCache(servicesCacheKey);
 
     res.json({ message: "Service updated", service });
   } catch (err) {
@@ -134,7 +134,7 @@ exports.deleteService = async (req, res) => {
 
     // Invalidate cache for services list
     const servicesCacheKey = `services:client:${req.auth.clientId}`;
-    await deleteFromCache(servicesCacheKey);
+    // await deleteFromCache(servicesCacheKey);
 
     res.json({ message: "Service deleted successfully" });
   } catch (err) {

@@ -7,6 +7,7 @@ const mongoose = require("mongoose");
 // 👇 NEW
 const Role = require("../models/Role");
 const UserPermission = require("../models/UserPermission");
+const Permission = require("../models/Permission");
 const { CAP_KEYS } = require("../services/effectivePermissions");
 const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
 
