@@ -491,20 +491,20 @@ exports.getUsersByClient = async (req, res) => {
 
 exports.loginUser = async (req, res) => {
   try {
-    const { userId, password, captchaToken } = req.body;
+    const { userId, password } = req.body;
 
-    // Verify reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
-    }
+    // // Verify reCAPTCHA
+    // if (!captchaToken) {
+    //   return res.status(400).json({ message: "reCAPTCHA verification required" });
+    // }
 
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
+    // const recaptchaResponse = await axios.post(
+    //   `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+    // );
 
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
-    }
+    // if (!recaptchaResponse.data.success) {
+    //   return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    // }
 
     const user = await User.findOne({ userId })
       .populate("companies")
