@@ -23,77 +23,25 @@ async function notifyUpdate() {
     features: [
       {
         name: "Enhanced Dashboard",
-        sectionUrl: "/dashboard",
+        sectionUrl: "/admin/dashboard",
         gifUrl: "https://example.com/dashboard-demo.gif",
         description: "Improved analytics and new KPI cards"
       },
       {
-        name: "Advanced Reports",
-        sectionUrl: "/reports",
+        name: "Advanced Reporting",
+        sectionUrl: "/app/reports",
         gifUrl: "https://example.com/reports-demo.gif",
         description: "Generate detailed reports with custom filters"
-      },
-      {
-        name: "Transaction Management",
-        sectionUrl: "/transactions",
-        gifUrl: "https://example.com/transactions-demo.gif",
-        description: "Enhanced transaction tracking and management"
-      },
-      {
-        name: "User Management",
-        sectionUrl: "/users",
-        gifUrl: "https://example.com/users-demo.gif",
-        description: "Improved user administration and permissions"
       }
       // Add more features as needed for each deployment
     ]
   };
-
-  // Health check function
-  async function checkServerHealth() {
-    try {
-      const healthResponse = await axios.get(`${baseURL}/health`, {
-        timeout: 5000
-      });
-      return healthResponse.status === 200;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  // Wait for server to be ready
-  async function waitForServer(maxRetries = 10, delay = 5000) {
-    console.log('⏳ Waiting for server to be ready...');
-
-    for (let i = 1; i <= maxRetries; i++) {
-      console.log(`🔄 Health check attempt ${i}/${maxRetries}...`);
-
-      if (await checkServerHealth()) {
-        console.log('✅ Server is ready!');
-        return true;
-      }
-
-      if (i < maxRetries) {
-        console.log(`⏰ Waiting ${delay/1000} seconds before next attempt...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
-    }
-
-    console.log('❌ Server health check failed after maximum retries');
-    return false;
-  }
 
   try {
     console.log('🚀 Creating update notification...');
     console.log('📊 Version:', version);
     console.log('🌐 API URL:', `${baseURL}/api/update-notifications`);
     console.log('🔑 Using token:', masterToken ? '***provided***' : '***missing***');
-
-    // Wait for server to be ready before making API call
-    const serverReady = await waitForServer();
-    if (!serverReady) {
-      throw new Error('Server is not responding after health checks');
-    }
 
     const response = await axios.post(`${baseURL}/api/update-notifications`, updateData, {
       headers: {

@@ -209,22 +209,6 @@ exports.createPayment = async (req, res) => {
 
     const { vendor, date, amount, description, referenceNumber, company: companyId } = req.body;
 
-    // Debug log to see what we're receiving
-    console.log('Payment request body:', JSON.stringify(req.body, null, 2));
-
-    // Validate required fields
-    if (!vendor || !companyId) {
-      return res.status(400).json({ message: "Vendor and company are required" });
-    }
-
-    // Validate and parse amount
-    const parsedAmount = Number(amount || 0);
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      return res.status(400).json({ message: "Amount must be a valid positive number" });
-    }
-
-    console.log('Creating payment with amount:', parsedAmount); // Debug log
-
     if (!companyAllowedForUser(req, companyId)) {
       return res.status(403).json({ message: "You are not allowed to use this company" });
     }
@@ -240,15 +224,13 @@ exports.createPayment = async (req, res) => {
     const payment = await PaymentEntry.create({
       vendor: vendorDoc._id,
       date,
-      amount: parsedAmount,
+      amount,
       description,
       referenceNumber,
       company: companyDoc._id,
       client: req.auth.clientId,
       createdByUser: req.auth.userId, // optional if your schema has it
     });
-
-    console.log('Payment created with amount:', payment.amount); // Debug log
 
     // Notify admin AFTER creation succeeds
     const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
@@ -258,7 +240,7 @@ exports.createPayment = async (req, res) => {
       vendorName,
       entryId: payment._id,
       companyId: companyDoc?._id?.toString(),
-      amount: parsedAmount,
+      amount,
     });
 
 
@@ -316,17 +298,8 @@ exports.getPayments = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a more predictable cache key
-    const cacheKeyData = {
-      client: clientId,
-      company: companyId || null,
-      dateFrom: where.date?.$gte?.toISOString() || null,
-      dateTo: where.date?.$lte?.toISOString() || null,
-      q: where.$or ? String(req.query.q || '') : null,
-      page: Number(req.query.page) || 1,
-      limit: perPage
-    };
-    const cacheKey = `paymentEntries:${JSON.stringify(cacheKeyData)}`;
+    // Construct a cache key based on the query parameters
+    const cacheKey = `paymentEntries:${JSON.stringify({ clientId, companyId })}`;
 
     // Check if the data is cached in Redis
     const cachedEntries = await getFromCache(cacheKey);
@@ -395,14 +368,8 @@ exports.getPaymentsByClient = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a consistent cache key
-    const cacheKeyData = {
-      clientId: clientId,
-      companyId: companyId || null,
-      page: Number(page) || 1,
-      limit: perPage
-    };
-    const cacheKey = `paymentEntriesByClient:${JSON.stringify(cacheKeyData)}`;
+    // Construct a cache key based on clientId and query parameters
+    const cacheKey = `paymentEntriesByClient:${JSON.stringify({ client: clientId, company: companyId })}`;
 
     // Check if the data is cached in Redis
     const cachedEntries = await getFromCache(cacheKey);
@@ -450,19 +417,7 @@ exports.updatePayment = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const { vendor, company: newCompanyId, amount, ...rest } = req.body;
-
-    // Handle amount - preserve existing if not provided, validate if provided
-    if (amount !== undefined) {
-      const parsedAmount = Number(amount || 0);
-      if (isNaN(parsedAmount) || parsedAmount <= 0) {
-        return res.status(400).json({ message: "Amount must be a valid positive number" });
-      }
-      rest.amount = parsedAmount;
-    } else {
-      // If amount is not provided in update, preserve the existing amount
-      rest.amount = payment.amount;
-    }
+    const { vendor, company: newCompanyId, ...rest } = req.body;
 
     // Company move check
     if (newCompanyId) {
@@ -546,3 +501,4 @@ exports.deletePayment = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+

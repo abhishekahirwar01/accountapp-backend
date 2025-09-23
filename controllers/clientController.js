@@ -6,7 +6,7 @@ const slugifyUsername = require("../utils/slugify");
 const Permission = require("../models/Permission");
 const AccountValidity = require("../models/AccountValidity");
 const { randomInt } = require("crypto");
-const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
+const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");
 
 // Create Client (Only Master Admin)
 // controllers/clientController.js
@@ -40,6 +40,8 @@ exports.createClient = async (req, res) => {
       contactName,
       phone,
       email,
+      maxCompanies = 5,
+      maxUsers = 10,
       canSendInvoiceEmail = false,
       canSendInvoiceWhatsapp = false,
       canCreateCompanies = false,
@@ -89,6 +91,8 @@ exports.createClient = async (req, res) => {
             contactName,
             phone,
             email,
+            maxCompanies,
+            maxUsers,
             canSendInvoiceEmail,
             canSendInvoiceWhatsapp,
             role: "client",
@@ -103,8 +107,8 @@ exports.createClient = async (req, res) => {
         {
           $setOnInsert: {
             client: createdClient._id,
-            maxCompanies: 5,
-            maxUsers: 10,
+            maxCompanies,
+            maxUsers,
             canSendInvoiceEmail,
             canSendInvoiceWhatsapp,
             canCreateCompanies,
@@ -140,8 +144,7 @@ exports.createClient = async (req, res) => {
 
       await session.commitTransaction();
       // CACHE: invalidate the list for this master
-      const clientsCacheKey = `clients:master:${req.user.id}`;
-      await deleteFromCache(clientsCacheKey);
+      invalidateClientsForMaster(req.user.id);
       return res
         .status(201)
         .json({
@@ -163,9 +166,9 @@ exports.createClient = async (req, res) => {
 // Get All Clients (Only Master Admin)
 exports.getClients = async (req, res) => {
   try {
-    const cacheKey = `clients:master:${req.user.id}`;
+    const cacheKey = key.clientsList(req.user.id);
 
-    const cached = await getFromCache(cacheKey);
+    const cached = myCache.get(cacheKey);
     if (cached) {
       // ✅ add these 2 lines
       res.set('X-Cache', 'HIT');
@@ -176,7 +179,7 @@ exports.getClients = async (req, res) => {
 
     const clients = await Client.find({ masterAdmin: req.user.id }).select("-password");
 
-    await setToCache(cacheKey, clients);
+    myCache.set(cacheKey, clients);
 
     // ✅ add these 2 lines
     res.set('X-Cache', 'MISS');
@@ -266,6 +269,8 @@ exports.updateClient = async (req, res) => {
       contactName,
       email,
       phone,
+      maxCompanies,
+      maxUsers,
       canSendInvoiceEmail,
       canSendInvoiceWhatsapp,
     } = req.body;
@@ -289,17 +294,15 @@ exports.updateClient = async (req, res) => {
     }
 
     if (contactName) client.contactName = contactName;
+    if (typeof maxCompanies === "number") client.maxCompanies = maxCompanies;
+    if (typeof maxUsers === "number") client.maxUsers = maxUsers;
     if (typeof canSendInvoiceEmail === "boolean")
       client.canSendInvoiceEmail = canSendInvoiceEmail;
     if (typeof canSendInvoiceWhatsapp === "boolean")
       client.canSendInvoiceWhatsapp = canSendInvoiceWhatsapp;
 
     await client.save();
-    // Invalidate cache for this client and the clients list
-    const clientCacheKey = `clients:master:${req.user.id}`;
-    const singleClientCacheKey = `client:master:${req.user.id}:${client._id}`;
-    await deleteFromCache(clientCacheKey);
-    await deleteFromCache(singleClientCacheKey);
+    invalidateClient(req.user.id, client._id);
     res.status(200).json({ message: "Client updated successfully", client });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -321,10 +324,8 @@ exports.deleteClient = async (req, res) => {
 
     await Client.deleteOne({ _id: id });
     // CACHE: invalidate both this single client + the list
-    const clientsCacheKey = `clients:master:${req.user.id}`;
-    const singleClientCacheKey = `client:master:${req.user.id}:${id}`;
-    await deleteFromCache(clientsCacheKey);
-    await deleteFromCache(singleClientCacheKey);
+    invalidateClient(req.user.id, id);
+
 
     res.status(200).json({ message: "Client deleted successfully" });
   } catch (err) {
@@ -365,10 +366,10 @@ exports.resetPassword = async (req, res) => {
 exports.getClientById = async (req, res) => {
   try {
     const { id } = req.params;
-    const cacheKey = `client:master:${req.user.id}:${id}`;
+    const cacheKey = key.client(req.user.id, id);
 
     // 1) Try cache
-    const cached = await getFromCache(cacheKey);
+    const cached = myCache.get(cacheKey);
     if (cached) {
       return res.status(200).json(cached);
     }
@@ -383,7 +384,7 @@ exports.getClientById = async (req, res) => {
       return res.status(404).json({ message: "Client not found" });
     }
     // 3) Cache it
-    await setToCache(cacheKey, client);
+    myCache.set(cacheKey, client);
     res.status(200).json(client);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -396,18 +397,16 @@ exports.setUserLimit = async (req, res) => {
   const { userLimit } = req.body;
 
   try {
-    const permission = await Permission.findOneAndUpdate(
-      { client: clientId },
-      { maxUsers: userLimit },
+    const client = await Client.findByIdAndUpdate(
+      clientId,
+      { userLimit },
       { new: true }
     );
-    if (!permission) {
-      return res.status(404).json({ message: "Client permissions not found" });
+    if (!client) {
+      return res.status(404).json({ message: "Client not found" });
     }
-    // Invalidate cache for this client
-    const singleClientCacheKey = `client:master:${req.user.id}:${clientId}`;
-    await deleteFromCache(singleClientCacheKey);
-    res.json({ message: "User limit updated", permission });
+    invalidateClient(req.user.id, client._id);
+    res.json({ message: "User limit updated", client });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }

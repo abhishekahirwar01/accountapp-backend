@@ -1,11 +1,17 @@
 // controllers/vendor.controller.js
 const Vendor = require("../models/Vendor");
-const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
 exports.createVendor = async (req, res) => {
   try {
+
+    // permission gate (non-privileged must have explicit capability)
+    if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateVendors) {
+      return res.status(403).json({ message: "Not allowed to create vendors" });
+    }
+
+
     const {
       vendorName,
       contactNumber,
@@ -76,16 +82,6 @@ exports.getVendors = async (req, res) => {
       limit = 100,
     } = req.query;
 
-    // const cacheKey = `vendors:client:${req.auth.clientId}:${JSON.stringify({ q, page, limit })}`;
-
-    // // Check cache first
-    // const cached = await getFromCache(cacheKey);
-    // if (cached) {
-    //   res.set('X-Cache', 'HIT');
-    //   res.set('X-Cache-Key', cacheKey);
-    //   return res.json(cached);
-    // }
-
     const where = { createdByClient: req.auth.clientId };
 
     if (q) {
@@ -105,14 +101,7 @@ exports.getVendors = async (req, res) => {
       Vendor.countDocuments(where),
     ]);
 
-    const result = { vendors, total, page: Number(page), limit: perPage };
-
-    // Cache the result
-    // await setToCache(cacheKey, result);
-    // res.set('X-Cache', 'MISS');
-    // res.set('X-Cache-Key', cacheKey);
-
-    res.json(result);
+    res.json({ vendors, total, page: Number(page), limit: perPage });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
@@ -141,11 +130,6 @@ exports.updateVendor = async (req, res) => {
     if (typeof up.isTDSApplicable === "boolean") doc.isTDSApplicable = up.isTDSApplicable;
 
     await doc.save();
-
-    // // Invalidate cache for vendors list
-    // const vendorsCacheKey = `vendors:client:${req.auth.clientId}`;
-    // await deleteFromCache(vendorsCacheKey);
-
     res.json({ message: "Vendor updated", vendor: doc });
   } catch (err) {
     if (err.code === 11000) {
@@ -173,11 +157,6 @@ exports.deleteVendor = async (req, res) => {
     }
 
     await doc.deleteOne();
-
-    // // Invalidate cache for vendors list
-    // const vendorsCacheKey = `vendors:client:${req.auth.clientId}`;
-    // await deleteFromCache(vendorsCacheKey);
-
     res.json({ message: "Vendor deleted successfully" });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });

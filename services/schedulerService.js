@@ -3,6 +3,7 @@ const cron = require('node-cron');
 const { generateDailyReport, generateMonthlyReport, formatReportToHTML } = require('./reportService');
 const { sendReportEmail } = require('./emailService');
 const Client = require('../models/Client');
+const TIMEZONE = 'Asia/Kolkata';
 
 async function sendDailyReports() {
   try {
@@ -64,12 +65,18 @@ function startSchedulers() {
   cron.schedule('0 21 * * *', async () => {
     console.log('Running daily sales report job...');
     await sendDailyReports();
+  }, {
+    scheduled: true,
+    timezone: TIMEZONE
   });
 
   // Schedule on 30th/31st at 9 PM
   cron.schedule('0 21 30,31 * *', async () => {
     console.log('Running monthly sales report job...');
     await sendMonthlyReports();
+  }, {
+    scheduled: true,
+    timezone: TIMEZONE
   });
 
   console.log('Sales report schedulers started');

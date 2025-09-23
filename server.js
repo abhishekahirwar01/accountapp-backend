@@ -34,7 +34,7 @@ const updateNotificationRoutes = require("./routes/updateNotificationRoutes");
 
 
 const whatsappRoutes = require("./routes/whatsappRoutes")
-const unitRoutes = require("./routes/unitRoutes");
+
 
 const templateRouter = require('./routes/templateRoutes');
 const reportRoutes = require('./routes/reportRoutes')
@@ -51,8 +51,7 @@ connectDB();
 const allowedOrigins = [
   'https://accountapp-theta.vercel.app',
   'http://localhost:3000',
-  'http://localhost:8678',
-  'https://accountapp-theta.vercel.app' // Add production frontend URL if different
+  'http://localhost:8678'
 ];
 
 
@@ -128,8 +127,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/update-notifications", updateNotificationRoutes);
 
 
-app.use("/api/whatsapp", whatsappRoutes);
-app.use("/api/units", unitRoutes);
+app.use("/", whatsappRoutes);
 
 app.use('/api', templateRouter);
 

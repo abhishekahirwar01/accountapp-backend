@@ -3,7 +3,6 @@ const productSchema = new mongoose.Schema(
   {
     name: { type: String, required: true,  trim: true },
     stocks: { type: Number, default: 0, min: 0 },
-    unit: { type: String, default: "Piece", trim: true },
     createdByClient: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
     createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   },

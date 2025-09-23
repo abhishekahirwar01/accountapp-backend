@@ -7,9 +7,7 @@ const mongoose = require("mongoose");
 // 👇 NEW
 const Role = require("../models/Role");
 const UserPermission = require("../models/UserPermission");
-const Permission = require("../models/Permission");
 const { CAP_KEYS } = require("../services/effectivePermissions");
-const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
 
 
 async function getActorRoleDoc(req) {
@@ -180,10 +178,6 @@ exports.createUser = async (req, res) => {
       { upsert: true, new: true }
     );
 
-    // Invalidate cache for users list
-    const usersCacheKey = `users:client:${clientId}`;
-    await deleteFromCache(usersCacheKey);
-
     return res
       .status(201)
       .json({ message: "User created", user: newUser, userPermission });
@@ -202,27 +196,12 @@ exports.getUsers = async (req, res) => {
     const actorRoleName = String(req.user.role || "").toLowerCase();
     const clientId = req.user.createdByClient || req.user.id;
 
-    const cacheKey = `users:client:${clientId}`;
-
-    // Check cache first
-    const cached = await getFromCache(cacheKey);
-    if (cached) {
-      res.set('X-Cache', 'HIT');
-      res.set('X-Cache-Key', cacheKey);
-      return res.status(200).json(cached);
-    }
-
     const query =
       actorRoleName === "admin" || actorRoleName === "master"
         ? { createdByClient: clientId } // or {} if you want admin to see all tenants
         : { createdByClient: clientId };
 
     const users = await User.find(query).populate("companies").populate("role");
-
-    // Cache the result
-    await setToCache(cacheKey, users);
-    res.set('X-Cache', 'MISS');
-    res.set('X-Cache-Key', cacheKey);
 
     res.status(200).json(users);
   } catch (err) {
@@ -356,11 +335,6 @@ exports.updateUser = async (req, res) => {
     }
 
     await doc.save();
-
-    // Invalidate cache for users list
-    const usersCacheKey = `users:client:${clientId}`;
-    await deleteFromCache(usersCacheKey);
-
     return res.status(200).json({ message: "User updated", user: doc });
   } catch (err) {
     console.error("updateUser error:", err);
@@ -387,11 +361,6 @@ exports.deleteUser = async (req, res) => {
     }
 
     await doc.deleteOne();
-
-    // Invalidate cache for users list
-    const usersCacheKey = `users:client:${clientId}`;
-    await deleteFromCache(usersCacheKey);
-
     res.status(200).json({ message: "User deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -400,10 +369,55 @@ exports.deleteUser = async (req, res) => {
 
 
 
+// exports.resetPassword = async (req, res) => {
+//   try {
+//     const { userId } = req.params; // URL param: /api/users/:userId/reset-password
+//     const { oldPassword, newPassword } = req.body;
+
+//     if (!newPassword || newPassword.length < 6) {
+//       return res.status(400).json({ message: "New password is too short." });
+//     }
+
+//     const doc = await User.findById(userId);
+//     if (!doc) return res.status(404).json({ message: "User not found." });
+
+//     const actorRole = normalizeRoleName(req.user.role);
+//     const isPrivileged = actorRole === "admin" || actorRole === "master";
+//     const isSelf = String(req.user.id) === String(doc._id);
+
+//     const clientId = req.user.createdByClient || req.user.id;
+//     const isSameTenant = String(doc.createdByClient) === String(clientId);
+
+//     // permission to reset
+//     if (!isSelf && !(isPrivileged && isSameTenant)) {
+//       return res.status(403).json({ message: "Not authorized to reset this user's password" });
+//     }
+
+//     // if not privileged, must verify old password
+//     if (!isPrivileged) {
+//       if (!oldPassword) {
+//         return res.status(400).json({ message: "Current password is required." });
+//       }
+//       const ok = await bcrypt.compare(oldPassword, doc.password);
+//       if (!ok) return res.status(401).json({ message: "Current password is incorrect." });
+//     }
+
+//     const salt = await bcrypt.genSalt(10);
+//     doc.password = await bcrypt.hash(newPassword, salt);
+//     doc.passwordChangedAt = new Date();       // add this field to your User schema if you want token invalidation
+//     await doc.save();
+
+//     return res.json({ message: "Password reset successfully." });
+//   } catch (error) {
+//     console.error("resetPassword error:", error);
+//     return res.status(500).json({ message: "Server error." });
+//   }
+// };
+
 exports.resetPassword = async (req, res) => {
   try {
     const { userId } = req.params; // URL param: /api/users/:userId/reset-password
-    const { oldPassword, newPassword } = req.body;
+    const { newPassword } = req.body; //user password works 
 
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({ message: "New password is too short." });
@@ -412,38 +426,33 @@ exports.resetPassword = async (req, res) => {
     const doc = await User.findById(userId);
     if (!doc) return res.status(404).json({ message: "User not found." });
 
-    const actorRole = normalizeRoleName(req.user.role);
+    const actorRole = normalizeRoleName(req.user.role); // 'admin', 'client', 'user', etc.
     const isPrivileged = actorRole === "admin" || actorRole === "master";
-    const isSelf = String(req.user.id) === String(doc._id);
 
+    const actorId = req.user.id;
     const clientId = req.user.createdByClient || req.user.id;
+
+    const isSelf = String(actorId) === String(doc._id);
     const isSameTenant = String(doc.createdByClient) === String(clientId);
 
-    // permission to reset
-    if (!isSelf && !(isPrivileged && isSameTenant)) {
+    // 🛡️ Permission Check: Only self, same-tenant, or privileged users can reset
+    if (!isSelf && !isSameTenant && !isPrivileged) {
       return res.status(403).json({ message: "Not authorized to reset this user's password" });
-    }
-
-    // if not privileged, must verify old password
-    if (!isPrivileged) {
-      if (!oldPassword) {
-        return res.status(400).json({ message: "Current password is required." });
-      }
-      const ok = await bcrypt.compare(oldPassword, doc.password);
-      if (!ok) return res.status(401).json({ message: "Current password is incorrect." });
     }
 
     const salt = await bcrypt.genSalt(10);
     doc.password = await bcrypt.hash(newPassword, salt);
-    doc.passwordChangedAt = new Date();       // add this field to your User schema if you want token invalidation
+    doc.passwordChangedAt = new Date(); // Optional: helps with token invalidation
     await doc.save();
 
     return res.json({ message: "Password reset successfully." });
+
   } catch (error) {
     console.error("resetPassword error:", error);
     return res.status(500).json({ message: "Server error." });
   }
 };
+
 
 
 
@@ -464,25 +473,10 @@ exports.getUsersByClient = async (req, res) => {
     const clientExists = await Client.exists({ _id: clientId });
     if (!clientExists) return res.status(404).json({ message: "Client not found" });
 
-    const cacheKey = `users:client:${clientId}`;
-
-    // Check cache first
-    const cached = await getFromCache(cacheKey);
-    if (cached) {
-      res.set('X-Cache', 'HIT');
-      res.set('X-Cache-Key', cacheKey);
-      return res.status(200).json(cached);
-    }
-
     const users = await User.find({ createdByClient: clientId })
       .populate({ path: "companies", select: "_id businessName" })
       .populate("role")
       .lean();
-
-    // Cache the result
-    await setToCache(cacheKey, users);
-    res.set('X-Cache', 'MISS');
-    res.set('X-Cache-Key', cacheKey);
 
     return res.status(200).json(users);
   } catch (err) {

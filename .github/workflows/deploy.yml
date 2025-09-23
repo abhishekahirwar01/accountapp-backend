@@ -47,11 +47,7 @@ jobs:
             # Wait for server to be ready
             sleep 10
 
-            # Clean up existing update notifications
-            echo "🧹 Cleaning up existing update notifications..."
-            node scripts/cleanupTestNotifications.js || echo "⚠️ Cleanup failed, but deployment continues"
-
             # Create update notification for new deployment
-            echo "🚀 Creating test update notification..."
-            node scripts/createTestUpdateNotification.js "${{ secrets.MASTER_TOKEN }}" "https://accountbackend.sharda.co.in" "$(date +%Y.%m.%d-%H%M)" || echo "⚠️  Notification creation failed, but deployment continues"
+            echo "🚀 Creating deployment notification..."
+            node deploy-notification.js "${{ secrets.MASTER_TOKEN }}" "https://accountbackend.sharda.co.in" "$(date +%Y.%m.%d-%H%M)" || echo "⚠️  Notification creation failed, but deployment continues"
           EOF

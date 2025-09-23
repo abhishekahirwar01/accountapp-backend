@@ -233,12 +233,7 @@ exports.createJournal = async (req, res) => {
       return res.status(403).json({ message: "You are not allowed to use this company" });
     }
 
-    // For master admin, allow any company; for others, restrict to their client
-    const companyQuery = req.auth.role === "master"
-      ? { _id: companyId }
-      : { _id: companyId, client: req.auth.clientId };
-
-    const companyDoc = await Company.findOne(companyQuery);
+    const companyDoc = await Company.findOne({ _id: companyId, client: req.auth.clientId });
     if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
 
     const journal = await JournalEntry.create({
@@ -298,9 +293,8 @@ exports.getJournals = async (req, res) => {
     const perPage = Math.min(parseInt(limitRaw, 10) || 100, 500);
     const skip = (page - 1) * perPage;
 
-    // For master admin, don't filter by client to allow viewing all clients' data
     const where = {
-      ...(req.auth.role !== "master" ? { client: req.auth.clientId } : {}),
+      client: req.auth.clientId,
       ...companyFilterForUser(req, companyId),
     };
 
@@ -319,30 +313,21 @@ exports.getJournals = async (req, res) => {
       ];
     }
 
-    // ✅ Create a more comprehensive and predictable cache key
-    const cacheKeyData = {
-      client: req.auth.role === "master" ? "all" : req.auth.clientId, // Master admin sees all clients
-      company: companyId || null,
-      dateFrom: dateFrom || null,
-      dateTo: dateTo || null,
-      q: q || null,
-      page: page,
-      limit: perPage
-    };
-    const cacheKey = `journalEntries:${JSON.stringify(cacheKeyData)}`;
+    // ✅ Standardize key fields (use "client" not "clientId") and include all filters
+    const cacheKey = `journalEntries:${JSON.stringify({
+      clientId: req.auth.clientId,
+      companyId: companyId || null
+    })}`;
 
     // Try cache
     const cached = await getFromCache(cacheKey);
     if (cached) {
-      // Handle both old and new cache formats for backward compatibility
-      const data = cached.data || cached;
-      const total = cached.total || (Array.isArray(data) ? data.length : 0);
       return res.status(200).json({
         success: true,
-        total,
+        total: cached.total,
         page,
         limit: perPage,
-        data,
+        data: cached.data,
       });
     }
 
@@ -383,8 +368,7 @@ exports.updateJournal = async (req, res) => {
     const journal = await JournalEntry.findById(req.params.id);
     if (!journal) return res.status(404).json({ message: "Journal not found" });
 
-    // Master admin can update any journal entry; others can only update their client's entries
-    if (req.auth.role !== "master" && !userIsPriv(req) && !sameTenant(journal.client, req.auth.clientId)) {
+    if (!userIsPriv(req) && !sameTenant(journal.client, req.auth.clientId)) {
       return res.status(403).json({ message: "Not authorized" });
     }
 
@@ -495,34 +479,23 @@ exports.getJournalsByClient = async (req, res) => {
 
 
     // Construct the query to filter journals by client
-    // For master admin viewing specific client data, always filter by the requested clientId
     const where = { client: clientId };
     if (companyId) where.company = companyId;
 
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a consistent cache key
-    const cacheKeyData = {
-      clientId: clientId,
-      companyId: companyId || null,
-      page: Number(page) || 1,
-      limit: perPage
-    };
-    const cacheKey = `journalEntriesByClient:${JSON.stringify(cacheKeyData)}`;
+    // Construct a cache key based on clientId and query parameters
+    const cacheKey = `journalEntriesByClient:${JSON.stringify({ clientId, companyId })}`;
 
     // Check if the data is cached in Redis
-    const cachedData = await getFromCache(cacheKey);
-    if (cachedData) {
-      // If cached, return the data directly (handle both old and new cache formats)
-      const data = cachedData.data || cachedData;
-      const total = cachedData.total || (Array.isArray(data) ? data.length : 0);
+    const cachedEntries = await getFromCache(cacheKey);
+    if (cachedEntries) {
+      // If cached, return the data directly
       return res.status(200).json({
         success: true,
-        total,
-        page: Number(page),
-        limit: perPage,
-        data,
+        count: cachedEntries.length,
+        data: cachedEntries,
       });
     }
 
@@ -537,8 +510,8 @@ exports.getJournalsByClient = async (req, res) => {
       JournalEntry.countDocuments(where),  // Get the total count of journal entries
     ]);
 
-    // Cache the fetched data for future use (consistent with getJournals)
-    await setToCache(cacheKey, { data, total });
+    // Cache the fetched data for future use
+    await setToCache(cacheKey, data);
 
     // Respond with the data, including pagination information
     res.status(200).json({
@@ -553,3 +526,4 @@ exports.getJournalsByClient = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
