@@ -5,10 +5,11 @@ const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
 exports.createUnit = async (req, res) => {
   try {
     const { name } = req.body;
+    const normalizedName = name.trim().toLowerCase();
 
     // ✅ ALWAYS use tenant from token and also track the actor
     const unit = await Unit.create({
-      name,
+      name: normalizedName,
       createdByClient: req.auth.clientId, // tenant id
       createdByUser: req.auth.userId,   // who created it
     });
