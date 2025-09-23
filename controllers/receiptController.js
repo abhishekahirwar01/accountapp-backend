@@ -501,7 +501,6 @@ exports.createReceipt = async (req, res) => {
         { new: true }
       );
 
-
       if (!updatedParty) {
         return res.status(400).json({ message: "Failed to update party balance" });
       }
@@ -534,13 +533,6 @@ exports.createReceipt = async (req, res) => {
       message = "Receipt created. Customer balance is now zero.";
     }
 
-
-    // Invalidate cache before response
-    const clientId = receipt.client.toString();
-    const companyIdFromReceipt = receipt.company.toString();
-    await deleteReceiptEntryCache(clientId, companyIdFromReceipt);
-
-
     return res.status(201).json({
       message,
       receipt,
@@ -559,14 +551,14 @@ exports.createReceipt = async (req, res) => {
 /** LIST (tenant filtered, supports company filter, q, date range, pagination) */
 exports.getReceipts = async (req, res) => {
   try {
-    await ensureAuthCaps(req);
     const filter = {}; // Initialize filter object
 
+    // Ensure the user is authorized
+    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+
     // Set the client filter based on the authenticated user
-    if (req.auth.role === "client") {
-      filter.client = req.auth.clientId;
-    } else {
-      filter.client = req.auth.clientId; // For staff users, still filter by their client
+    if (req.user.role === "client") {
+      filter.client = req.user.id;
     }
 
     // Add company filter if provided
@@ -592,17 +584,8 @@ exports.getReceipts = async (req, res) => {
     const perPage = Math.min(Number(req.query.limit) || 100, 500);
     const skip = (Number(req.query.page) - 1) * perPage;
 
-    // Construct a more predictable cache key
-    const cacheKeyData = {
-      client: filter.client,
-      company: filter.company || null,
-      dateFrom: filter.date?.$gte?.toISOString() || null,
-      dateTo: filter.date?.$lte?.toISOString() || null,
-      q: filter.$or ? String(req.query.q || '') : null,
-      page: Number(req.query.page) || 1,
-      limit: perPage
-    };
-    const cacheKey = `receiptEntries:${JSON.stringify(cacheKeyData)}`;
+    // Construct a cache key based on the filter
+    const cacheKey = `receiptEntries:${JSON.stringify(filter)}`;
 
     // Check if the data is cached in Redis
     const cachedEntries = await getFromCache(cacheKey);
@@ -896,14 +879,8 @@ exports.getReceiptsByClient = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a consistent cache key
-    const cacheKeyData = {
-      clientId: clientId,
-      companyId: companyId || null,
-      page: Number(page) || 1,
-      limit: perPage
-    };
-    const cacheKey = `receiptEntriesByClient:${JSON.stringify(cacheKeyData)}`;
+    // Construct a cache key based on the filter
+    const cacheKey = `receiptEntriesByClient:${JSON.stringify({ clientId, companyId })}`;
 
     // Check if the data is cached in Redis
     const cachedEntries = await getFromCache(cacheKey);

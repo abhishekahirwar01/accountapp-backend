@@ -1,45 +1,17 @@
 const Product = require("../models/Product");
-const Unit = require("../models/Unit");
-const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
-
-const ensureUnitExists = async (unitName, clientId, userId) => {
-  const standardUnits = ["Piece", "Kg", "Litre", "Box", "Meter", "Dozen", "Pack"];
-  if (standardUnits.includes(unitName)) return;
-
-  try {
-    await Unit.findOneAndUpdate(
-      { name: unitName, createdByClient: clientId },
-      { name: unitName, createdByClient: clientId, createdByUser: userId },
-      { upsert: true, new: true }
-    );
-    // Invalidate units cache
-    const unitsCacheKey = `units:client:${clientId}`;
-    await deleteFromCache(unitsCacheKey);
-  } catch (err) {
-    console.error("Error ensuring unit exists:", err);
-  }
-};
 
 // POST /api/products
 exports.createProduct = async (req, res) => {
   try {
-    const { name, stocks, unit } = req.body;
+    const { name, stocks } = req.body;
 
     // ✅ ALWAYS use tenant from token and also track the actor
     const product = await Product.create({
       name,
       stocks,
-      unit,
       createdByClient: req.auth.clientId, // tenant id
       createdByUser:   req.auth.userId,   // who created it
     });
-
-    // Ensure custom unit is saved
-    await ensureUnitExists(unit, req.auth.clientId, req.auth.userId);
-
-    // Invalidate cache for products list
-    const productsCacheKey = `products:client:${req.auth.clientId}`;
-    // await deleteFromCache(productsCacheKey);
 
     return res.status(201).json({ message: "Product created", product });
   } catch (err) {
@@ -56,24 +28,10 @@ exports.getProducts = async (req, res) => {
   try {
     // ✅ scope by tenant
     const clientId = req.auth.clientId;
-    const cacheKey = `products:client:${clientId}`;
-
-    // Check cache first
-    // const cached = await getFromCache(cacheKey);
-    // if (cached) {
-    //   res.set('X-Cache', 'HIT');
-    //   res.set('X-Cache-Key', cacheKey);
-    //   return res.json(cached);
-    // }
 
     const products = await Product.find({ createdByClient: clientId })
       .sort({ createdAt: -1 })
       .lean();
-
-    // Cache the result
-    // await setToCache(cacheKey, products);
-    // res.set('X-Cache', 'MISS');
-    // res.set('X-Cache-Key', cacheKey);
 
     return res.json(products);
   } catch (err) {
@@ -85,7 +43,7 @@ exports.getProducts = async (req, res) => {
 exports.updateProducts = async (req, res) => {
   try {
     const productId = req.params.id;
-    const { name, stocks, unit } = req.body;
+    const { name, stocks } = req.body;
 
     const product = await Product.findById(productId);
     if (!product) return res.status(404).json({ message: "Product not found" });
@@ -99,17 +57,8 @@ exports.updateProducts = async (req, res) => {
 
     if (name) product.name = name;
     if (typeof stocks === "number" && stocks >= 0) product.stocks = stocks;
-    if (unit) product.unit = unit;
 
     await product.save();
-
-    // Ensure custom unit is saved
-    if (unit) await ensureUnitExists(unit, req.auth.clientId, req.auth.userId);
-
-    // Invalidate cache for products list
-    const productsCacheKey = `products:client:${req.auth.clientId}`;
-    // await deleteFromCache(productsCacheKey);
-
     return res.status(200).json({ message: "Product updated", product });
   } catch (err) {
     if (err.code === 11000) {
@@ -135,11 +84,6 @@ exports.deleteProducts = async (req, res) => {
     }
 
     await product.deleteOne();
-
-    // Invalidate cache for products list
-    const productsCacheKey = `products:client:${req.auth.clientId}`;
-    // await deleteFromCache(productsCacheKey);
-
     return res.status(200).json({ message: "Product deleted successfully" });
   } catch (err) {
     return res.status(500).json({ message: "Server error", error: err.message });
@@ -199,10 +143,6 @@ exports.updateStockBulk = async (req, res) => {
       updateOne: { filter: { _id: p._id }, update: { $set: { stocks: p.stocks } } },
     }));
     await Product.bulkWrite(ops, { ordered: true });
-
-    // Invalidate cache for products list
-    const productsCacheKey = `products:client:${req.auth.clientId}`;
-    // await deleteFromCache(productsCacheKey);
 
     return res.json({
       message: "Stock updated",

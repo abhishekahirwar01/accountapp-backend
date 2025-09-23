@@ -112,6 +112,7 @@ exports.markAllNotificationsAsRead = async (req, res) => {
 
 
 // Fetch notifications for a specific client, only accessible by master-admin
+// Fetch notifications for a specific client, only accessible by master-admin
 exports.getClientNotificationsByMaster = async (req, res) => {
   try {
     // Use req.user from middleware

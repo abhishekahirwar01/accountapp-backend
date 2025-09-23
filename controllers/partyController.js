@@ -3,13 +3,13 @@ const Party = require("../models/Party");
 const Customer = require("../models/Client")
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
-const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
+const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
 
 exports.createParty = async (req, res) => {
   try {
-    // if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateCustomers) {
-    //   return res.status(403).json({ message: "Not allowed to create customers" });
-    // }
+    if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateCustomers) {
+      return res.status(403).json({ message: "Not allowed to create customers" });
+    }
 
     const {
       name,
@@ -39,10 +39,6 @@ exports.createParty = async (req, res) => {
       createdByUser: req.auth.userId,       // optional
     });
 
-    // Invalidate cache for parties list
-    // const partiesCacheKey = `parties:client:${req.auth.clientId}`;
-    // await deleteFromCache(partiesCacheKey);
-
     res.status(201).json({ message: "Party created", party });
   } catch (err) {
     if (err.code === 11000) {
@@ -60,16 +56,6 @@ exports.getParties = async (req, res) => {
       limit = 100,
     } = req.query;
 
-    const cacheKey = `parties:client:${req.auth.clientId}:${JSON.stringify({ q, page, limit })}`;
-
-    // 1) Check cache first
-    // const cached = await getFromCache(cacheKey);
-    // if (cached) {
-    //   res.set('X-Cache', 'HIT');
-    //   res.set('X-Cache-Key', cacheKey);
-    //   return res.json(cached);
-    // }
-
     const where = { createdByClient: req.auth.clientId };
 
     if (q) {
@@ -80,7 +66,7 @@ exports.getParties = async (req, res) => {
       ];
     }
 
-    // 2) If cache miss, fetch from DB
+      // 2) If cache miss, fetch from DB
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
@@ -89,14 +75,8 @@ exports.getParties = async (req, res) => {
       Party.countDocuments(where),
     ]);
 
-    const result = { parties, total, page: Number(page), limit: perPage };
 
-    // // 3) Cache the result
-    // await setToCache(cacheKey, result);
-    // res.set('X-Cache', 'MISS');
-    // res.set('X-Cache-Key', cacheKey);
-
-    res.json(result);
+    res.json({ parties, total, page: Number(page), limit: perPage });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
@@ -155,10 +135,6 @@ exports.updateParty = async (req, res) => {
     Object.assign(doc, req.body);
     await doc.save();
 
-    // Invalidate cache for parties list
-    // const partiesCacheKey = `parties:client:${req.auth.clientId}`;
-    // await deleteFromCache(partiesCacheKey);
-
     res.json({ message: "Party updated", party: doc });
   } catch (err) {
     if (err.code === 11000) {
@@ -179,10 +155,6 @@ exports.deleteParty = async (req, res) => {
     }
 
     await doc.deleteOne();
-
-    // // Invalidate cache for parties list
-    // const partiesCacheKey = `parties:client:${req.auth.clientId}`;
-    // await deleteFromCache(partiesCacheKey);
 
     res.json({ message: "Party deleted successfully" });
   } catch (err) {

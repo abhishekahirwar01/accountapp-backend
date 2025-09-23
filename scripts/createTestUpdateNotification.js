@@ -1,25 +1,12 @@
-// Script to create a test update notification for master admins (they can then propagate to clients)
-// Run with: node scripts/createTestUpdateNotification.js [master_token] [base_url] [version]
+// Script to create a test update notification
+// Run with: node scripts/createTestUpdateNotification.js
 
 const mongoose = require('mongoose');
 const UpdateNotification = require('../models/UpdateNotification');
 const MasterAdmin = require('../models/MasterAdmin');
-const Client = require('../models/Client');
-const User = require('../models/User');
-const Notification = require('../models/Notification');
 require('dotenv').config();
 
 async function createTestNotification() {
-  // Accept command line arguments with fallbacks to environment variables
-  const masterToken = process.argv[2] || process.env.MASTER_TOKEN;
-  const baseURL = process.argv[3] || process.env.BASE_URL || 'http://localhost:8745';
-  const version = process.argv[4] || process.env.VERSION || require('../package.json').version || '2.1.0';
-
-  console.log('🚀 Creating test update notification...');
-  console.log('📊 Version:', version);
-  console.log('🌐 Base URL:', baseURL);
-  console.log('🔑 Using token:', masterToken ? '***provided***' : '***missing***');
-
   try {
     // Connect to MongoDB
     await mongoose.connect(process.env.MONGO_URI);
@@ -43,60 +30,42 @@ async function createTestNotification() {
     }
 
     // Create test update notification
-    // Create test update notification
     const testNotification = {
-      title: "📱 Mobile Experience Enhanced",
-      description: "We've optimized your dashboard for mobile devices. Enjoy better performance on the go!",
-      version: version,
+      title: "New Dashboard Features Available",
+      description: "We've enhanced the dashboard with new analytics and improved navigation",
+      version: "v2.0.0",
       features: [
         {
-          name: "Mobile-Responsive Design",
-          sectionUrl: "/dashboard",
-          gifUrl: `${baseURL}/api/placeholder/300/150?text=Mobile+View`,
-          description: `
-• Responsive dashboard layout for all screen sizes
-• Touch-friendly buttons and navigation
-• Faster loading on mobile networks
-• Improved mobile form interactions
-      `.trim()
+          name: "Advanced Analytics",
+          sectionUrl: "/admin/dashboard",
+          gifUrl: "https://example.com/analytics-demo.gif",
+          description: "View detailed analytics with new charts and metrics"
+        },
+        {
+          name: "Quick Actions",
+          sectionUrl: "/admin/dashboard",
+          gifUrl: "https://example.com/quick-actions-demo.gif",
+          description: "Access common actions directly from the dashboard"
         }
-      ],
-      additionalInfo: {
-        releaseDate: new Date().toISOString(),
-        updateType: "enhancement",
-        priority: "medium",
-        compatibleDevices: ["mobile", "tablet"]
-      }
+      ]
     };
 
-    // Create UpdateNotification for each master admin
-    const createdNotifications = [];
+    // Create notification for each master admin
     for (const admin of masterAdmins) {
       const notification = new UpdateNotification({
         ...testNotification,
         recipient: admin._id
       });
       await notification.save();
-      createdNotifications.push(notification);
-      console.log(`Created UpdateNotification for master admin: ${admin.userName}`);
+      console.log(`Created notification for master admin: ${admin.userName}`);
     }
 
-    console.log(`✅ Created ${createdNotifications.length} UpdateNotification records for master admins.`);
-    console.log('📢 Master admins can now propagate these to clients using the API endpoint:');
-    console.log('   POST /api/update-notifications/propagate/:notificationId');
-
-    console.log(`🎉 Test update notifications created for ${createdNotifications.length} master admins successfully!`);
-    console.log('💡 Use the master admin interface to propagate these notifications to clients when ready.');
-
-    // Small delay to ensure database operations are fully committed
-    await new Promise(resolve => setTimeout(resolve, 1000));
-
+    console.log('Test update notification created successfully!');
   } catch (error) {
-    console.error('❌ Error creating test notification:', error);
-    process.exit(1); // Exit with error code for CI/CD
+    console.error('Error creating test notification:', error);
   } finally {
     await mongoose.disconnect();
-    console.log('🔌 Disconnected from MongoDB');
+    console.log('Disconnected from MongoDB');
   }
 }
 

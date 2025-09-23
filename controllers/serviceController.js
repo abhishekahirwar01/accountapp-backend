@@ -1,6 +1,5 @@
 const Service = require("../models/Service");
 const { resolveClientId } = require("./common/tenant");
-const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
 
 // Create
 exports.createService = async (req, res) => {
@@ -15,11 +14,6 @@ exports.createService = async (req, res) => {
     });
 
     await service.save();
-
-    // Invalidate cache for services list
-    const servicesCacheKey = `services:client:${req.auth.clientId}`;
-    // await deleteFromCache(servicesCacheKey);
-
     res.status(201).json({ message: "Service created", service });
   } catch (err) {
     if (err.code === 11000) {
@@ -41,16 +35,6 @@ exports.getServices = async (req, res) => {
       limit = 100,
     } = req.query;
 
-    const cacheKey = `services:client:${clientId}:${JSON.stringify({ q, companyId, page, limit })}`;
-
-    // Check cache first
-    // const cached = await getFromCache(cacheKey);
-    // if (cached) {
-    //   res.set('X-Cache', 'HIT');
-    //   res.set('X-Cache-Key', cacheKey);
-    //   return res.json(cached);
-    // }
-
     const where = { createdByClient: clientId };
 
     if (q) {
@@ -68,19 +52,12 @@ exports.getServices = async (req, res) => {
       Service.countDocuments(where),
     ]);
 
-    const result = {
+    return res.json({
       services: items,
       total,
       page: Number(page),
       limit: perPage,
-    };
-
-    // Cache the result
-    // await setToCache(cacheKey, result);
-    // res.set('X-Cache', 'MISS');
-    // res.set('X-Cache-Key', cacheKey);
-
-    return res.json(result);
+    });
   } catch (err) {
     return res.status(500).json({ message: "Server error", error: err.message });
   }
@@ -104,11 +81,6 @@ exports.updateService = async (req, res) => {
     if (typeof description === "string") service.description = description;
 
     await service.save();
-
-    // Invalidate cache for services list
-    const servicesCacheKey = `services:client:${req.auth.clientId}`;
-    // await deleteFromCache(servicesCacheKey);
-
     res.json({ message: "Service updated", service });
   } catch (err) {
     if (err.code === 11000) {
@@ -131,11 +103,6 @@ exports.deleteService = async (req, res) => {
     }
 
     await service.deleteOne();
-
-    // Invalidate cache for services list
-    const servicesCacheKey = `services:client:${req.auth.clientId}`;
-    // await deleteFromCache(servicesCacheKey);
-
     res.json({ message: "Service deleted successfully" });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });

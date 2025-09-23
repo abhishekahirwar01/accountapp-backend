@@ -16,7 +16,8 @@ exports.registerMasterAdmin = async (req, res) => {
 
     const newAdmin = new MasterAdmin({
       username,
-      password: hashedPassword
+      password: hashedPassword,
+      role: "master"  // optional, since schema sets default
     });
 
     await newAdmin.save();
@@ -25,6 +26,7 @@ exports.registerMasterAdmin = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // Login
 exports.loginMasterAdmin = async (req, res) => {
@@ -73,5 +75,25 @@ exports.loginMasterAdmin = async (req, res) => {
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ error: "Internal server error" });
+  }
+};
+
+
+exports.getMasterAdminProfile = async (req, res) => {
+  try {
+    const adminId = req.user.id;
+    const admin = await MasterAdmin.findById(adminId).select("-password");
+
+    if (!admin) {
+      return res.status(404).json({ message: "Admin not found" });
+    }
+
+    res.status(200).json({
+      message: "Profile fetched successfully",
+      admin,
+    });
+  } catch (error) {
+    console.error("Get profile error:", error);
+    res.status(500).json({ message: "Internal server error" });
   }
 };

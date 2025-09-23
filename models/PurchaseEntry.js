@@ -1,10 +1,12 @@
 const mongoose = require("mongoose");
 
+const UNIT_TYPES = ["Kg", "Litre", "Piece", "Box", "Meter", "Dozen", "Pack", "Other"];
+
 const purchaseItemSchema = new mongoose.Schema({
   product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
   quantity: { type: Number, required: true, min: 1 },
   pricePerUnit: { type: Number, required: true, min: 0 },
-  unitType: { type: String, default: "Piece" },
+  unitType: { type: String, enum: UNIT_TYPES, default: "Piece" },
   otherUnit : {type: String},
   amount: { type: Number, required: true, min: 0 },
    // New fields to store GST-related information
@@ -14,7 +16,7 @@ const purchaseItemSchema = new mongoose.Schema({
 }, { _id: false });
 
 const purchaseServiceSchema = new mongoose.Schema({
-  service: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
+  serviceName: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
   amount: { type: Number, required: true, min: 1 },
   description: { type: String },
     // New fields to store GST-related information for services
