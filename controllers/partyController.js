@@ -7,9 +7,11 @@ const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("
 
 exports.createParty = async (req, res) => {
   try {
+
     if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateCustomers) {
       return res.status(403).json({ message: "Not allowed to create customers" });
     }
+
 
     const {
       name,
@@ -24,6 +26,24 @@ exports.createParty = async (req, res) => {
       email,
     } = req.body;
 
+    // Check for existing party with same contact number or email BEFORE creation
+    const existingParty = await Party.findOne({
+      createdByClient: req.auth.clientId,
+      $or: [
+        { contactNumber: contactNumber },
+        { email: email?.toLowerCase() }
+      ]
+    });
+
+    if (existingParty) {
+      if (existingParty.contactNumber === contactNumber) {
+        return res.status(400).json({ message: "Contact number already exists for this client" });
+      }
+      if (existingParty.email === email?.toLowerCase()) {
+        return res.status(400).json({ message: "Email already exists for this client" });
+      }
+    }
+
     const party = await Party.create({
       name,
       address,
@@ -34,15 +54,29 @@ exports.createParty = async (req, res) => {
       pan,
       isTDSApplicable,
       contactNumber,
-      email,
-      createdByClient: req.auth.clientId,   // ✅ tenant
-      createdByUser: req.auth.userId,       // optional
+      email: email?.toLowerCase(),
+      createdByClient: req.auth.clientId,
+      createdByUser: req.auth.userId,
     });
 
     res.status(201).json({ message: "Party created", party });
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(400).json({ message: "Party already exists for this client" });
+      // Better error message extraction
+      const keyPattern = err.keyPattern;
+      let message = "Duplicate field error";
+      
+      if (keyPattern.contactNumber && keyPattern.createdByClient) {
+        message = "Contact number already exists for this client";
+      } else if (keyPattern.email && keyPattern.createdByClient) {
+        message = "Email already exists for this client";
+      } else {
+        // Log the actual duplicate field for debugging
+        console.log("Duplicate key error details:", err.keyValue);
+        message = `Duplicate field: ${Object.keys(err.keyValue)[0]}`;
+      }
+      
+      return res.status(400).json({ message });
     }
     res.status(500).json({ message: "Server error", error: err.message });
   }
@@ -138,7 +172,14 @@ exports.updateParty = async (req, res) => {
     res.json({ message: "Party updated", party: doc });
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(400).json({ message: "Duplicate party details" });
+      const field = Object.keys(err.keyValue)[0];
+      let message = `Duplicate ${field}`;
+      if (field === "contactNumber") {
+        message = "Contact number already exists for this client";
+      } else if (field === "email") {
+        message = "Email already exists for this client";
+      }
+      return res.status(400).json({ message });
     }
     res.status(500).json({ message: "Server error", error: err.message });
   }
