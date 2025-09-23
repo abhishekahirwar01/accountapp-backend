@@ -57,7 +57,7 @@ async function createTestNotification() {
         recipient: admin._id
       });
       await notification.save();
-      console.log(`Created notification for master admin: ${admin.userName}`);
+      console.log(`Created notification for master  admin: ${admin.userName}`);
     }
 
     console.log('Test update notification created successfully!');
