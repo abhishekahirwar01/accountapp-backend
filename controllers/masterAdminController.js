@@ -1,6 +1,7 @@
 const MasterAdmin = require('../models/MasterAdmin')
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const axios = require("axios");
 
 // Register (for initial setup — can disable in production)
 exports.registerMasterAdmin = async (req, res) => {
@@ -31,11 +32,24 @@ exports.registerMasterAdmin = async (req, res) => {
 // Login
 exports.loginMasterAdmin = async (req, res) => {
   try {
-    const { username, password } = req.body;
+    const { username, password, captchaToken } = req.body;
 
     // Validate input
     if (!username || !password) {
       return res.status(400).json({ message: "Username and password are required" });
+    }
+
+    // Verify reCAPTCHA
+    if (!captchaToken) {
+      return res.status(400).json({ message: "reCAPTCHA verification required" });
+    }
+
+    const recaptchaResponse = await axios.post(
+      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+    );
+
+    if (!recaptchaResponse.data.success) {
+      return res.status(400).json({ message: "reCAPTCHA verification failed" });
     }
 
     const admin = await MasterAdmin.findOne({ username: username.toLowerCase() });
