@@ -152,3 +152,50 @@ exports.updateStockBulk = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
+
+exports.importProductsFromFile = async (req, res) => {
+  const file = req.file;  // File uploaded using multer
+
+  if (!file) {
+    return res.status(400).json({ message: "No file uploaded." });
+  }
+
+  try {
+    const workbook = XLSX.read(file.buffer, { type: "buffer" });
+    const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+    // Validate and format the data
+    const products = jsonData.map((item) => ({
+      name: item["Item Name"],
+      stocks: item["Stock"],
+      unit: item["Unit"],
+    }));
+
+    // Check if product already exists
+    for (const product of products) {
+      const existingProduct = await Product.findOne({ name: product.name, createdByClient: req.auth.clientId });
+
+      if (existingProduct) {
+        return res.status(400).json({
+          message: `Product ${product.name} already exists. Please update it instead of creating new.`,
+        });
+      }
+
+      // Save new product
+      await Product.create({
+        name: product.name,
+        stocks: product.stocks,
+        unit: product.unit,
+        createdByClient: req.auth.clientId, // Add the client ID for multi-tenancy
+        createdByUser: req.auth.userId, // Add the user ID
+      });
+    }
+
+    return res.status(200).json({ message: "Products imported successfully." });
+  } catch (error) {
+    console.error("Error importing products:", error);
+    res.status(500).json({ message: "Error importing products.", error: error.message });
+  }
+};
