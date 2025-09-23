@@ -35,7 +35,10 @@ const partySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Unique party name per client
-partySchema.index({ name: 1, createdByClient: 1 }, { unique: true, collation: { locale: "en", strength: 2 } });
+// Ensure contactNumber + client combo is unique
+partySchema.index({ contactNumber: 1, createdByClient: 1 }, { unique: true });
+
+// Ensure email + client combo is unique
+partySchema.index({ email: 1, createdByClient: 1 }, { unique: true });
 
 module.exports = mongoose.model("Party", partySchema);

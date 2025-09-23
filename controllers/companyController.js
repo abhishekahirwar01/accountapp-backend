@@ -187,6 +187,7 @@ exports.updateCompany = async (req, res) => {
   try {
     const companyId = req.params.id;
     const {
+      registrationNumber,
       businessName,
       businessType,
       address,
@@ -232,6 +233,7 @@ exports.updateCompany = async (req, res) => {
     }
 
     // Update fields
+    company.registrationNumber = registrationNumber || company.registrationNumber;
     company.businessName = businessName || company.businessName;
     company.businessType = businessType || company.businessType;
     company.address = address || company.address;

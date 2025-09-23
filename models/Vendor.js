@@ -26,7 +26,10 @@ const vendorSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Ensure vendorName + client combo is unique
-vendorSchema.index({ vendorName: 1, createdByClient: 1 }, { unique: true, collation: { locale: "en", strength: 2 } });
+// Ensure contactNumber + client combo is unique
+vendorSchema.index({ contactNumber: 1, createdByClient: 1 }, { unique: true });
+
+// Ensure email + client combo is unique
+vendorSchema.index({ email: 1, createdByClient: 1 }, { unique: true });
 
 module.exports = mongoose.model("Vendor", vendorSchema);
