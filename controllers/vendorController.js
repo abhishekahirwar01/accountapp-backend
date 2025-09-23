@@ -6,11 +6,6 @@ const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
 exports.createVendor = async (req, res) => {
   try {
-    // // permission gate (non-privileged must have explicit capability)
-    // if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateVendors) {
-    //   return res.status(403).json({ message: "Not allowed to create vendors" });
-    // }
-
     const {
       vendorName,
       contactNumber,
@@ -24,6 +19,17 @@ exports.createVendor = async (req, res) => {
       isTDSApplicable,
     } = req.body;
 
+    // Validation
+    if (!vendorName || vendorName.trim().length < 2) {
+      return res.status(400).json({ message: "Vendor name is required and must be at least 2 characters." });
+    }
+    if (!contactNumber || !/^[6-9]\d{9}$/.test(contactNumber)) {
+      return res.status(400).json({ message: "Invalid mobile number. Must be 10 digits starting with 6-9." });
+    }
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: "Email is required and must be valid." });
+    }
+
     const vendor = await Vendor.create({
       vendorName,
       contactNumber,
@@ -35,20 +41,28 @@ exports.createVendor = async (req, res) => {
       gstRegistrationType,
       pan,
       isTDSApplicable,
-      createdByClient: req.auth.clientId,   // ✅ tenant
-      createdByUser: req.auth.userId,       // optional
+      createdByClient: req.auth.clientId,
+      createdByUser: req.auth.userId,
     });
-
-    // Invalidate cache for vendors list
-    // const vendorsCacheKey = `vendors:client:${req.auth.clientId}`;
-    // await deleteFromCache(vendorsCacheKey);
 
     res.status(201).json({ message: "Vendor created", vendor });
   } catch (err) {
     if (err.code === 11000) {
-      return res
-        .status(400)
-        .json({ message: "Vendor already exists for this client" });
+      // Better error message extraction
+      const keyPattern = err.keyPattern;
+      let message = "Duplicate field error";
+      
+      if (keyPattern.contactNumber && keyPattern.createdByClient) {
+        message = "Contact number already exists for this client";
+      } else if (keyPattern.email && keyPattern.createdByClient) {
+        message = "Email already exists for this client";
+      } else {
+        // Log the actual duplicate field for debugging
+        console.log("Duplicate key error details:", err.keyValue);
+        message = `Duplicate field: ${Object.keys(err.keyValue)[0]}`;
+      }
+      
+      return res.status(400).json({ message });
     }
     res.status(500).json({ message: "Server error", error: err.message });
   }
@@ -135,7 +149,14 @@ exports.updateVendor = async (req, res) => {
     res.json({ message: "Vendor updated", vendor: doc });
   } catch (err) {
     if (err.code === 11000) {
-      return res.status(400).json({ message: "Duplicate vendor details" });
+      const field = Object.keys(err.keyValue)[0];
+      let message = `Duplicate ${field}`;
+      if (field === "contactNumber") {
+        message = "Contact number already exists for this client";
+      } else if (field === "email") {
+        message = "Email already exists for this client";
+      }
+      return res.status(400).json({ message });
     }
     res.status(500).json({ message: "Server error", error: err.message });
   }
