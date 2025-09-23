@@ -1,14 +1,36 @@
 const Product = require("../models/Product");
+const Unit = require("../models/Unit");
 
 // POST /api/products
 exports.createProduct = async (req, res) => {
   try {
-    const { name, stocks } = req.body;
+    const { name, stocks, unit } = req.body;
+
+    let normalizedUnit = null;
+    if (unit && typeof unit === 'string' && unit.trim()) {
+      normalizedUnit = unit.trim().toLowerCase();
+
+      // Check if unit exists for this client (case-insensitive)
+      let existingUnit = await Unit.findOne({
+        createdByClient: req.auth.clientId,
+        name: { $regex: new RegExp(`^${normalizedUnit}$`, 'i') }
+      });
+
+      if (!existingUnit) {
+        // Create new unit
+        existingUnit = await Unit.create({
+          name: normalizedUnit,
+          createdByClient: req.auth.clientId,
+          createdByUser: req.auth.userId,
+        });
+      }
+    }
 
     // ✅ ALWAYS use tenant from token and also track the actor
     const product = await Product.create({
       name,
       stocks,
+      unit: normalizedUnit,
       createdByClient: req.auth.clientId, // tenant id
       createdByUser:   req.auth.userId,   // who created it
     });
@@ -43,7 +65,7 @@ exports.getProducts = async (req, res) => {
 exports.updateProducts = async (req, res) => {
   try {
     const productId = req.params.id;
-    const { name, stocks } = req.body;
+    const { name, stocks, unit } = req.body;
 
     const product = await Product.findById(productId);
     if (!product) return res.status(404).json({ message: "Product not found" });
@@ -57,6 +79,29 @@ exports.updateProducts = async (req, res) => {
 
     if (name) product.name = name;
     if (typeof stocks === "number" && stocks >= 0) product.stocks = stocks;
+
+    if (unit !== undefined) {
+      let normalizedUnit = null;
+      if (unit && typeof unit === 'string' && unit.trim()) {
+        normalizedUnit = unit.trim().toLowerCase();
+
+        // Check if unit exists for this client (case-insensitive)
+        let existingUnit = await Unit.findOne({
+          createdByClient: req.auth.clientId,
+          name: { $regex: new RegExp(`^${normalizedUnit}$`, 'i') }
+        });
+
+        if (!existingUnit) {
+          // Create new unit
+          existingUnit = await Unit.create({
+            name: normalizedUnit,
+            createdByClient: req.auth.clientId,
+            createdByUser: req.auth.userId,
+          });
+        }
+      }
+      product.unit = normalizedUnit;
+    }
 
     await product.save();
     return res.status(200).json({ message: "Product updated", product });
@@ -208,7 +253,7 @@ exports.importProductsFromFile = async (req, res) => {
       unit: item["Unit"],
     }));
 
-    // Check if product already exists
+    // Check if product already exists and handle units
     for (const product of products) {
       const existingProduct = await Product.findOne({ name: product.name, createdByClient: req.auth.clientId });
 
@@ -218,11 +263,31 @@ exports.importProductsFromFile = async (req, res) => {
         });
       }
 
+      let normalizedUnit = null;
+      if (product.unit && typeof product.unit === 'string' && product.unit.trim()) {
+        normalizedUnit = product.unit.trim().toLowerCase();
+
+        // Check if unit exists for this client (case-insensitive)
+        let existingUnit = await Unit.findOne({
+          createdByClient: req.auth.clientId,
+          name: { $regex: new RegExp(`^${normalizedUnit}$`, 'i') }
+        });
+
+        if (!existingUnit) {
+          // Create new unit
+          existingUnit = await Unit.create({
+            name: normalizedUnit,
+            createdByClient: req.auth.clientId,
+            createdByUser: req.auth.userId,
+          });
+        }
+      }
+
       // Save new product
       await Product.create({
         name: product.name,
         stocks: product.stocks,
-        unit: product.unit,
+        unit: normalizedUnit,
         createdByClient: req.auth.clientId, // Add the client ID for multi-tenancy
         createdByUser: req.auth.userId, // Add the user ID
       });
