@@ -417,7 +417,7 @@ exports.deleteUser = async (req, res) => {
 exports.resetPassword = async (req, res) => {
   try {
     const { userId } = req.params; // URL param: /api/users/:userId/reset-password
-    const { newPassword } = req.body;
+    const { newPassword } = req.body; //user password works 
 
     if (!newPassword || newPassword.length < 6) {
       return res.status(400).json({ message: "New password is too short." });
