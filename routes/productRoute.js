@@ -12,8 +12,8 @@ router.get("/", verifyClientOrAdmin, productController.getProducts);
 
 
 router.put("/:id", verifyClientOrAdmin, productController.updateProducts);
+router.delete("/bulk-delete", verifyClientOrAdmin, productController.bulkDeleteProducts);
 router.delete("/:id", verifyClientOrAdmin, productController.deleteProducts);
-
 
 router.post("/update-stock", verifyClientOrAdmin, productController.updateStockBulk);
 

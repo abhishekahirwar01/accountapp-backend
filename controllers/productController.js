@@ -90,6 +90,41 @@ exports.deleteProducts = async (req, res) => {
   }
 };
 
+// DELETE /api/products/bulk-delete
+exports.bulkDeleteProducts = async (req, res) => {
+  try {
+    const { productIds } = req.body;
+
+    if (!Array.isArray(productIds) || productIds.length === 0) {
+      return res.status(400).json({ message: "Product IDs array is required" });
+    }
+
+    // ✅ authorize by tenant - fetch only this tenant's products
+    const products = await Product.find({
+      _id: { $in: productIds },
+      createdByClient: req.auth.clientId,
+    });
+
+    // Check if all requested products belong to this tenant
+    if (products.length !== productIds.length) {
+      return res.status(403).json({ message: "Some products not found or not authorized to delete" });
+    }
+
+    // Delete the products
+    const result = await Product.deleteMany({
+      _id: { $in: productIds },
+      createdByClient: req.auth.clientId,
+    });
+
+    return res.status(200).json({
+      message: `${result.deletedCount} products deleted successfully`,
+      deletedCount: result.deletedCount
+    });
+  } catch (err) {
+    return res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
 // POST /api/products/update-stock-bulk
 exports.updateStockBulk = async (req, res) => {
   try {
