@@ -7,6 +7,7 @@ const Permission = require("../models/Permission");
 const AccountValidity = require("../models/AccountValidity");
 const { randomInt } = require("crypto");
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");
+const axios = require("axios");
 
 // Create Client (Only Master Admin)
 // controllers/clientController.js
@@ -197,7 +198,20 @@ exports.loginClient = async (req, res) => {
   try {
     // slug comes from URL: /api/:slug/login
     const { slug } = req.params;
-    const { clientUsername, password } = req.body;
+    const { clientUsername, password, captchaToken } = req.body;
+
+    // Verify reCAPTCHA
+    if (!captchaToken) {
+      return res.status(400).json({ message: "reCAPTCHA verification required" });
+    }
+
+    const recaptchaResponse = await axios.post(
+      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+    );
+
+    if (!recaptchaResponse.data.success) {
+      return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    }
 
     const client = await Client.findOne({ slug });
     if (!client) {
@@ -600,7 +614,20 @@ exports.requestClientOtp = async (req, res) => {
 exports.loginClientWithOtp = async (req, res) => {
   try {
     const { slug } = req.params;
-    const { clientUsername, otp } = req.body;
+    const { clientUsername, otp, captchaToken } = req.body;
+
+    // Verify reCAPTCHA
+    if (!captchaToken) {
+      return res.status(400).json({ message: "reCAPTCHA verification required" });
+    }
+
+    const recaptchaResponse = await axios.post(
+      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+    );
+
+    if (!recaptchaResponse.data.success) {
+      return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    }
 
     if (!clientUsername || !otp) {
       return res

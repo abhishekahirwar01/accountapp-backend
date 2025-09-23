@@ -4,6 +4,7 @@ const bcrypt = require("bcryptjs");
 const Client = require("../models/Client");
 const jwt = require("jsonwebtoken");
 const mongoose = require("mongoose");
+const axios = require("axios");
 // 👇 NEW
 const Role = require("../models/Role");
 const UserPermission = require("../models/UserPermission");
@@ -490,7 +491,20 @@ exports.getUsersByClient = async (req, res) => {
 
 exports.loginUser = async (req, res) => {
   try {
-    const { userId, password } = req.body;
+    const { userId, password, captchaToken } = req.body;
+
+    // Verify reCAPTCHA
+    if (!captchaToken) {
+      return res.status(400).json({ message: "reCAPTCHA verification required" });
+    }
+
+    const recaptchaResponse = await axios.post(
+      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+    );
+
+    if (!recaptchaResponse.data.success) {
+      return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    }
 
     const user = await User.findOne({ userId })
       .populate("companies")
