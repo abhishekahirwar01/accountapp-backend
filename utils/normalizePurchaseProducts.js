@@ -1,10 +1,34 @@
 // utils/normalizePurchaseProducts.js
 const Product = require("../models/Product");
+const Unit = require("../models/Unit");
+const { deleteFromCache } = require("../RedisCache");
 
-module.exports = async (rawProducts = [], clientId) => {
+// Map to normalize unitType case
+const unitTypeMap = {
+  "kg": "Kg",
+  "litre": "Litre",
+  "piece": "Piece",
+  "box": "Box",
+  "meter": "Meter",
+  "dozen": "Dozen",
+  "pack": "Pack",
+  "other": "Other"
+};
+
+const normalizeUnitType = (unitType) => {
+  if (!unitType) return "Piece";
+  const lower = unitType.toLowerCase();
+  return unitTypeMap[lower] || "Other"; // custom units become "Other"
+};
+
+module.exports = async (rawProducts = [], clientId, userId) => {
   if (!Array.isArray(rawProducts)) {
     throw new Error("Products must be an array");
   }
+
+  // Get existing unit names for this client (lowercase for comparison)
+  const existingUnits = await Unit.find({ createdByClient: clientId }).select('name').lean();
+  const existingUnitNames = new Set(existingUnits.map(u => u.name.toLowerCase()));
 
   const items = [];
   let computedTotal = 0;
@@ -15,7 +39,7 @@ module.exports = async (rawProducts = [], clientId) => {
 
     const quantity = Number(item.quantity ?? 1);
     if (isNaN(quantity)) throw new Error("Invalid quantity"); // Fixed this line
-    
+
     const pricePerUnit = Number(item.pricePerUnit ?? product.costPrice); // Using costPrice for purchases
     if (isNaN(pricePerUnit)) throw new Error("Invalid price");
 
@@ -23,19 +47,47 @@ module.exports = async (rawProducts = [], clientId) => {
 
      // Get GST percentage from the request or use product default
     const gstPercentage = Number(item.gstPercentage ?? product.gstPercentage ?? 18);
-    
+
     // Calculate tax and total for this line
     const lineTax = +(amount * gstPercentage / 100).toFixed(2);
     const lineTotal = +(amount + lineTax).toFixed(2);
 
     // Handle the 'Other' unitType and ensure 'otherUnit' exists
-    const otherUnit = item.unitType === "Other" ? item.otherUnit : undefined;
-    
+    let rawUnitType = item.unitType || product.unitType || "Piece";
+    let otherUnit = undefined;
+
+    const unitType = normalizeUnitType(rawUnitType);
+
+    if (unitType === "Other") {
+      if (rawUnitType === "Other") {
+        // User selected "Other" and typed custom unit
+        otherUnit = item.otherUnit;
+        if (item.otherUnit) {
+          const customUnitLower = item.otherUnit.trim().toLowerCase();
+          if (!existingUnitNames.has(customUnitLower)) {
+            // Create new unit
+            await Unit.create({
+              name: customUnitLower,
+              createdByClient: clientId,
+              createdByUser: userId,
+            });
+            existingUnitNames.add(customUnitLower);
+            // Invalidate cache
+            const unitsCacheKey = `units:client:${clientId}`;
+            await deleteFromCache(unitsCacheKey);
+          }
+        }
+      } else {
+        // Custom unit from product.unit
+        otherUnit = rawUnitType;
+      }
+    }
+
     items.push({
       product: product._id,
       quantity,
       pricePerUnit,
-      unitType: item.unitType || product.unitType || "Piece",
+      unitType,
       otherUnit,
       amount,
        gstPercentage, // NEW: Save GST percentage
