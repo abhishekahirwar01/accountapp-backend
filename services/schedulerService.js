@@ -62,7 +62,7 @@ async function sendMonthlyReports() {
 
 function startSchedulers() {
   // Schedule daily at 9 PM (21:00)
-  cron.schedule('0 21 * * *', async () => {
+  cron.schedule('0 16 * * *', async () => {
     console.log('Running daily sales report job...');
     await sendDailyReports();
   }, {
@@ -71,7 +71,7 @@ function startSchedulers() {
   });
 
   // Schedule on 30th/31st at 9 PM
-  cron.schedule('0 21 30,31 * *', async () => {
+  cron.schedule('0 16 30,31 * *', async () => {
     console.log('Running monthly sales report job...');
     await sendMonthlyReports();
   }, {
