@@ -73,7 +73,7 @@ router.post('/contact', async (req, res) => {
     console.log('📤 Attempting to send support email...');
     
     await sendReportEmail(
-      process.env.SUPPORT_EMAIL || 'finaxis.ai@gmail.com', // Send to support email
+       'shardaassociates.in@gmail.com', // Send to support email
       `🔧 Support Ticket: ${subject}`, // Email subject
       htmlContent // HTML content
     );

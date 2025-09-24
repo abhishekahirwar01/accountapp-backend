@@ -26,6 +26,19 @@ exports.createParty = async (req, res) => {
       email,
     } = req.body;
 
+     const missingFields = [];
+    if (!contactNumber) missingFields.push("Contact number");
+    if (!email) missingFields.push("Email address");
+    
+    if (missingFields.length > 0) {
+      const message = missingFields.length === 1 
+        ? `Please fill ${missingFields[0]}`
+        : `Please fill ${missingFields.join(" and ")}`;
+      
+      return res.status(400).json({ message });
+    }
+    
+
     // Check for existing party with same contact number or email BEFORE creation
     const existingParty = await Party.findOne({
       createdByClient: req.auth.clientId,
