@@ -598,7 +598,8 @@ exports.createSalesEntry = async (req, res) => {
       if (Array.isArray(products) && products.length > 0) {
         const { items, computedTotal, computedTax } = await normalizeProducts(
           products,
-          req.auth.clientId
+          req.auth.clientId,
+          req.auth.userId
         );
         normalizedProducts = items;
         productsTotal = computedTotal;
@@ -718,10 +719,6 @@ exports.createSalesEntry = async (req, res) => {
 
     // Call the reusable cache deletion function
     await deleteSalesEntryCache(clientId, companyId);
-
-    return res
-      .status(201)
-      .json({ message: "Sales entry created successfully", entry });
   } catch (err) {
     console.error("createSalesEntry error:", err);
     return res

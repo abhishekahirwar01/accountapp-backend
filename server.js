@@ -28,6 +28,7 @@ const roleRoutes = require('./routes/roleRoutes')
 const userPermissionsRoutes = require("./routes/userPermissionsRoutes");
 const bankDetailRoutes = require("./routes/bankDetailRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const unitRoutes = require("./routes/unitRoutes")
 
 
 const updateNotificationRoutes = require("./routes/updateNotificationRoutes");
@@ -132,6 +133,8 @@ app.use("/", whatsappRoutes);
 app.use('/api', templateRouter);
 
 app.use('./api', reportRoutes)
+
+app.use("/api/units", unitRoutes);
 
 app.get('/', (req, res) => {
   res.send("Account App CI/CD is working...error fixes in getJournalsByClient");

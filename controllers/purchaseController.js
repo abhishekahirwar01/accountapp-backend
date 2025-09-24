@@ -256,7 +256,8 @@ exports.createPurchaseEntry = async (req, res) => {
           if (Array.isArray(products) && products.length > 0) {
             const { items, computedTotal } = await normalizePurchaseProducts(
               products,
-              req.auth.clientId /* pass session if normalize funcs use db */
+              req.auth.clientId,
+              req.auth.userId /* pass session if normalize funcs use db */
             );
             normalizedProducts = items; productsTotal = computedTotal;
           }
