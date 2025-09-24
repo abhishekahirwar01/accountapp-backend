@@ -198,20 +198,20 @@ exports.loginClient = async (req, res) => {
   try {
     // slug comes from URL: /api/:slug/login
     const { slug } = req.params;
-    const { clientUsername, password } = req.body;
+    const { clientUsername, password , captchaToken } = req.body;
 
     // Verify reCAPTCHA
-    // if (!captchaToken) {
-    //   return res.status(400).json({ message: "reCAPTCHA verification required" });
-    // }
+    if (!captchaToken) {
+      return res.status(400).json({ message: "reCAPTCHA verification required" });
+    }
 
-    // const recaptchaResponse = await axios.post(
-    //   `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    // );
+    const recaptchaResponse = await axios.post(
+      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+    );
 
-    // if (!recaptchaResponse.data.success) {
-    //   return res.status(400).json({ message: "reCAPTCHA verification failed" });
-    // }
+    if (!recaptchaResponse.data.success) {
+      return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    }
 
     const client = await Client.findOne({ slug });
     if (!client) {
