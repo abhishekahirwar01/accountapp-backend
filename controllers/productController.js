@@ -6,6 +6,19 @@ exports.createProduct = async (req, res) => {
   try {
     const { name, stocks, unit } = req.body;
 
+    // console.log('Creating product:', { name, stocks, unit, clientId: req.auth.clientId });
+
+    // Check if product already exists for this client
+    const existingProduct = await Product.findOne({
+      name: name.trim(),
+      createdByClient: req.auth.clientId
+    });
+
+    if (existingProduct) {
+      console.log('Product already exists:', existingProduct);
+      return res.status(400).json({ message: "Product already exists for this client" });
+    }
+
     let normalizedUnit = null;
     if (unit && typeof unit === 'string' && unit.trim()) {
       normalizedUnit = unit.trim().toLowerCase();
@@ -27,19 +40,30 @@ exports.createProduct = async (req, res) => {
     }
 
     // ✅ ALWAYS use tenant from token and also track the actor
-    const product = await Product.create({
-      name,
-      stocks,
-      unit: normalizedUnit,
-      createdByClient: req.auth.clientId, // tenant id
-      createdByUser:   req.auth.userId,   // who created it
-    });
+    try {
+      const product = await Product.create({
+        name: name.trim(),
+        stocks,
+        unit: normalizedUnit,
+        createdByClient: req.auth.clientId, // tenant id
+        createdByUser:   req.auth.userId,   // who created it
+      });
 
-    return res.status(201).json({ message: "Product created", product });
+      // console.log('Product created successfully:', product);
+      return res.status(201).json({ message: "Product created", product });
+    } catch (productErr) {
+      console.error('Error creating product:', productErr);
+      if (productErr.code === 11000) {
+        // because of compound unique {createdByClient, name}
+        return res.status(400).json({ message: "Product already exists for this client" });
+      }
+      return res.status(500).json({ message: "Server error", error: productErr.message });
+    }
   } catch (err) {
+    console.error('Error creating unit or other:', err);
     if (err.code === 11000) {
-      // because of compound unique {createdByClient, name}
-      return res.status(400).json({ message: "Product already exists for this client" });
+      // Unit duplicate error
+      return res.status(400).json({ message: "Unit already exists for this client" });
     }
     return res.status(500).json({ message: "Server error", error: err.message });
   }
@@ -101,6 +125,14 @@ exports.updateProducts = async (req, res) => {
         }
       }
       product.unit = normalizedUnit;
+    }
+
+    // Ensure required fields are set for legacy products
+    if (!product.createdByUser) {
+      product.createdByUser = req.auth.userId;
+    }
+    if (!product.createdByClient) {
+      product.createdByClient = req.auth.clientId;
     }
 
     await product.save();
