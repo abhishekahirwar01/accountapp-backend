@@ -49,7 +49,7 @@ const USER_OVERRIDE_KEYS = new Set([
  */
 async function getEffectivePermissions({ clientId, userId }) {
   const [tenant, userPerm] = await Promise.all([
-    // Permission.findOne({ client: clientId }).lean(),
+    Permission.findOne({ client: clientId }).lean(),
     UserPermission.findOne({ client: clientId, user: userId }).lean(),
   ]);
 
