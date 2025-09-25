@@ -2,6 +2,7 @@ const path = require("path");
 const fs = require("fs");
 const Company = require("../models/Company");
 const Client = require("../models/Client");
+const Permission = require("../models/Permission");
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 
@@ -55,14 +56,6 @@ exports.createCompany = async (req, res) => {
       logo,
     } = req.body;
 
-    const existing = await Company.findOne({ registrationNumber });
-    if (existing) {
-      return res
-        .status(400)
-        .json({
-          message: "Company with this registration number already exists",
-        });
-    }
     // Validate selectedClient if provided
     let assignedClientId = req.user.id;
     if (
@@ -74,6 +67,25 @@ exports.createCompany = async (req, res) => {
         return res.status(404).json({ message: "Selected client not found" });
       }
       assignedClientId = selectedClient;
+    }
+
+    // 3) company limit
+    const permission = await Permission.findOne({ client: assignedClientId });
+    const maxCompanies = permission?.maxCompanies ?? 2; // fallback to 2 if no permission found
+    const companyCount = await Company.countDocuments({ client: assignedClientId });
+    if (companyCount >= maxCompanies) {
+      return res
+        .status(403)
+        .json({ message: "Company creation limit reached. Please contact admin." });
+    }
+
+    const existing = await Company.findOne({ registrationNumber });
+    if (existing) {
+      return res
+        .status(400)
+        .json({
+          message: "Company with this registration number already exists",
+        });
     }
 
     // Logo URL resolution: uploaded file takes priority
@@ -166,6 +178,16 @@ exports.createCompanyByClient = async (req, res) => {
     const eff = await getEffectivePermissions({ clientId, userId });
     if (!eff.caps.canCreateCompanies) {
       return res.status(403).json({ message: "Permission denied. Cannot create companies." });
+    }
+
+    // 3) company limit
+    const permission = await Permission.findOne({ client: clientId });
+    const maxCompanies = permission?.maxCompanies ?? 2; // fallback to 2 if no permission found
+    const companyCount = await Company.countDocuments({ client: clientId });
+    if (companyCount >= maxCompanies) {
+      return res
+        .status(403)
+        .json({ message: "Company creation limit reached. Please contact admin." });
     }
 
     const existing = await Company.findOne({ registrationNumber });
