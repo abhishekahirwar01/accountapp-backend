@@ -1,12 +1,44 @@
 // controllers/party.controller.js
 const Party = require("../models/Party");
 const Customer = require("../models/Client")
+const { getEffectivePermissions } = require("../services/effectivePermissions");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
 
+function userIsPriv(req) {
+  return PRIV_ROLES.has(req.auth?.role);
+}
+
+async function ensureAuthCaps(req) {
+  // normalize legacy req.user → req.auth
+  if (!req.auth && req.user) {
+    req.auth = {
+      clientId: req.user.id,
+      userId: req.user.userId || req.user.id,
+      role: req.user.role,
+      caps: req.user.caps,
+      allowedCompanies: req.user.allowedCompanies,
+      // do NOT force "Unknown" – let resolver fetch names correctly
+      userName: req.user.userName,       // may be undefined for clients
+      clientName: req.user.contactName,  // if your auth layer sets it for clients
+    };
+  }
+  if (!req.auth) throw new Error("Unauthorized (no auth context)");
+
+  if (!req.auth.caps || !Array.isArray(req.auth.allowedCompanies)) {
+    const { caps, allowedCompanies } = await getEffectivePermissions({
+      clientId: req.auth.clientId,
+      userId: req.auth.userId,
+    });
+    if (!req.auth.caps) req.auth.caps = caps;
+    if (!req.auth.allowedCompanies) req.auth.allowedCompanies = allowedCompanies;
+  }
+}
+
 exports.createParty = async (req, res) => {
   try {
+    await ensureAuthCaps(req);
 
     if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateCustomers) {
       return res.status(403).json({ message: "Not allowed to create customers" });
@@ -25,19 +57,6 @@ exports.createParty = async (req, res) => {
       contactNumber,
       email,
     } = req.body;
-
-     const missingFields = [];
-    if (!contactNumber) missingFields.push("Contact number");
-    if (!email) missingFields.push("Email address");
-    
-    if (missingFields.length > 0) {
-      const message = missingFields.length === 1 
-        ? `Please fill ${missingFields[0]}`
-        : `Please fill ${missingFields.join(" and ")}`;
-      
-      return res.status(400).json({ message });
-    }
-    
 
     // Check for existing party with same contact number or email BEFORE creation
     const existingParty = await Party.findOne({

@@ -1,10 +1,42 @@
 // controllers/vendor.controller.js
 const Vendor = require("../models/Vendor");
+const { getEffectivePermissions } = require("../services/effectivePermissions");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
+function userIsPriv(req) {
+  return PRIV_ROLES.has(req.auth?.role);
+}
+
+async function ensureAuthCaps(req) {
+  // normalize legacy req.user → req.auth
+  if (!req.auth && req.user) {
+    req.auth = {
+      clientId: req.user.id,
+      userId: req.user.userId || req.user.id,
+      role: req.user.role,
+      caps: req.user.caps,
+      allowedCompanies: req.user.allowedCompanies,
+      // do NOT force "Unknown" – let resolver fetch names correctly
+      userName: req.user.userName,       // may be undefined for clients
+      clientName: req.user.contactName,  // if your auth layer sets it for clients
+    };
+  }
+  if (!req.auth) throw new Error("Unauthorized (no auth context)");
+
+  if (!req.auth.caps || !Array.isArray(req.auth.allowedCompanies)) {
+    const { caps, allowedCompanies } = await getEffectivePermissions({
+      clientId: req.auth.clientId,
+      userId: req.auth.userId,
+    });
+    if (!req.auth.caps) req.auth.caps = caps;
+    if (!req.auth.allowedCompanies) req.auth.allowedCompanies = allowedCompanies;
+  }
+}
+
 exports.createVendor = async (req, res) => {
   try {
+    await ensureAuthCaps(req);
 
     // permission gate (non-privileged must have explicit capability)
     if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateVendors) {
