@@ -23,7 +23,7 @@ const partySchema = new mongoose.Schema(
     pan: { type: String, uppercase: true, trim: true },
     isTDSApplicable: { type: Boolean, default: false },
     contactNumber: { type: String, trim: true },
-    email: { type: String, lowercase: true, trim: true },
+    email: { type: String, lowercase: true, trim: true , required: true },
     createdByClient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Client",

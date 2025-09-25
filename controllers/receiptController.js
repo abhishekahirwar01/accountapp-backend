@@ -525,6 +525,9 @@ exports.createReceipt = async (req, res) => {
       }
     }
 
+    // Invalidate cache
+    await deleteReceiptEntryCache(req.auth.clientId, companyId);
+
     // Return appropriate message based on what happened
     let message = "Receipt entry created";
     if (hasExcess) {

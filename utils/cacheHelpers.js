@@ -372,29 +372,22 @@ const { redis } = require('../RedisCache');  // Assuming you have Redis client i
 // Reusable function to delete sales entry cache
 const deleteSalesEntryCache = async (clientId, companyId) => {
   try {
-    // Cache keys
-    const clientCacheKey = `salesEntriesByClient:${clientId}`;
-    const companyCacheKey = `salesEntries:${JSON.stringify({ client: clientId, company: companyId })}`;
+    // Cache keys to delete to cover common filters
+    const keysToDelete = [
+      `salesEntriesByClient:${clientId}`,
+      `salesEntries:${JSON.stringify({ client: clientId })}`,
+      `salesEntries:${JSON.stringify({ company: companyId })}`,
+      `salesEntries:${JSON.stringify({ client: clientId, company: companyId })}`,
+    ];
 
-    // Log the cache keys to be deleted
-    console.log(`Attempting to delete cache for client: ${clientCacheKey}`);
-    console.log(`Attempting to delete cache for company: ${companyCacheKey}`);
-
-    // Delete cached data from Redis for both client and company
-    const clientDelResponse = await redis.del(clientCacheKey);
-    const companyDelResponse = await redis.del(companyCacheKey);
-
-    // Log if deletion was successful or not
-    if (clientDelResponse === 1) {
-      console.log(`Cache for client ${clientCacheKey} deleted successfully`);
-    } else {
-      console.log(`No cache found for client ${clientCacheKey}`);
-    }
-
-    if (companyDelResponse === 1) {
-      console.log(`Cache for company ${companyCacheKey} deleted successfully`);
-    } else {
-      console.log(`No cache found for company ${companyCacheKey}`);
+    for (const key of keysToDelete) {
+      console.log(`Attempting to delete cache: ${key}`);
+      const delResponse = await redis.del(key);
+      if (delResponse === 1) {
+        console.log(`Cache ${key} deleted successfully`);
+      } else {
+        console.log(`No cache found for ${key}`);
+      }
     }
   } catch (error) {
     console.error('Error deleting cache in deleteSalesEntryCache:', error);
@@ -439,29 +432,27 @@ const deletePurchaseEntryCache = async (clientId, companyId) => {
 // Reusable function to delete Receipt entry cache
 const deleteReceiptEntryCache = async (clientId, companyId) => {
   try {
-    // Cache keys
-    const clientCacheKey = `receiptEntriesByClient:${clientId}`;
-    const companyCacheKey = `receiptEntries:${JSON.stringify({ client: clientId, company: companyId })}`;
+    // Delete all receipt-related cache keys to handle dynamic query-based caching
+    const keysToDelete = [
+      `receiptEntriesByClient:${clientId}`,
+      `receiptEntries:${JSON.stringify({ client: clientId, company: companyId })}`,
+    ];
 
-    // Log the cache keys to be deleted
-    console.log(`Attempting to delete cache for client: ${clientCacheKey}`);
-    console.log(`Attempting to delete cache for company: ${companyCacheKey}`);
+    // Also delete all keys matching the pattern to cover query-specific caches
+    const allReceiptKeys = await redis.keys('receiptEntries:*');
+    keysToDelete.push(...allReceiptKeys);
 
-    // Delete cached data from Redis for both client and company
-    const clientDelResponse = await redis.del(clientCacheKey);
-    const companyDelResponse = await redis.del(companyCacheKey);
+    // Remove duplicates
+    const uniqueKeys = [...new Set(keysToDelete)];
 
-    // Log if deletion was successful or not
-    if (clientDelResponse === 1) {
-      console.log(`Cache for client ${clientCacheKey} deleted successfully`);
-    } else {
-      console.log(`No cache found for client ${clientCacheKey}`);
-    }
-
-    if (companyDelResponse === 1) {
-      console.log(`Cache for company ${companyCacheKey} deleted successfully`);
-    } else {
-      console.log(`No cache found for company ${companyCacheKey}`);
+    for (const key of uniqueKeys) {
+      console.log(`Attempting to delete cache: ${key}`);
+      const delResponse = await redis.del(key);
+      if (delResponse === 1) {
+        console.log(`Cache ${key} deleted successfully`);
+      } else {
+        console.log(`No cache found for ${key}`);
+      }
     }
   } catch (error) {
     console.error('Error deleting cache in deleteReceiptEntryCache:', error);
