@@ -3,6 +3,7 @@ const fs = require("fs");
 const Company = require("../models/Company");
 const Client = require("../models/Client");
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
+const { getEffectivePermissions } = require("../services/effectivePermissions");
 
 
 // Helper to convert absolute file path to a public URL under /uploads
@@ -18,7 +19,7 @@ const safeUnlink = (absPath) => {
   fs.promises.unlink(absPath).catch(() => { });
 };
 
-// Create Company (Client Only)
+// Create Company (Master Admin Only)
 exports.createCompany = async (req, res) => {
   try {
     const {
@@ -118,6 +119,111 @@ exports.createCompany = async (req, res) => {
     });
 
     await company.save();
+    res.status(201).json({ message: "Company created successfully", company });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// Create Company (Client Only)
+exports.createCompanyByClient = async (req, res) => {
+  try {
+    const {
+      registrationNumber,
+      businessName,
+      businessType,
+      address,
+      City,
+      addressState,
+      Country,
+      Pincode,
+      Telephone,
+      mobileNumber,
+      emailId,
+      Website,
+      PANNumber,
+      IncomeTaxLoginPassword,
+      gstin,
+      gstState,
+      RegistrationType,
+      PeriodicityofGSTReturns,
+      GSTUsername,
+      GSTPassword,
+      ewayBillApplicable,
+      EWBBillUsername,
+      EWBBillPassword,
+      TANNumber,
+      TAXDeductionCollectionAcc,
+      DeductorType,
+      TDSLoginUsername,
+      TDSLoginPassword,
+      logo,
+    } = req.body;
+
+    // Check effective permissions for the user
+    const clientId = req.user.createdByClient || req.user.id;
+    const userId = req.user.id;
+    const eff = await getEffectivePermissions({ clientId, userId });
+    if (!eff.caps.canCreateCompanies) {
+      return res.status(403).json({ message: "Permission denied. Cannot create companies." });
+    }
+
+    const existing = await Company.findOne({ registrationNumber });
+    if (existing) {
+      return res
+        .status(400)
+        .json({
+          message: "Company with this registration number already exists",
+        });
+    }
+
+    // Logo URL resolution: uploaded file takes priority
+    let logoUrl = null;
+    if (req.file && req.file.path) {
+      logoUrl = toPublicUrl(req.file.path);
+    } else if (typeof logo === "string" && logo.trim()) {
+      logoUrl = logo.trim();
+    }
+
+    const company = new Company({
+      registrationNumber,
+      businessName,
+      businessType,
+      address,
+      City,
+      addressState,
+      Country,
+      Pincode,
+      Telephone,
+      mobileNumber,
+      emailId,
+      Website,
+      PANNumber,
+      IncomeTaxLoginPassword,
+      gstin,
+      gstState,
+      RegistrationType,
+      PeriodicityofGSTReturns,
+      GSTUsername,
+      GSTPassword,
+      ewayBillApplicable,
+      EWBBillUsername,
+      EWBBillPassword,
+      TANNumber,
+      TAXDeductionCollectionAcc,
+      DeductorType,
+      TDSLoginUsername,
+      TDSLoginPassword,
+      client: req.user.id,
+      selectedClient: req.user.id,
+      logo: logoUrl,
+    });
+
+    await company.save();
+
+    // Invalidate cache
+    invalidateClient(req.user.id);
+
     res.status(201).json({ message: "Company created successfully", company });
   } catch (err) {
     res.status(500).json({ error: err.message });
