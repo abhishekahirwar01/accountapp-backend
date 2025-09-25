@@ -8,6 +8,7 @@ const axios = require("axios");
 // 👇 NEW
 const Role = require("../models/Role");
 const UserPermission = require("../models/UserPermission");
+const Permission = require("../models/Permission");
 const { CAP_KEYS } = require("../services/effectivePermissions");
 
 
@@ -134,10 +135,10 @@ exports.createUser = async (req, res) => {
     }
 
     // 3) user limit
-    const client = await Client.findById(clientId);
-    if (!client) return res.status(404).json({ message: "Client not found" });
+    const permission = await Permission.findOne({ client: clientId });
+    const maxUsers = permission?.maxUsers ?? 1; // fallback to 1 if no permission found
     const userCount = await User.countDocuments({ createdByClient: clientId });
-    if (userCount >= client.userLimit) {
+    if (userCount >= maxUsers) {
       return res
         .status(403)
         .json({ message: "User creation limit reached. Please contact admin." });
