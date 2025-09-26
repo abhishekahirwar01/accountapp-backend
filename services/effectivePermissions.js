@@ -55,23 +55,17 @@ async function getEffectivePermissions({ clientId, userId }) {
 
   const caps = {};
   for (const key of CAP_KEYS) {
-    const base = tenant?.[key];
+    const base = tenant?.[key] ?? true; // default to true if not defined
     const override = USER_OVERRIDE_KEYS.has(key) ? userPerm?.[key] : undefined;
 
-    // If tenant base is explicitly false → effective false
+    // If tenant base is false → effective false
     if (base === false) {
       caps[key] = false;
       continue;
     }
-    // If tenant base is true or undefined (treat undefined as false-safe)
-    if (base === true) {
-      // null/undefined = inherit; otherwise use explicit override
-      caps[key] = (override == null) ? true : !!override;
-    } else {
-      // tenant didn't define this flag; default to false unless override true is allowed
-      // but since tenant is the ceiling, leave false
-      caps[key] = false;
-    }
+    // If tenant base is true
+    // null/undefined = inherit; otherwise use explicit override
+    caps[key] = (override == null) ? true : !!override;
   }
 
   const limits = {
