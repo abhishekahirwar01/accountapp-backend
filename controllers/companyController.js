@@ -244,7 +244,7 @@ exports.createCompanyByClient = async (req, res) => {
     await company.save();
 
     // Invalidate cache
-    invalidateClient(req.user.id);
+    // invalidateClient(req.user.id);
 
     res.status(201).json({ message: "Company created successfully", company });
   } catch (err) {
@@ -255,22 +255,22 @@ exports.createCompanyByClient = async (req, res) => {
 // Get Companies of Client (Client Only)
 exports.getClientCompanies = async (req, res) => {
   try {
-    const cacheKey = key.clientsList(req.user.id);  // Unique cache key for the client
+    // const cacheKey = key.clientsList(req.user.id);  // Unique cache key for the client
 
-    // 1) Check cache first
-    const cached = myCache.get(cacheKey);
-    if (cached) {
-      res.set('X-Cache', 'HIT');  // Debug header to track cache hit
-      res.set('X-Cache-Key', cacheKey);
-      return res.status(200).json(cached);
-    }
+    // // 1) Check cache first
+    // const cached = myCache.get(cacheKey);
+    // if (cached) {
+    //   res.set('X-Cache', 'HIT');  // Debug header to track cache hit
+    //   res.set('X-Cache-Key', cacheKey);
+    //   return res.status(200).json(cached);
+    // }
     // 2) If cache miss, fetch from DB
     const companies = await Company.find({ client: req.user.id });
 
-    // 3) Store the result in cache
-    myCache.set(cacheKey, companies);  // Cache it for the next time (default TTL 5 minutes)
-    res.set('X-Cache', 'MISS');  // Debug header to track cache miss
-    res.set('X-Cache-Key', cacheKey);
+    // // 3) Store the result in cache
+    // myCache.set(cacheKey, companies);  // Cache it for the next time (default TTL 5 minutes)
+    // res.set('X-Cache', 'MISS');  // Debug header to track cache miss
+    // res.set('X-Cache-Key', cacheKey);
 
     res.status(200).json(companies);
   } catch (err) {
@@ -281,29 +281,12 @@ exports.getClientCompanies = async (req, res) => {
 // Get All Companies (Master Admin Only)
 exports.getAllCompanies = async (req, res) => {
   try {
-    const cacheKey = "allCompanies";  // Unique cache key for all companies (master admin)
-
-    // 1) Check cache first
-    const cached = myCache.get(cacheKey);
-    if (cached) {
-      res.set('X-Cache', 'HIT');  // Debug header to track cache hit
-      res.set('X-Cache-Key', cacheKey);
-      return res.status(200).json(cached);
-    }
-
-    // 2) If cache miss, fetch from DB
     const companies = await Company.find().populate(
       "client",
       "clientUsername email"
     );
 
-    // 3) Store the result in cache
-    myCache.set(cacheKey, companies);  // Cache it for the next time (default TTL 5 minutes)
-
-    res.set('X-Cache', 'MISS');  // Debug header to track cache miss
-    res.set('X-Cache-Key', cacheKey);
-
-    return res.status(200).json(companies);  // Return the fresh data
+    return res.status(200).json(companies);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -428,15 +411,14 @@ exports.updateCompany = async (req, res) => {
       company.client = selectedClient;
     }
 
-    // After saving the updated company, invalidate the cache
-    const cacheKey = key.client(req.user.id, companyId);
-    myCache.del(cacheKey);  // Invalidate the cache for this company
+    // // After saving the updated company, invalidate the cache
+    // const cacheKey = key.client(req.user.id, companyId);
+    // myCache.del(cacheKey);  // Invalidate the cache for this company
 
-    // Cache invalidation for the client’s company list
-    invalidateClientsForMaster(req.user.id);  // Invalidate cache for client companies
+
 
     await company.save();
-    invalidateClientsForMaster(req.user.id);
+    // invalidateClientsForMaster(req.user.id);
     res.status(200).json({ message: "Company updated", company });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -470,10 +452,10 @@ exports.deleteCompany = async (req, res) => {
 
     await Company.findByIdAndDelete(companyId);
     // Cache invalidation
-    const cacheKey = key.client(req.user.id, companyId);
-    myCache.del(cacheKey);  // Invalidate the cache for this company
+    // const cacheKey = key.client(req.user.id, companyId);
+    // myCache.del(cacheKey);  // Invalidate the cache for this company
 
-    invalidateClientsForMaster(req.user.id);  // Invalidate cache for client companies
+    // invalidateClientsForMaster(req.user.id);  // Invalidate cache for client companies
 
     res.status(200).json({ message: "Company deleted successfully" });
   } catch (err) {
