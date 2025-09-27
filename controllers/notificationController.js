@@ -19,6 +19,53 @@ exports.createNotification = async (message, recipientId, senderId, actionType, 
     });
 
     await notification.save();
+
+    // Emit real-time notification to connected clients
+    if (global.io) {
+      console.log('📡 Emitting notification to rooms:', `user-${recipientId}`, clientId ? `client-${clientId}` : 'no client');
+      // Emit to user-specific room
+      global.io.to(`user-${recipientId}`).emit('notification', {
+        _id: notification._id,
+        title: notification.title,
+        message: notification.message,
+        type: notification.type,
+        action: notification.action,
+        entityId: notification.entityId,
+        entityType: notification.entityType,
+        recipient: notification.recipient,
+        triggeredBy: notification.triggeredBy,
+        client: notification.client,
+        read: notification.read,
+        metadata: {
+          createdAt: notification.createdAt,
+          updatedAt: notification.updatedAt,
+        },
+        createdAt: notification.createdAt,
+      });
+
+      // Also emit to client room if clientId is provided
+      if (clientId) {
+        global.io.to(`client-${clientId}`).emit('notification', {
+          _id: notification._id,
+          title: notification.title,
+          message: notification.message,
+          type: notification.type,
+          action: notification.action,
+          entityId: notification.entityId,
+          entityType: notification.entityType,
+          recipient: notification.recipient,
+          triggeredBy: notification.triggeredBy,
+          client: notification.client,
+          read: notification.read,
+          metadata: {
+            createdAt: notification.createdAt,
+            updatedAt: notification.updatedAt,
+          },
+          createdAt: notification.createdAt,
+        });
+      }
+    }
+
     return notification;
   } catch (err) {
     console.error("Error creating notification:", err);
