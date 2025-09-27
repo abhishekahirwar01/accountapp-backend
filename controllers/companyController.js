@@ -74,9 +74,12 @@ exports.createCompany = async (req, res) => {
     const maxCompanies = permission?.maxCompanies ?? 2; // fallback to 2 if no permission found
     const companyCount = await Company.countDocuments({ client: assignedClientId });
     if (companyCount >= maxCompanies) {
+      const message = req.user.role === "master"
+        ? "The selected client has reached the company creation limit. Please upgrade their plan."
+        : "Company creation limit reached. Please contact admin.";
       return res
         .status(403)
-        .json({ message: "Company creation limit reached. Please contact admin." });
+        .json({ message });
     }
 
     const existing = await Company.findOne({ registrationNumber });
