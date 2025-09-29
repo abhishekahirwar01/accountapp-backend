@@ -398,30 +398,28 @@ const deleteSalesEntryCache = async (clientId, companyId) => {
 // Reusable function to delete purchase entry cache
 const deletePurchaseEntryCache = async (clientId, companyId) => {
   try {
-    // Cache keys - now only using clientId and companyId
-    const clientCacheKey = `purchaseEntriesByClient:${clientId}`;
-    const companyCacheKey = `purchaseEntries:${JSON.stringify({ 
-      clientId,  // only clientId and companyId
-      companyId 
-    })}`;
+    // Delete all purchase-related cache keys for this client to handle all possible query variations
+    const patterns = [
+      `purchaseEntriesByClient:*${clientId}*`,
+      `purchaseEntries:*${clientId}*`,
+    ];
 
-    console.log(`Attempting to delete cache for client: ${clientCacheKey}`);
-    console.log(`Attempting to delete cache for company: ${companyCacheKey}`);
-
-    // Delete cached data from Redis for both client and company
-    const clientDelResponse = await redis.del(clientCacheKey);
-    const companyDelResponse = await redis.del(companyCacheKey);
-
-    if (clientDelResponse === 1) {
-      console.log(`Cache for client ${clientCacheKey} deleted successfully`);
-    } else {
-      console.log(`No cache found for client ${clientCacheKey}`);
-    }
-
-    if (companyDelResponse === 1) {
-      console.log(`Cache for company ${companyCacheKey} deleted successfully`);
-    } else {
-      console.log(`No cache found for company ${companyCacheKey}`);
+    for (const pattern of patterns) {
+      const keys = await redis.keys(pattern);
+      if (keys.length > 0) {
+        console.log(`Found ${keys.length} cache keys matching ${pattern}`);
+        for (const key of keys) {
+          console.log(`Attempting to delete cache: ${key}`);
+          const delResponse = await redis.del(key);
+          if (delResponse === 1) {
+            console.log(`Cache ${key} deleted successfully`);
+          } else {
+            console.log(`No cache found for ${key}`);
+          }
+        }
+      } else {
+        console.log(`No cache keys found matching ${pattern}`);
+      }
     }
   } catch (error) {
     console.error('Error deleting cache in deletePurchaseEntryCache:', error);
@@ -434,8 +432,8 @@ const deleteReceiptEntryCache = async (clientId, companyId) => {
   try {
     // Delete all receipt-related cache keys to handle dynamic query-based caching
     const keysToDelete = [
-      `receiptEntriesByClient:${clientId}`,
-      `receiptEntries:${JSON.stringify({ client: clientId, company: companyId })}`,
+      `receiptEntriesByClient:${JSON.stringify({ clientId, companyId })}`, // for getReceiptsByClient
+      `receiptEntries:${JSON.stringify({ client: clientId, company: companyId })}`, // for getReceipts
     ];
 
     // Also delete all keys matching the pattern to cover query-specific caches
