@@ -29,16 +29,16 @@ module.exports = async (rawServices = [], clientId) => {
     const amount = Number(item.amount ?? service.amount ?? 0);
     if (isNaN(amount)) throw new Error("Invalid amount");
     // Get GST percentage from the request or use service default
-    const gstPercentage = Number(r.gstPercentage ?? svc.gstPercentage ?? 18);
-    
+    const gstPercentage = Number(item.gstPercentage ?? service.gstPercentage ?? 18);
+
     // Calculate tax and total for this line
     const lineTax = +(amount * gstPercentage / 100).toFixed(2);
     const lineTotal = +(amount + lineTax).toFixed(2);
 
-    items.push({ 
-      service: svc._id, 
-      amount, 
-      description,
+    items.push({
+      serviceName: service._id,
+      amount,
+      description: item.description || service.description,
       gstPercentage, // NEW: Save GST percentage
       lineTax,       // NEW: Save calculated tax
       lineTotal      // NEW: Save line total (amount + tax)
