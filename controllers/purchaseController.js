@@ -247,10 +247,13 @@ exports.createPurchaseEntry = async (req, res) => {
           if (!vendorDoc) throw new Error("Vendor not found or unauthorized");
 
           // Validate the bank field - make sure the bank belongs to the company
-          const selectedBank = await BankDetail.findById(bank);
-          // if (!selectedBank || !selectedBank.company.equals(companyId)) {
-          //   throw new Error("Invalid bank selected for this company");
-          // }
+          let selectedBank = null;
+          if (bank && mongoose.Types.ObjectId.isValid(bank)) {
+            selectedBank = await BankDetail.findById(bank);
+            if (!selectedBank || !selectedBank.company.equals(companyId)) {
+              throw new Error("Invalid bank selected for this company");
+            }
+          }
 
           let normalizedProducts = [], productsTotal = 0;
           if (Array.isArray(products) && products.length > 0) {
@@ -289,7 +292,7 @@ exports.createPurchaseEntry = async (req, res) => {
             gstPercentage,
             invoiceType,
             gstin: companyDoc.gstin || null,
-            bank: req.body.bank,
+            bank: bank && mongoose.Types.ObjectId.isValid(bank) ? bank : null,
           }], { session });
           entry = docs[0];
 
