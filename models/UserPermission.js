@@ -10,20 +10,20 @@ const userPermissionSchema = new mongoose.Schema(
     user:   { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
 
     // --- capability flags (null = inherit from client Permission) ---
-    canCreateInventory:       { type: Boolean, default: null },
-    canCreateCustomers:       { type: Boolean, default: null },
-    canCreateVendors:         { type: Boolean, default: null },
-    canCreateCompanies:       { type: Boolean, default: null },
-    canUpdateCompanies:       { type: Boolean, default: null },
-    canSendInvoiceEmail:      { type: Boolean, default: null },
-    canSendInvoiceWhatsapp:   { type: Boolean, default: null },
-    canCreateSaleEntries:     { type: Boolean, default: null },
-    canCreatePurchaseEntries: { type: Boolean, default: null },
-    canCreateJournalEntries:  { type: Boolean, default: null },
-    canCreateReceiptEntries:  { type: Boolean, default: null },
-    canCreatePaymentEntries:  { type: Boolean, default: null },
-    canShowCustomers:         { type: Boolean, default: null }, // New field for showing customers in the sales section
-    canShowVendors:           { type: Boolean, default: null }, 
+    canCreateInventory:       { type: Boolean, default: false },
+    canCreateCustomers:       { type: Boolean, default: false },
+    canCreateVendors:         { type: Boolean, default: false },
+    canCreateCompanies:       { type: Boolean, default: false },
+    canUpdateCompanies:       { type: Boolean, default: false },
+    canSendInvoiceEmail:      { type: Boolean, default: false },
+    canSendInvoiceWhatsapp:   { type: Boolean, default: false },
+    canCreateSaleEntries:     { type: Boolean, default: false },
+    canCreatePurchaseEntries: { type: Boolean, default: false },
+    canCreateJournalEntries:  { type: Boolean, default: false },
+    canCreateReceiptEntries:  { type: Boolean, default: false },
+    canCreatePaymentEntries:  { type: Boolean, default: false },
+    canShowCustomers:         { type: Boolean, default: false }, // New field for showing customers in the sales section
+    canShowVendors:           { type: Boolean, default: false }, 
 
     // optional scoping
     allowedCompanies: [{ type: mongoose.Schema.Types.ObjectId, ref: "Company" }],
