@@ -174,6 +174,8 @@ exports.getSalesEntries = async (req, res) => {
         strictPopulate: false,
       }) // ✅
       .populate("company", "businessName")
+      .populate("shippingAddress")
+      .populate("bank")
       .sort({ date: -1 });
     // Return consistent format
 
@@ -223,6 +225,8 @@ exports.getSalesEntriesByClient = async (req, res) => {
         strictPopulate: false,
       })
       .populate("company", "businessName")
+      .populate("shippingAddress")
+      .populate("bank")
       .sort({ date: -1 });
 
     // Cache the fetched data in Redis for future requests
@@ -446,6 +450,7 @@ exports.createSalesEntry = async (req, res) => {
       party,
       totalAmount,
       bank,
+      shippingAddress,
     } = req.body;
 
     if (!party) {
@@ -487,6 +492,8 @@ exports.createSalesEntry = async (req, res) => {
         taxAmount: taxAmountIn,
         invoiceTotal: invoiceTotalIn,
         notes,
+        shippingAddress,
+        bank,
       } = req.body;
 
       companyDoc = await Company.findOne({
@@ -578,6 +585,8 @@ exports.createSalesEntry = async (req, res) => {
                 paymentMethod,
                 createdByUser: req.auth.userId,
                 notes: notes || "",
+                shippingAddress: shippingAddress,
+                bank: bank,
               },
             ],
             { session }
@@ -832,7 +841,7 @@ exports.updateSalesEntry = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
-    const { products, services, paymentMethod, totalAmount, party, ...otherUpdates } = req.body;
+    const { products, services, paymentMethod, totalAmount, party, shippingAddress, bank, ...otherUpdates } = req.body;
 
     // Store original values for credit adjustment
     const originalPaymentMethod = entry.paymentMethod;
@@ -895,6 +904,12 @@ exports.updateSalesEntry = async (req, res) => {
     }
     if (notes !== undefined) {
       entry.notes = notes;
+    }
+    if (shippingAddress !== undefined) {
+      entry.shippingAddress = shippingAddress;
+    }
+    if (bank !== undefined) {
+      entry.bank = bank;
     }
     Object.assign(entry, rest);
 
