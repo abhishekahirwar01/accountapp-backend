@@ -13,5 +13,6 @@ router.delete("/:id", verifyClientOrAdmin, salesController.deleteSalesEntry);
 router.put("/:id", verifyClientOrAdmin, salesController.updateSalesEntry);
 router.get("/by-client/:clientId", verifyMasterAdmin, salesController.getSalesEntriesByClient);
 router.put("/", verifyClientOrAdmin, salesController.updateSalesEntry);
+router.post("/send-credit-reminder", verifyClientOrAdmin, salesController.sendCreditReminder);
 
 module.exports = router;

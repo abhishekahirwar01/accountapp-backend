@@ -219,7 +219,6 @@ exports.getPartyBalance = async (req, res) => {
 };
 
 
-
 // GET /api/parties/balances
 exports.getPartyBalancesBulk = async (req, res) => {
   try {
@@ -238,6 +237,28 @@ exports.getPartyBalancesBulk = async (req, res) => {
   }
 };
 
+// Add this to your party.controller.js
+exports.getPartyById = async (req, res) => {
+  try {
+    await ensureAuthCaps(req);
+    
+    const { id } = req.params;
+
+    const party = await Party.findOne({
+      _id: id,
+      createdByClient: req.auth.clientId
+    }).lean();
+
+    if (!party) {
+      return res.status(404).json({ message: "Party not found" });
+    }
+
+    res.json(party);
+  } catch (err) {
+    console.error("Error fetching party by ID:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
 
 exports.updateParty = async (req, res) => {
   try {
@@ -301,3 +322,4 @@ exports.deleteParty = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
