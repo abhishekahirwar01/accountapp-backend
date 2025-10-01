@@ -15,6 +15,7 @@ const {
 } = require("../utils/cacheHelpers");
 // at top of controllers/salesController.js
 const { getEffectivePermissions } = require("../services/effectivePermissions");
+const { sendCreditReminderEmail } = require("../services/emailService");
 const { createNotification } = require("./notificationController");
 const User = require("../models/User");
 const Client = require("../models/Client");
@@ -327,195 +328,7 @@ exports.getSalesEntriesByClient = async (req, res) => {
   }
 };
 
-// exports.createSalesEntry = async (req, res) => {
-//   const session = await mongoose.startSession();
-//   let entry, companyDoc, partyDoc;
 
-//   try {
-//     await ensureAuthCaps(req);
-//     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
-//       return res
-//         .status(403)
-//         .json({ message: "Not allowed to create sales entries" });
-//     }
-
-//     const { company: companyId, paymentMethod, party, totalAmount } = req.body;
-
-//     if (!party) {
-//       return res.status(400).json({ message: "Customer ID is required" });
-//     }
-
-//     if (paymentMethod === "Credit") {
-//       partyDoc = await Party.findById(party);
-//       if (!partyDoc) {
-//         return res.status(404).json({ message: "Customer not found" });
-//       }
-//       partyDoc.balance += totalAmount;
-//       await partyDoc.save();
-//     }
-
-//     if (!companyAllowedForUser(req, companyId)) {
-//       return res
-//         .status(403)
-//         .json({ message: "You are not allowed to use this company" });
-//     }
-
-//     await session.withTransaction(async () => {
-//       const {
-//         party,
-//         company: companyId,
-//         date,
-//         products,
-//         services,
-//         totalAmount,
-//         description,
-//         referenceNumber,
-//         gstPercentage,
-//         gstRate,
-//         discountPercentage,
-//         invoiceType,
-//         taxAmount: taxAmountIn,
-//         invoiceTotal: invoiceTotalIn,
-//       } = req.body;
-
-//       companyDoc = await Company.findOne({
-//         _id: companyId,
-//         client: req.auth.clientId,
-//       }).session(session);
-//       if (!companyDoc) throw new Error("Invalid company selected");
-
-//       partyDoc = await Party.findOne({
-//         _id: party,
-//         createdByClient: req.auth.clientId,
-//       }).session(session);
-//       if (!partyDoc) throw new Error("Customer not found or unauthorized");
-
-//       if (paymentMethod === "Credit") {
-//   await Party.updateOne(
-//     { _id: partyDoc._id, createdByClient: req.auth.clientId },
-//     { $inc: { balance: finalTotal } },
-//     { session }
-//   );
-// }
-
-//       // Normalize products with GST calculations
-//       let normalizedProducts = [], productsTotal = 0, productsTax = 0;
-//       if (Array.isArray(products) && products.length > 0) {
-//         const { items, computedTotal, computedTax } = await normalizeProducts(
-//           products,
-//           req.auth.clientId
-//         );
-//         normalizedProducts = items;
-//         productsTotal = computedTotal;
-//         productsTax = computedTax;
-//       }
-
-//       // Normalize services with GST calculations
-//       let normalizedServices = [], servicesTotal = 0, servicesTax = 0;
-//       if (Array.isArray(services) && services.length > 0) {
-//         const { items, computedTotal, computedTax } = await normalizeServices(
-//           services,
-//           req.auth.clientId
-//         );
-//         normalizedServices = items;
-//         servicesTotal = computedTotal;
-//         servicesTax = computedTax;
-//       }
-
-//       const computedSubtotal = (productsTotal || 0) + (servicesTotal || 0);
-//       const computedTaxAmount = (productsTax || 0) + (servicesTax || 0);
-
-//       // Use computed values if not explicitly provided
-//       const finalTotal = typeof totalAmount === "number"
-//         ? totalAmount
-//         : typeof invoiceTotalIn === "number"
-//           ? invoiceTotalIn
-//           : +(computedSubtotal + computedTaxAmount).toFixed(2);
-
-//       const finalTaxAmount = typeof taxAmountIn === "number"
-//         ? taxAmountIn
-//         : computedTaxAmount;
-
-//       const atDate = date ? new Date(date) : new Date();
-
-//       let attempts = 0;
-//       while (true) {
-//         attempts++;
-//         const { invoiceNumber, yearYY, seq, prefix } =
-//           await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
-
-//         try {
-//           const docs = await SalesEntry.create(
-//             [
-//               {
-//                 party: partyDoc._id,
-//                 company: companyDoc._id,
-//                 client: req.auth.clientId,
-//                 date,
-//                 products: normalizedProducts,
-//                 services: normalizedServices,
-//                 totalAmount: finalTotal,
-//                 taxAmount: finalTaxAmount, // NEW: Save total tax amount
-//                 subTotal: computedSubtotal, // NEW: Save subtotal
-//                 description,
-//                 referenceNumber,
-//                 gstPercentage: computedTaxAmount > 0 ?
-//                   +((computedTaxAmount / computedSubtotal) * 100).toFixed(2) : 0,
-//                 discountPercentage,
-//                 invoiceType,
-//                 gstin: companyDoc.gstin || null,
-//                 invoiceNumber,
-//                 invoiceYearYY: yearYY,
-//                 paymentMethod,
-//                 createdByUser: req.auth.userId,
-//               },
-//             ],
-//             { session }
-//           );
-
-//           entry = docs[0];
-
-//           await IssuedInvoiceNumber.create(
-//             [
-//               {
-//                 company: companyDoc._id,
-//                 series: "sales",
-//                 invoiceNumber,
-//                 yearYY,
-//                 seq,
-//                 prefix,
-//               },
-//             ],
-//             { session }
-//           );
-
-//           break;
-//         } catch (e) {
-//           if (e?.code === 11000 && attempts < 20) {
-//             continue;
-//           }
-//           throw e;
-//         }
-//       }
-//     });
-
-//     const clientId = entry.client.toString();  // Retrieve clientId from the entry
-
-//     // Call the reusable cache deletion function
-//     await deleteSalesEntryCache(clientId, companyId);
-
-//     return res
-//       .status(201)
-//       .json({ message: "Sales entry created successfully", entry });
-//   } catch (err) {
-//     console.error("createSalesEntry error:", err);
-//     return res
-//       .status(500)
-//       .json({ message: "Something went wrong", error: err.message });
-//   } finally {
-//     session.endSession();
-//   }
-// };
 exports.createSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
   let entry, companyDoc, partyDoc, selectedBank;
@@ -733,174 +546,7 @@ const sameTenant = (entryClientId, userClientId) => {
   return entryClientId.toString() === userClientId.toString();
 };
 
-// UPDATE a sales entry (replace your current function)
-// exports.updateSalesEntry = async (req, res) => {
-//   const session = await mongoose.startSession();
 
-//   try {
-//     // Ensure the user has permission
-//     await ensureAuthCaps(req);
-//     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
-//       return res
-//         .status(403)
-//         .json({ message: "Not allowed to update sales entries" });
-//     }
-
-//     // Find the sales entry by ID
-//     const entry = await SalesEntry.findById(req.params.id);
-//     if (!entry)
-//       return res.status(404).json({ message: "Sales entry not found" });
-
-//     // Tenant auth: allow privileged roles or same tenant only
-//     if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
-//       return res.status(403).json({ message: "Unauthorized" });
-//     }
-
-//     const { products, services, ...otherUpdates } = req.body;
-
-//     // If company is being changed, check permission + existence
-//     if (otherUpdates.company) {
-//       if (!companyAllowedForUser(req, otherUpdates.company)) {
-//         return res
-//           .status(403)
-//           .json({ message: "You are not allowed to use this company" });
-//       }
-//       const company = await Company.findOne({
-//         _id: otherUpdates.company,
-//         client: req.auth.clientId,
-//       });
-//       if (!company) {
-//         return res.status(400).json({ message: "Invalid company selected" });
-//       }
-//     }
-
-//     // If party is being changed, validate it belongs to the same tenant
-//     let partyDoc = null;
-//     if (otherUpdates.party) {
-//       partyDoc = await Party.findOne({
-//         _id: otherUpdates.party,
-//         createdByClient: req.auth.clientId,
-//       });
-//       if (!partyDoc) {
-//         return res
-//           .status(400)
-//           .json({ message: "Customer not found or unauthorized" });
-//       }
-//     }
-
-//     let productsTotal = 0;
-//     let servicesTotal = 0;
-
-//     // Normalize product lines only if provided (Array.isArray allows clearing with [])
-//     if (Array.isArray(products)) {
-//       const { items: normalizedProducts, computedTotal } =
-//         await normalizeProducts(products, req.auth.clientId);
-//       entry.products = normalizedProducts;
-//       productsTotal = computedTotal;
-//     }
-
-//     // Normalize service lines only if provided (Array.isArray allows clearing with [])
-//     if (Array.isArray(services)) {
-//       const { items: normalizedServices, computedTotal } =
-//         await normalizeServices(services, req.auth.clientId);
-//       entry.services = normalizedServices;
-//       servicesTotal = computedTotal;
-//     }
-
-//     // Don’t allow changing invoiceNumber/year from payload
-//     const {
-//       totalAmount,
-//       invoiceNumber,
-//       invoiceYearYY,
-//       gstRate,
-//       notes,
-//       ...rest
-//     } = otherUpdates;
-//     if (typeof gstRate === "number") {
-//       entry.gstPercentage = gstRate;
-//     }
-//     if (notes !== undefined) {
-//       entry.notes = notes;
-//     }
-//     Object.assign(entry, rest);
-
-//     // Recalculate total if not explicitly provided
-//     if (typeof totalAmount === "number") {
-//       entry.totalAmount = totalAmount;
-//     } else {
-//       const sumProducts =
-//         productsTotal ||
-//         (Array.isArray(entry.products)
-//           ? entry.products.reduce((s, it) => s + (Number(it.amount) || 0), 0)
-//           : 0);
-//       const sumServices =
-//         servicesTotal ||
-//         (Array.isArray(entry.services)
-//           ? entry.services.reduce((s, it) => s + (Number(it.amount) || 0), 0)
-//           : 0);
-//       entry.totalAmount = sumProducts + sumServices;
-//     }
-
-//     await notifyAdminOnSalesAction({
-//       req,
-//       action: "update",
-//       partyName:
-//         (partyDoc ? partyDoc.name : null) ||
-//         entry?.party?.name ||
-//         "Unknown Party",
-//       entryId: entry._id,
-//       companyId: entry.company?.toString(),
-//     });
-
-//     // Adjust party balance on payment method update
-//     if (!partyDoc) {
-//       partyDoc = await Party.findOne({
-//         _id: entry.party,
-//         createdByClient: req.auth.clientId,
-//       });
-//     }
-
-//     const originalPaymentMethod = entry.paymentMethod;
-//     const originalAmount = entry.totalAmount || 0;
-//     const newPaymentMethod =
-//       otherUpdates.paymentMethod || originalPaymentMethod;
-//     const newAmount =
-//       typeof totalAmount === "number" ? totalAmount : entry.totalAmount;
-
-//     if (originalPaymentMethod !== "Credit" && newPaymentMethod === "Credit") {
-//       partyDoc.balance += newAmount;
-//       await partyDoc.save();
-//     } else if (
-//       originalPaymentMethod === "Credit" &&
-//       newPaymentMethod !== "Credit"
-//     ) {
-//       partyDoc.balance -= originalAmount;
-//       await partyDoc.save();
-//     } else if (
-//       originalPaymentMethod === "Credit" &&
-//       newPaymentMethod === "Credit" &&
-//       originalAmount !== newAmount
-//     ) {
-//       const difference = newAmount - originalAmount;
-//       partyDoc.balance += difference;
-//       await partyDoc.save();
-//     }
-
-//     await entry.save();
-
-//     // Retrieve companyId and clientId from the sales entry to delete related cache
-//     const companyId = entry.company.toString();
-//     const clientId = entry.client.toString(); // Retrieve clientId from the entry
-
-//     // Call the reusable cache deletion function
-//     await deleteSalesEntryCache(clientId, companyId);
-
-//     res.json({ message: "Sales entry updated successfully", entry });
-//   } catch (err) {
-//     console.error("Error updating sales entry:", err);
-//     res.status(500).json({ error: err.message });
-//   }
-// };
 
 exports.updateSalesEntry = async (req, res) => {
   const session = await mongoose.startSession();
@@ -1151,3 +797,331 @@ exports.deleteSalesEntry = async (req, res) => {
     session.endSession();
   }
 };
+
+
+
+// controllers/salesController.js - Update sendCreditReminder function
+// exports.sendCreditReminder = async (req, res) => {
+//   try {
+//     const { 
+//       transactionId, 
+//       partyId, 
+//       daysOverdue, 
+//       pendingAmount,
+//       emailSubject,
+//       emailContent,
+//       isHtml = false
+//     } = req.body;
+
+//     // Get transaction details with populated data
+//     const transaction = await SalesEntry.findById(transactionId)
+//       .populate('party', 'name email contactNumber')
+//       .populate('company', 'businessName emailId')
+//       .populate('client');
+
+//     if (!transaction) {
+//       return res.status(404).json({ message: 'Transaction not found' });
+//     }
+
+//     // Get party details
+//     const party = await Party.findById(partyId);
+//     if (!party) {
+//       return res.status(404).json({ message: 'Party not found' });
+//     }
+
+//     // Check if party has email
+//     if (!party.email) {
+//       return res.status(400).json({ 
+//         message: 'Customer does not have an email address' 
+//       });
+//     }
+
+//     // Use custom content if provided, otherwise generate default
+//     const subject = emailSubject || `Payment Reminder - Invoice ${transaction.invoiceNumber}`;
+//     const content = emailContent || generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount);
+
+//     // Send credit reminder email
+//     await sendCreditReminderEmail({
+//       to: party.email,
+//       customerName: party.name,
+//       companyName: transaction.company.businessName,
+//       invoiceNumber: transaction.invoiceNumber || transaction.referenceNumber || 'N/A',
+//       invoiceDate: transaction.date,
+//       daysOverdue: daysOverdue,
+//       pendingAmount: pendingAmount,
+//       companyEmail: transaction.company.emailId,
+//       customSubject: subject,
+//       customContent: content,
+//       isHtml: isHtml
+//     });
+
+//     // Create notification for the reminder
+//     // await createNotification(
+//     //   `Credit reminder sent to ${party.name} for ₹${pendingAmount} (Invoice: ${transaction.invoiceNumber})`,
+//     //   req.auth.userId,
+//     //   req.auth.userId,
+//     //   'reminder',
+//     //   'sales',
+//     //   transactionId,
+//     //   req.auth.clientId
+//     // );
+
+//     res.json({ 
+//       message: 'Credit reminder sent successfully',
+//       sentTo: party.email,
+//       customerName: party.name,
+//       amount: pendingAmount
+//     });
+//      console.log(`Credit reminder sent to ${party.email} for ${party.name}`);
+
+//   } catch (error) {
+//     console.error('Error in sendCreditReminder:', error);
+//     res.status(500).json({ 
+//       message: 'Failed to send credit reminder', 
+//       error: error.message 
+//     });
+//   }
+// };
+
+exports.sendCreditReminder = async (req, res) => {
+  try {
+    const { 
+      transactionId, 
+      partyId, 
+      daysOverdue, 
+      pendingAmount,
+      emailSubject,
+      emailContent,
+      isHtml = false
+    } = req.body;
+
+    // Get transaction details with populated data
+    const transaction = await SalesEntry.findById(transactionId)
+      .populate('party', 'name email contactNumber')
+      .populate('company', 'businessName emailId owner')
+      .populate('client');
+
+    if (!transaction) {
+      return res.status(404).json({ message: 'Transaction not found' });
+    }
+
+    // Get party details
+    const party = await Party.findById(partyId);
+    if (!party) {
+      return res.status(404).json({ message: 'Party not found' });
+    }
+
+    // Check if party has email
+    if (!party.email) {
+      return res.status(400).json({ 
+        message: 'Customer does not have an email address' 
+      });
+    }
+
+    // Use custom content if provided, otherwise generate default
+    const subject = emailSubject || `Payment Reminder - Invoice ${transaction.invoiceNumber}`;
+    const content = emailContent || generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount);
+
+    // Determine the client ID for sending email
+    let senderClientId = null;
+
+    // 1. Try to get from company owner
+    if (transaction.company?.owner) {
+      senderClientId = transaction.company.owner;
+      console.log('🔧 Using company owner as sender client:', senderClientId);
+    }
+    // 2. Fallback to authenticated client
+    else if (req.auth?.clientId) {
+      senderClientId = req.auth.clientId;
+      console.log('🔧 Using authenticated client as sender:', senderClientId);
+    }
+    // 3. Fallback to transaction client
+    else if (transaction.client) {
+      senderClientId = transaction.client._id || transaction.client;
+      console.log('🔧 Using transaction client as sender:', senderClientId);
+    }
+
+    if (!senderClientId) {
+      return res.status(400).json({ 
+        message: 'Unable to determine sender. Please connect Gmail integration.' 
+      });
+    }
+
+    // Send credit reminder email using client's Gmail
+    await sendCreditReminderEmail({
+      to: party.email,
+      customerName: party.name,
+      companyName: transaction.company.businessName,
+      invoiceNumber: transaction.invoiceNumber || transaction.referenceNumber || 'N/A',
+      invoiceDate: transaction.date,
+      daysOverdue: daysOverdue,
+      pendingAmount: pendingAmount,
+      companyEmail: transaction.company.emailId,
+      companyId: transaction.company?._id, // Pass company ID
+      clientId: senderClientId, // Pass determined client ID
+      customSubject: subject,
+      customContent: content,
+      isHtml: isHtml
+    });
+
+    // Create notification for the reminder
+    // await createNotification(
+    //   `Credit reminder sent to ${party.name} for ₹${pendingAmount} (Invoice: ${transaction.invoiceNumber})`,
+    //   req.auth.userId,
+    //   req.auth.userId,
+    //   'reminder',
+    //   'sales',
+    //   transactionId,
+    //   req.auth.clientId
+    // );
+
+    res.json({ 
+      message: 'Credit reminder sent successfully',
+      sentTo: party.email,
+      customerName: party.name,
+      amount: pendingAmount,
+      sentFrom: 'Client Gmail' // Indicate it was sent from client's email
+    });
+    
+    console.log(`✅ Credit reminder sent from client Gmail to ${party.email} for ${party.name}`);
+
+  } catch (error) {
+    console.error('Error in sendCreditReminder:', error);
+    
+    // Handle specific Gmail connection errors
+    if (error.message.includes('Gmail is not connected') || 
+        error.message.includes('No client Gmail available') ||
+        error.message.includes('Gmail access was revoked')) {
+      return res.status(400).json({ 
+        message: 'Gmail not connected. Please connect your Gmail account in settings to send emails.',
+        error: error.message 
+      });
+    }
+    
+    res.status(500).json({ 
+      message: 'Failed to send credit reminder', 
+      error: error.message 
+    });
+  }
+};
+
+// Helper function to generate default email content
+// function generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount) {
+//   const invoiceNumber = transaction.invoiceNumber || transaction.referenceNumber || 'N/A';
+//   const invoiceDate = new Date(transaction.date).toLocaleDateString();
+//   const formattedAmount = new Intl.NumberFormat('en-IN').format(pendingAmount);
+  
+//   return `Dear ${party.name},
+
+// This is a friendly reminder regarding your outstanding payment. The following invoice is currently pending:
+
+// Invoice Number: ${invoiceNumber}
+// Invoice Date: ${invoiceDate}
+// Days Outstanding: ${daysOverdue} days
+// Pending Amount: ₹${formattedAmount}
+
+// ${daysOverdue > 30 ? `This invoice is ${daysOverdue - 30} days overdue. Please process the payment immediately to avoid any disruption in services.` : 'Please process this payment at your earliest convenience.'}
+
+// If you have already made the payment, please disregard this reminder. For any queries regarding this invoice, please contact us.
+
+// Thank you for your business!
+
+// Best regards,
+// ${transaction.company.businessName}
+// ${transaction.company.emailId ? `Email: ${transaction.company.emailId}` : ''}`;
+// }
+
+// Enhanced helper function to generate HTML email content
+function generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount) {
+  const invoiceNumber = transaction.invoiceNumber || transaction.referenceNumber || 'N/A';
+  const invoiceDate = new Date(transaction.date).toLocaleDateString();
+  const formattedAmount = new Intl.NumberFormat('en-IN').format(pendingAmount);
+  
+  const overdueNotice = daysOverdue > 30 
+    ? `<p style="color: #d32f2f; font-weight: bold;">This invoice is ${daysOverdue - 30} days overdue. Please process the payment immediately to avoid any disruption in services.</p>`
+    : '<p>Please process this payment at your earliest convenience.</p>';
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { 
+      font-family: Arial, sans-serif; 
+      line-height: 1.6; 
+      color: #333; 
+      max-width: 600px; 
+      margin: 0 auto; 
+      padding: 20px;
+      background-color: #f9f9f9;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .header {
+      border-bottom: 2px solid #4CAF50;
+      padding-bottom: 15px;
+      margin-bottom: 20px;
+    }
+    .amount {
+      font-size: 24px;
+      font-weight: bold;
+      color: #d32f2f;
+      margin: 15px 0;
+    }
+    .footer {
+      margin-top: 30px;
+      padding-top: 20px;
+      border-top: 1px solid #ddd;
+      color: #666;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h2>Payment Reminder</h2>
+    </div>
+    
+    <p>Dear <strong>${party.name}</strong>,</p>
+    
+    <p>This is a friendly reminder regarding your outstanding payment. The following invoice is currently pending:</p>
+    
+    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Invoice Number:</strong></td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;">${invoiceNumber}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Invoice Date:</strong></td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;">${invoiceDate}</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Days Outstanding:</strong></td>
+        <td style="padding: 8px; border-bottom: 1px solid #eee;">${daysOverdue} days</td>
+      </tr>
+      <tr>
+        <td style="padding: 8px;"><strong>Pending Amount:</strong></td>
+        <td style="padding: 8px;" class="amount">₹${formattedAmount}</td>
+      </tr>
+    </table>
+    
+    ${overdueNotice}
+    
+    <p>If you have already made the payment, please disregard this reminder. For any queries regarding this invoice, please contact us.</p>
+    
+    <p>Thank you for your business!</p>
+    
+    <div class="footer">
+      <p><strong>Best regards,</strong><br>
+      ${transaction.company.businessName}<br>
+      ${transaction.company.emailId ? `Email: ${transaction.company.emailId}` : ''}</p>
+    </div>
+  </div>
+</body>
+</html>`;
+}
