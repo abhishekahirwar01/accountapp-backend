@@ -1,5 +1,48 @@
 const Service = require("../models/Service");
 const { resolveClientId } = require("./common/tenant");
+const { createNotification } = require("./notificationController");
+const { resolveActor, findAdminUser } = require("../utils/actorUtils");
+
+
+// Build message text per action
+function buildServiceNotificationMessage(action, { actorName, serviceName }) {
+  const sName = serviceName || "Unknown Service";
+  switch (action) {
+    case "create":
+      return `New service created by ${actorName}: ${sName}`;
+    case "update":
+      return `Service updated by ${actorName}: ${sName}`;
+    case "delete":
+      return `Service deleted by ${actorName}: ${sName}`;
+    default:
+      return `Service ${action} by ${actorName}: ${sName}`;
+  }
+}
+
+// Unified notifier for service module
+async function notifyAdminOnServiceAction({ req, action, serviceName, entryId }) {
+  const actor = await resolveActor(req);
+  const adminUser = await findAdminUser();
+  if (!adminUser) {
+    console.warn("notifyAdminOnServiceAction: no admin user found");
+    return;
+  }
+
+  const message = buildServiceNotificationMessage(action, {
+    actorName: actor.name,
+    serviceName,
+  });
+
+  await createNotification(
+    message,
+    adminUser._id, // recipient (admin)
+    actor.id, // actor id (user OR client)
+    action, // "create" | "update" | "delete"
+    "service", // entry type / category
+    entryId, // service id
+    req.auth.clientId
+  );
+}
 
 // Create
 exports.createService = async (req, res) => {
@@ -14,6 +57,15 @@ exports.createService = async (req, res) => {
     });
 
     await service.save();
+
+    // Notify admin after service created
+    await notifyAdminOnServiceAction({
+      req,
+      action: "create",
+      serviceName: service.serviceName,
+      entryId: service._id,
+    });
+
     res.status(201).json({ message: "Service created", service });
   } catch (err) {
     if (err.code === 11000) {
@@ -81,6 +133,15 @@ exports.updateService = async (req, res) => {
     if (typeof description === "string") service.description = description;
 
     await service.save();
+
+    // Notify admin after service updated
+    await notifyAdminOnServiceAction({
+      req,
+      action: "update",
+      serviceName: service.serviceName,
+      entryId: service._id,
+    });
+
     res.json({ message: "Service updated", service });
   } catch (err) {
     if (err.code === 11000) {
@@ -101,6 +162,14 @@ exports.deleteService = async (req, res) => {
     if (!privileged && !sameTenant) {
       return res.status(403).json({ message: "Not authorized" });
     }
+
+    // Notify admin before deleting
+    await notifyAdminOnServiceAction({
+      req,
+      action: "delete",
+      serviceName: service.serviceName,
+      entryId: service._id,
+    });
 
     await service.deleteOne();
     res.json({ message: "Service deleted successfully" });

@@ -1,6 +1,8 @@
 // controllers/vendor.controller.js
 const Vendor = require("../models/Vendor");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
+const { createNotification } = require("./notificationController");
+const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -32,6 +34,47 @@ async function ensureAuthCaps(req) {
     if (!req.auth.caps) req.auth.caps = caps;
     if (!req.auth.allowedCompanies) req.auth.allowedCompanies = allowedCompanies;
   }
+}
+
+
+// Build message text per action
+function buildVendorNotificationMessage(action, { actorName, vendorName }) {
+  const vName = vendorName || "Unknown Vendor";
+  switch (action) {
+    case "create":
+      return `New vendor created by ${actorName}: ${vName}`;
+    case "update":
+      return `Vendor updated by ${actorName}: ${vName}`;
+    case "delete":
+      return `Vendor deleted by ${actorName}: ${vName}`;
+    default:
+      return `Vendor ${action} by ${actorName}: ${vName}`;
+  }
+}
+
+// Unified notifier for vendor module
+async function notifyAdminOnVendorAction({ req, action, vendorName, entryId }) {
+  const actor = await resolveActor(req);
+  const adminUser = await findAdminUser();
+  if (!adminUser) {
+    console.warn("notifyAdminOnVendorAction: no admin user found");
+    return;
+  }
+
+  const message = buildVendorNotificationMessage(action, {
+    actorName: actor.name,
+    vendorName,
+  });
+
+  await createNotification(
+    message,
+    adminUser._id, // recipient (admin)
+    actor.id, // actor id (user OR client)
+    action, // "create" | "update" | "delete"
+    "vendor", // entry type / category
+    entryId, // vendor id
+    req.auth.clientId
+  );
 }
 
 exports.createVendor = async (req, res) => {
@@ -81,6 +124,14 @@ exports.createVendor = async (req, res) => {
       isTDSApplicable,
       createdByClient: req.auth.clientId,
       createdByUser: req.auth.userId,
+    });
+
+    // Notify admin after vendor created
+    await notifyAdminOnVendorAction({
+      req,
+      action: "create",
+      vendorName: vendor.vendorName,
+      entryId: vendor._id,
     });
 
     res.status(201).json({ message: "Vendor created", vendor });
@@ -162,6 +213,15 @@ exports.updateVendor = async (req, res) => {
     if (typeof up.isTDSApplicable === "boolean") doc.isTDSApplicable = up.isTDSApplicable;
 
     await doc.save();
+
+    // Notify admin after vendor updated
+    await notifyAdminOnVendorAction({
+      req,
+      action: "update",
+      vendorName: doc.vendorName,
+      entryId: doc._id,
+    });
+
     res.json({ message: "Vendor updated", vendor: doc });
   } catch (err) {
     if (err.code === 11000) {
@@ -187,6 +247,14 @@ exports.deleteVendor = async (req, res) => {
     if (!PRIV_ROLES.has(req.auth.role) && !sameTenant) {
       return res.status(403).json({ message: "Not authorized" });
     }
+
+    // Notify admin before deleting
+    await notifyAdminOnVendorAction({
+      req,
+      action: "delete",
+      vendorName: doc.vendorName,
+      entryId: doc._id,
+    });
 
     await doc.deleteOne();
     res.json({ message: "Vendor deleted successfully" });

@@ -3,6 +3,7 @@ const PurchaseEntry = require("../models/PurchaseEntry");
 const Company = require("../models/Company");
 const Vendor = require("../models/Vendor");
 const BankDetail = require("../models/BankDetail");
+const User = require("../models/User");
 const normalizePurchaseProducts = require("../utils/normalizePurchaseProducts");
 const normalizePurchaseServices = require("../utils/normalizePurchaseServices");
 const { getFromCache, setToCache } = require('../RedisCache');
@@ -12,9 +13,7 @@ const { deletePurchaseEntryCache, deletePurchaseEntryCacheByUser } = require('..
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 
 const { createNotification } = require("./notificationController");
-const User = require("../models/User");
-const Role = require("../models/Role")
-const Client = require("../models/Client"); // ⬅️ add this
+const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 
 
 
@@ -81,91 +80,6 @@ function companyAllowedForUser(req, companyId) {
 
 
 // ---------- Helpers: actor + admin notification (purchase) ----------
-
-// Robust actor resolver (works for clients and staff)
-async function resolveActor(req) {
-  const role = req.auth?.role;
-
-  // treat placeholders as invalid
-  const validName = (v) => {
-    const s = String(v ?? '').trim();
-    return s && !/^unknown$/i.test(s) && s !== '-';
-  };
-
-  // Client path: prefer token clientName, else fetch Client.contactName
-  if (role === 'client') {
-    if (validName(req.auth?.clientName)) {
-      return { id: req.auth?.clientId || null, name: String(req.auth.clientName).trim(), role, kind: 'client' };
-    }
-
-    const clientId = req.auth?.clientId;
-    if (!clientId) return { id: null, name: 'Unknown User', role, kind: 'client' };
-
-    const clientDoc = await Client.findById(clientId)
-      .select('contactName clientUsername email phone')
-      .lean();
-
-    const name =
-      (validName(clientDoc?.contactName) && clientDoc.contactName) ||
-      (validName(clientDoc?.clientUsername) && clientDoc.clientUsername) ||
-      (validName(clientDoc?.email) && clientDoc.email) ||
-      (validName(clientDoc?.phone) && clientDoc.phone) ||
-      'Unknown User';
-
-    return { id: clientId, name: String(name).trim(), role, kind: 'client' };
-  }
-
-  // Staff path
-  const claimName =
-    req.auth?.displayName ||
-    req.auth?.fullName ||
-    req.auth?.name ||
-    req.auth?.userName ||
-    req.auth?.username ||
-    null;
-
-  if (validName(claimName)) {
-    return {
-      id: req.auth?.userId || req.auth?.id || req.user?.id || null,
-      name: String(claimName).trim(),
-      role,
-      kind: 'user',
-    };
-  }
-
-  const userId = req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
-  if (!userId) return { id: null, name: 'Unknown User', role, kind: 'user' };
-
-  const userDoc = await User.findById(userId)
-    .select('displayName fullName name userName username email')
-    .lean();
-
-  const name =
-    (validName(userDoc?.displayName) && userDoc.displayName) ||
-    (validName(userDoc?.fullName) && userDoc.fullName) ||
-    (validName(userDoc?.name) && userDoc.name) ||
-    (validName(userDoc?.userName) && userDoc.userName) ||
-    (validName(userDoc?.username) && userDoc.username) ||
-    (validName(userDoc?.email) && userDoc.email) ||
-    'Unknown User';
-
-  return { id: userId, name: String(name).trim(), role, kind: 'user' };
-}
-
-// Try to find an admin for a company; fallback to any admin
-async function findAdminUser(companyId) {
-  const adminRole = await Role.findOne({ name: "admin" }).select("_id");
-  if (!adminRole) return null;
-
-  let adminUser = null;
-  if (companyId) {
-    adminUser = await User.findOne({ role: adminRole._id, companies: companyId }).select("_id");
-  }
-  if (!adminUser) {
-    adminUser = await User.findOne({ role: adminRole._id }).select("_id");
-  }
-  return adminUser;
-}
 
 // Build message per action (purchase wording)
 function buildPurchaseNotificationMessage(action, { actorName, vendorName, amount }) {

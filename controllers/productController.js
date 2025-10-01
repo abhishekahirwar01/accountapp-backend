@@ -1,5 +1,48 @@
 const Product = require("../models/Product");
 const Unit = require("../models/Unit");
+const { createNotification } = require("./notificationController");
+const { resolveActor, findAdminUser } = require("../utils/actorUtils");
+
+
+// Build message text per action
+function buildProductNotificationMessage(action, { actorName, productName }) {
+  const pName = productName || "Unknown Product";
+  switch (action) {
+    case "create":
+      return `New product created by ${actorName}: ${pName}`;
+    case "update":
+      return `Product updated by ${actorName}: ${pName}`;
+    case "delete":
+      return `Product deleted by ${actorName}: ${pName}`;
+    default:
+      return `Product ${action} by ${actorName}: ${pName}`;
+  }
+}
+
+// Unified notifier for product module
+async function notifyAdminOnProductAction({ req, action, productName, entryId }) {
+  const actor = await resolveActor(req);
+  const adminUser = await findAdminUser();
+  if (!adminUser) {
+    console.warn("notifyAdminOnProductAction: no admin user found");
+    return;
+  }
+
+  const message = buildProductNotificationMessage(action, {
+    actorName: actor.name,
+    productName,
+  });
+
+  await createNotification(
+    message,
+    adminUser._id, // recipient (admin)
+    actor.id, // actor id (user OR client)
+    action, // "create" | "update" | "delete"
+    "product", // entry type / category
+    entryId, // product id
+    req.auth.clientId
+  );
+}
 
 // POST /api/products
 exports.createProduct = async (req, res) => {
@@ -50,6 +93,15 @@ exports.createProduct = async (req, res) => {
       });
 
       // console.log('Product created successfully:', product);
+
+      // Notify admin after product created
+      await notifyAdminOnProductAction({
+        req,
+        action: "create",
+        productName: product.name,
+        entryId: product._id,
+      });
+
       return res.status(201).json({ message: "Product created", product });
     } catch (productErr) {
       console.error('Error creating product:', productErr);
@@ -136,6 +188,15 @@ exports.updateProducts = async (req, res) => {
     }
 
     await product.save();
+
+    // Notify admin after product updated
+    await notifyAdminOnProductAction({
+      req,
+      action: "update",
+      productName: product.name,
+      entryId: product._id,
+    });
+
     return res.status(200).json({ message: "Product updated", product });
   } catch (err) {
     if (err.code === 11000) {
@@ -159,6 +220,14 @@ exports.deleteProducts = async (req, res) => {
     if (!sameTenant && !privileged) {
       return res.status(403).json({ message: "Not authorized to delete this product" });
     }
+
+    // Notify admin before deleting
+    await notifyAdminOnProductAction({
+      req,
+      action: "delete",
+      productName: product.name,
+      entryId: product._id,
+    });
 
     await product.deleteOne();
     return res.status(200).json({ message: "Product deleted successfully" });
@@ -236,17 +305,12 @@ exports.updateStockBulk = async (req, res) => {
       }
     }
 
-    // compute new stocks and validate (no negatives)
+    // compute new stocks (allow negatives for sales)
     const sign = action === "increase" ? 1 : -1;
     for (const [id, qty] of qtyById.entries()) {
       const p = productMap.get(id);
       const current = Number(p.stocks || 0);
       const next = current + sign * qty;
-      if (next < 0) {
-        return res.status(400).json({
-          message: `Insufficient stock for "${p.name}". Available: ${current}, requested: ${qty}`,
-        });
-      }
       p.stocks = next;
     }
 
