@@ -48,6 +48,10 @@ const purchaseSchema = new mongoose.Schema({
   gstin: { type: String },
   invoiceNumber: { type: String, index: true },
   invoiceYearYY: { type: Number, index: true },
+  paymentMethod: {
+    type: String,
+    enum: ["Cash", "Credit", "UPI", "Bank Transfer", "Cheque"]
+  },
 }, {
   timestamps: true,
   // Add document-level validation here

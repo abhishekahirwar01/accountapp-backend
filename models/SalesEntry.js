@@ -35,6 +35,7 @@ const salesSchema = new mongoose.Schema({
   date: { type: Date, required: true },
 
   bank: { type: mongoose.Schema.Types.ObjectId, ref: "BankDetail"},
+  shippingAddress: { type: mongoose.Schema.Types.ObjectId, ref: "ShippingAddress" },
 
   products: {
     type: [salesItemSchema],
@@ -76,7 +77,7 @@ const salesSchema = new mongoose.Schema({
   invoiceYearYY: { type: Number, index: true },
   paymentMethod: {
     type: String,
-    enum: ["Cash", "Credit", "UPI", "Bank Transfer"]
+    enum: ["Cash", "Credit", "UPI", "Bank Transfer", "Cheque"]
   },
   notes: {
     type: String,

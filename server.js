@@ -28,6 +28,7 @@ const roleRoutes = require('./routes/roleRoutes')
 const userPermissionsRoutes = require("./routes/userPermissionsRoutes");
 const bankDetailRoutes = require("./routes/bankDetailRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const shippingAddressRoutes = require("./routes/shippingAddressRoutes");
 
 const unitRoutes = require("./routes/unitRoutes")
 
@@ -128,6 +129,7 @@ app.use("/api/account", AccountValidityRoutes);
 app.use("/api/user-permissions", userPermissionsRoutes);
 app.use("/api/bank-details", bankDetailRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/shipping-addresses", shippingAddressRoutes);
 
 app.use("/api/update-notifications", updateNotificationRoutes);
 

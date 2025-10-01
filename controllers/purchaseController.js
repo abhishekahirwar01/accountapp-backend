@@ -150,7 +150,7 @@ exports.createPurchaseEntry = async (req, res) => {
         await session.withTransaction(async () => {
           const {
             vendor, company: _companyId, date, products, services,
-            totalAmount, description, referenceNumber, gstPercentage, invoiceType,
+            totalAmount, description, referenceNumber, gstPercentage, invoiceType, paymentMethod,
           } = req.body;
 
           // Make sure companyId is defined here
@@ -160,12 +160,12 @@ exports.createPurchaseEntry = async (req, res) => {
           vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.auth.clientId }).session(session);
           if (!vendorDoc) throw new Error("Vendor not found or unauthorized");
 
-          // Validate the bank field - make sure the bank belongs to the company
+          // Validate the bank field - make sure the bank belongs to the company (optional)
           let selectedBank = null;
           if (bank && mongoose.Types.ObjectId.isValid(bank)) {
             selectedBank = await BankDetail.findById(bank);
             if (!selectedBank || !selectedBank.company.equals(companyId)) {
-              throw new Error("Invalid bank selected for this company");
+              selectedBank = null; // Invalid bank, set to null
             }
           }
 
@@ -207,6 +207,7 @@ exports.createPurchaseEntry = async (req, res) => {
             invoiceType,
             gstin: companyDoc.gstin || null,
             bank: bank && mongoose.Types.ObjectId.isValid(bank) ? bank : null,
+            paymentMethod,
           }], { session });
           entry = docs[0];
 
