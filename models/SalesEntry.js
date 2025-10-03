@@ -35,6 +35,7 @@ const salesSchema = new mongoose.Schema({
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
   createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
   date: { type: Date, required: true },
+  dueDate: { type: Date },
 
   bank: { type: mongoose.Schema.Types.ObjectId, ref: "BankDetail"},
   shippingAddress: { type: mongoose.Schema.Types.ObjectId, ref: "ShippingAddress" },
