@@ -9,10 +9,11 @@ const salesItemSchema = new mongoose.Schema({
   unitType: { type: String, enum: UNIT_TYPES, default: "Piece" },
   otherUnit : {type: String},
   amount: { type: Number, required: true, min: 0 },
-   // New fields to store GST-related information
+    // New fields to store GST-related information
   gstPercentage: { type: Number, default: 18 },  // Default GST percentage can be set here
   lineTax: { type: Number, required: true, min: 0 }, // GST amount for this product line
   lineTotal: { type: Number, required: true, min: 0 }, // Final total with GST
+  hsn: { type: String, trim: true },
 }, { _id: false });
 
 const salesServiceSchema = new mongoose.Schema({
@@ -24,6 +25,7 @@ const salesServiceSchema = new mongoose.Schema({
   gstPercentage: { type: Number, default: 18 },  // Default GST percentage for services
   lineTax: { type: Number, required: true, min: 0 }, // GST amount for this service line
   lineTotal: { type: Number, required: true, min: 0 }, // Final total with GST for the service
+  sac: { type: String, trim: true },
 }, { _id: false });
 
 
