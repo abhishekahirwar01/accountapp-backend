@@ -10,10 +10,10 @@ module.exports = async function normalizeServices(rows, clientId) {
     const id = r.service;
     if (!id) continue;
 
-    const svc = await Service.findOne({ 
-      _id: id, 
-      createdByClient: clientId 
-    }).select("_id gstPercentage").lean();
+    const svc = await Service.findOne({
+      _id: id,
+      createdByClient: clientId
+    }).select("_id gstPercentage sac").lean();
     
     if (!svc) continue;
 
@@ -27,13 +27,14 @@ module.exports = async function normalizeServices(rows, clientId) {
     const lineTax = +(amount * gstPercentage / 100).toFixed(2);
     const lineTotal = +(amount + lineTax).toFixed(2);
 
-    items.push({ 
-      service: svc._id, 
-      amount, 
+    items.push({
+      service: svc._id,
+      amount,
       description,
       gstPercentage, // NEW: Save GST percentage
       lineTax,       // NEW: Save calculated tax
-      lineTotal      // NEW: Save line total (amount + tax)
+      lineTotal,     // NEW: Save line total (amount + tax)
+      sac: svc.sac
     });
 
     computedTotal += amount;

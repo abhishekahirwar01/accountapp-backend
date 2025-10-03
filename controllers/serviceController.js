@@ -47,11 +47,12 @@ async function notifyAdminOnServiceAction({ req, action, serviceName, entryId })
 // Create
 exports.createService = async (req, res) => {
   try {
-    const { serviceName, amount, description } = req.body;
+    const { serviceName, amount, description, sac } = req.body;
     const service = await Service.create({
       serviceName,
       amount,
       description,
+      sac,
       createdByClient: req.auth.clientId,  // TENANT
       createdByUser: req.auth.userId,    // ACTOR (remove if not in schema)
     });
@@ -127,10 +128,11 @@ exports.updateService = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const { serviceName, amount, description } = req.body;
+    const { serviceName, amount, description, sac } = req.body;
     if (serviceName) service.serviceName = serviceName;
     if (typeof amount === "number" && amount >= 0) service.amount = amount;
     if (typeof description === "string") service.description = description;
+    if (sac !== undefined) service.sac = sac;
 
     await service.save();
 

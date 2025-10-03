@@ -47,7 +47,7 @@ async function notifyAdminOnProductAction({ req, action, productName, entryId })
 // POST /api/products
 exports.createProduct = async (req, res) => {
   try {
-    const { name, stocks, unit } = req.body;
+    const { name, stocks, unit, hsn } = req.body;
 
     // console.log('Creating product:', { name, stocks, unit, clientId: req.auth.clientId });
 
@@ -88,6 +88,7 @@ exports.createProduct = async (req, res) => {
         name: name.trim(),
         stocks,
         unit: normalizedUnit,
+        hsn,
         createdByClient: req.auth.clientId, // tenant id
         createdByUser:   req.auth.userId,   // who created it
       });
@@ -141,7 +142,7 @@ exports.getProducts = async (req, res) => {
 exports.updateProducts = async (req, res) => {
   try {
     const productId = req.params.id;
-    const { name, stocks, unit } = req.body;
+    const { name, stocks, unit, hsn } = req.body;
 
     const product = await Product.findById(productId);
     if (!product) return res.status(404).json({ message: "Product not found" });
@@ -155,6 +156,7 @@ exports.updateProducts = async (req, res) => {
 
     if (name) product.name = name;
     if (typeof stocks === "number" && stocks >= 0) product.stocks = stocks;
+    if (hsn !== undefined) product.hsn = hsn;
 
     if (unit !== undefined) {
       let normalizedUnit = null;
@@ -347,6 +349,7 @@ exports.importProductsFromFile = async (req, res) => {
       name: item["Item Name"],
       stocks: item["Stock"],
       unit: item["Unit"],
+      hsn: item["HSN"],
     }));
 
     // Check if product already exists and handle units
@@ -384,6 +387,7 @@ exports.importProductsFromFile = async (req, res) => {
         name: product.name,
         stocks: product.stocks,
         unit: normalizedUnit,
+        hsn: product.hsn,
         createdByClient: req.auth.clientId, // Add the client ID for multi-tenancy
         createdByUser: req.auth.userId, // Add the user ID
       });

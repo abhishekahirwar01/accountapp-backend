@@ -97,7 +97,8 @@ module.exports = async (rawProducts = [], clientId, userId) => {
       amount,
       gstPercentage,
       lineTax,
-      lineTotal
+      lineTotal,
+      hsn: product.hsn
     });
 
     computedTotal += amount;
