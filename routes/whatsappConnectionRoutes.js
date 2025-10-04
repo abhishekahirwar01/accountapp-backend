@@ -2,10 +2,10 @@
 const express = require('express');
 const router = express.Router();
 const whatsappConnectionController = require('../controllers/whatsappConnectionController');
-const { authenticateToken } = require('../middleware/auth');
+const verifyClientOrAdmin = require('../middleware/verifyClientOrAdmin');
 
 // Apply authentication to all routes
-router.use(authenticateToken);
+router.use(verifyClientOrAdmin);
 
 // @desc    Get active WhatsApp connection for client
 // @route   GET /api/whatsapp/connection
@@ -20,43 +20,16 @@ router.get('/connection/status', whatsappConnectionController.checkConnectionSta
 // @desc    Create or update WhatsApp connection
 // @route   POST /api/whatsapp/connection
 // @access  Private (Customer role only - boss/admin)
-router.post('/connection', (req, res, next) => {
-  // Check if user is customer (boss/admin)
-  if (req.user.role !== 'customer') {
-    return res.status(403).json({
-      success: false,
-      message: 'Access denied. Only customer (admin) users can manage WhatsApp connections.'
-    });
-  }
-  next();
-}, whatsappConnectionController.createConnection);
+router.post('/connection', whatsappConnectionController.createConnection);
 
 // @desc    Delete (deactivate) WhatsApp connection
 // @route   DELETE /api/whatsapp/connection
 // @access  Private (Customer role only - boss/admin)
-router.delete('/connection', (req, res, next) => {
-  // Check if user is customer (boss/admin)
-  if (req.user.role !== 'customer') {
-    return res.status(403).json({
-      success: false,
-      message: 'Access denied. Only customer (admin) users can delete WhatsApp connections.'
-    });
-  }
-  next();
-}, whatsappConnectionController.deleteConnection);
+router.delete('/connection', whatsappConnectionController.deleteConnection);
 
 // @desc    Get connection history
 // @route   GET /api/whatsapp/connection/history
 // @access  Private (Customer role only - boss/admin)
-router.get('/connection/history', (req, res, next) => {
-  // Check if user is customer (boss/admin)
-  if (req.user.role !== 'customer') {
-    return res.status(403).json({
-      success: false,
-      message: 'Access denied. Only customer (admin) users can view connection history.'
-    });
-  }
-  next();
-}, whatsappConnectionController.getConnectionHistory);
+router.get('/connection/history', whatsappConnectionController.getConnectionHistory);
 
 module.exports = router;
