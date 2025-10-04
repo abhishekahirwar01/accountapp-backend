@@ -1,21 +1,45 @@
 // controllers/whatsappConnectionController.js
 const WhatsappConnection = require('../models/WhatsappConnection');
-const User = require('../models/User');
+const { getEffectivePermissions } = require("../services/effectivePermissions");
+
+const PRIV_ROLES = new Set(["master", "client", "admin"]);
+
+function userIsPriv(req) {
+  return PRIV_ROLES.has(req.auth?.role);
+}
+
+async function ensureAuthCaps(req) {
+  // normalize legacy req.user → req.auth
+  if (!req.auth && req.user) {
+    req.auth = {
+      clientId: req.user.id,
+      userId: req.user.userId || req.user.id,
+      role: req.user.role,
+      caps: req.user.caps,
+      allowedCompanies: req.user.allowedCompanies,
+      userName: req.user.userName,
+      clientName: req.user.contactName,
+    };
+  }
+  if (!req.auth) throw new Error("Unauthorized (no auth context)");
+
+  if (!req.auth.caps || !Array.isArray(req.auth.allowedCompanies)) {
+    const { caps, allowedCompanies } = await getEffectivePermissions({
+      clientId: req.auth.clientId,
+      userId: req.auth.userId,
+    });
+    if (!req.auth.caps) req.auth.caps = caps;
+    if (!req.auth.allowedCompanies) req.auth.allowedCompanies = allowedCompanies;
+  }
+}
 
 // Get active WhatsApp connection for client
 exports.getClientConnection = async (req, res) => {
   try {
-    const clientId = req.user.client_id;
-    
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found'
-      });
-    }
+    await ensureAuthCaps(req);
 
     const connection = await WhatsappConnection.findOne({
-      client_id: clientId,
+      client_id: req.auth.clientId,
       is_active: true
     }).populate('connected_by', 'name email');
 
@@ -36,16 +60,17 @@ exports.getClientConnection = async (req, res) => {
 // Create or update WhatsApp connection
 exports.createConnection = async (req, res) => {
   try {
-    const { phoneNumber, connectionData } = req.body;
-    const clientId = req.user.client_id;
-    const userId = req.user.id;
+    await ensureAuthCaps(req);
 
-    if (!clientId || !userId) {
-      return res.status(400).json({
+    // permission gate (non-privileged must have explicit capability)
+    if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canManageWhatsapp) {
+      return res.status(403).json({
         success: false,
-        message: 'Client or user not found'
+        message: 'Access denied. Only customer (admin) users can manage WhatsApp connections.'
       });
     }
+
+    const { phoneNumber, connectionData } = req.body;
 
     if (!phoneNumber) {
       return res.status(400).json({
@@ -54,38 +79,21 @@ exports.createConnection = async (req, res) => {
       });
     }
 
-    // Check if user has permission (client admin or boss)
-    const user = await User.findById(userId);
-    if (!user || user.client_id.toString() !== clientId.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: 'Access denied. You do not have permission to manage WhatsApp connections.'
-      });
-    }
-
-    // Check if user is admin or has permission
-    if (!user.can_manage_whatsapp && user.role !== 'client_admin' && user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Insufficient permissions. Only client admins can manage WhatsApp connections.'
-      });
-    }
-
     // Deactivate any existing connection
     await WhatsappConnection.updateMany(
-      { client_id: clientId, is_active: true },
+      { client_id: req.auth.clientId, is_active: true },
       { is_active: false, updatedAt: new Date() }
     );
 
     // Create new connection
     const newConnection = new WhatsappConnection({
-      client_id: clientId,
+      client_id: req.auth.clientId,
       phone_number: phoneNumber,
-      connected_by: userId,
-      connected_by_name: user.name,
+      connected_by: req.auth.userId,
+      connected_by_name: req.auth.userName || 'System User',
       connection_data: connectionData || {},
       is_active: true,
-      shared_with_users: [userId] // Include the creator
+      shared_with_users: [req.auth.userId]
     });
 
     await newConnection.save();
@@ -99,6 +107,7 @@ exports.createConnection = async (req, res) => {
       message: 'WhatsApp connection created successfully',
       connection: populatedConnection
     });
+    
   } catch (error) {
     console.error('Error creating WhatsApp connection:', error);
     
@@ -121,39 +130,23 @@ exports.createConnection = async (req, res) => {
 // Delete (deactivate) WhatsApp connection
 exports.deleteConnection = async (req, res) => {
   try {
-    const clientId = req.user.client_id;
-    const userId = req.user.id;
+    await ensureAuthCaps(req);
 
-    if (!clientId || !userId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client or user not found'
-      });
-    }
-
-    // Check permissions
-    const user = await User.findById(userId);
-    if (!user || user.client_id.toString() !== clientId.toString()) {
+    // permission gate (non-privileged must have explicit capability)
+    if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canManageWhatsapp) {
       return res.status(403).json({
         success: false,
-        message: 'Access denied'
-      });
-    }
-
-    if (!user.can_manage_whatsapp && user.role !== 'client_admin' && user.role !== 'admin') {
-      return res.status(403).json({
-        success: false,
-        message: 'Insufficient permissions. Only client admins can delete WhatsApp connections.'
+        message: 'Access denied. Only customer (admin) users can delete WhatsApp connections.'
       });
     }
 
     // Deactivate the connection (soft delete)
     const result = await WhatsappConnection.updateMany(
-      { client_id: clientId, is_active: true },
+      { client_id: req.auth.clientId, is_active: true },
       { 
         is_active: false, 
         updatedAt: new Date(),
-        deactivated_by: userId,
+        deactivated_by: req.auth.userId,
         deactivated_at: new Date()
       }
     );
@@ -179,30 +172,21 @@ exports.deleteConnection = async (req, res) => {
   }
 };
 
-// Get connection history for client (admin only)
+// Get connection history for client
 exports.getConnectionHistory = async (req, res) => {
   try {
-    const clientId = req.user.client_id;
-    const userId = req.user.id;
+    await ensureAuthCaps(req);
 
-    if (!clientId || !userId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client or user not found'
-      });
-    }
-
-    // Check permissions
-    const user = await User.findById(userId);
-    if (!user.can_manage_whatsapp && user.role !== 'client_admin' && user.role !== 'admin') {
+    // permission gate (non-privileged must have explicit capability)
+    if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canManageWhatsapp) {
       return res.status(403).json({
         success: false,
-        message: 'Insufficient permissions'
+        message: 'Access denied. Only customer (admin) users can view connection history.'
       });
     }
 
     const connections = await WhatsappConnection.find({
-      client_id: clientId
+      client_id: req.auth.clientId
     })
     .populate('connected_by', 'name email')
     .populate('deactivated_by', 'name email')
@@ -226,17 +210,10 @@ exports.getConnectionHistory = async (req, res) => {
 // Check if client has active connection
 exports.checkConnectionStatus = async (req, res) => {
   try {
-    const clientId = req.user.client_id;
-
-    if (!clientId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Client ID not found'
-      });
-    }
+    await ensureAuthCaps(req);
 
     const connection = await WhatsappConnection.findOne({
-      client_id: clientId,
+      client_id: req.auth.clientId,
       is_active: true
     });
 
