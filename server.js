@@ -44,6 +44,7 @@ const whatsappRoutes = require("./routes/whatsappRoutes")
 
 const templateRouter = require('./routes/templateRoutes');
 const reportRoutes = require('./routes/reportRoutes')
+const whatsappConnectionRoutes = require('./routes/whatsappConnectionRoutes');
 const { startSchedulers, testReportImmediately } = require('./services/schedulerService'); 
 
 
@@ -144,7 +145,7 @@ app.use('./api', reportRoutes)
 app.use("/api/units", unitRoutes);
 
 app.use("/api/support", supportRoutes)
-
+app.use('/api/whatsapp', whatsappConnectionRoutes);
 
 app.get('/', (req, res) => {
   res.send("Account App CI/CD is working...error fixes in getJournalsByClient");
