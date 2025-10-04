@@ -6,6 +6,7 @@ const partySchema = new mongoose.Schema(
     address: { type: String, trim: true },
     city: { type: String, trim: true },
     state: { type: String, trim: true },
+    pincode: { type: String, trim: true },
     gstin: { type: String, uppercase: true, trim: true },
     gstRegistrationType: {
       type: String,
@@ -22,6 +23,8 @@ const partySchema = new mongoose.Schema(
     },
     pan: { type: String, uppercase: true, trim: true },
     isTDSApplicable: { type: Boolean, default: false },
+    tdsRate: { type: Number },
+    tdsSection: { type: String, trim: true },
     contactNumber: { type: String, trim: true },
     email: { type: String, lowercase: true, trim: true , required: true },
     createdByClient: {
