@@ -376,7 +376,7 @@ exports.resetPassword = async (req, res) => {
   }
 };
 
-// Get Single Client by ID (Only Master Admin)
+// Get Single Client by ID (Master Admin or Client themselves)
 exports.getClientById = async (req, res) => {
   try {
     const { id } = req.params;
@@ -389,11 +389,16 @@ exports.getClientById = async (req, res) => {
     }
 
     // 2) Fallback to DB
+    let query;
+    if (req.user.role === 'client') {
+      // Clients can only fetch their own data
+      query = { _id: id, _id: req.user.id };
+    } else {
+      // Master admins can fetch clients they created
+      query = { _id: id, masterAdmin: req.user.id };
+    }
 
-    const client = await Client.findOne({
-      _id: id,
-      masterAdmin: req.user.id,
-    }).select("-password");
+    const client = await Client.findOne(query).select("-password");
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
