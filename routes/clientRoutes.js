@@ -5,6 +5,7 @@ const { createClient, getClients, loginClient, updateClient, deleteClient, reset
 } = require("../controllers/clientController");
 const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
 const verifyClient = require("../middleware/verifyClient")
+const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin")
 const rateLimit = require("express-rate-limit");
 const usernameCheckLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
@@ -56,7 +57,7 @@ router.put("/reset-password/:id", verifyMasterAdmin, resetPassword);
 
 
 // Get company by ID (client or master)
-router.get("/:id", verifyMasterAdmin, getClientById);
+router.get("/:id", verifyClientOrAdmin, getClientById);
 
 //PUT set user limit
 
