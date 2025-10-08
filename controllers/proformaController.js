@@ -1,6 +1,6 @@
-// controllers/salesController.js
+// controllers/proformaController.js
 const mongoose = require("mongoose");
-const SalesEntry = require("../models/SalesEntry");
+const ProformaEntry = require("../models/ProformaEntry");
 const Company = require("../models/Company");
 const Party = require("../models/Party");
 const User = require("../models/User");
@@ -8,15 +8,14 @@ const BankDetail = require("../models/BankDetail");
 const normalizeProducts = require("../utils/normalizeProducts");
 const normalizeServices = require("../utils/normalizeServices");
 const IssuedInvoiceNumber = require("../models/IssuedInvoiceNumber");
-const { issueSalesInvoiceNumber } = require("../services/invoiceIssuer");
+const { issueProformaInvoiceNumber } = require("../services/proformaInvoiceIssuer");
 const { getFromCache, setToCache } = require("../RedisCache");
 const {
   deleteSalesEntryCache,
   deleteSalesEntryCacheByUser,
 } = require("../utils/cacheHelpers");
-// at top of controllers/salesController.js
+// at top of controllers/proformaController.js
 const { getEffectivePermissions } = require("../services/effectivePermissions");
-const { sendCreditReminderEmail } = require("../services/emailService");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 
@@ -85,7 +84,7 @@ function companyAllowedForUser(req, companyId) {
 
 
 // Build message text per action
-function buildSalesNotificationMessage(
+function buildProformaNotificationMessage(
   action,
   { actorName, partyName, invoiceNumber, amount }
 ) {
@@ -93,20 +92,20 @@ function buildSalesNotificationMessage(
   switch (action) {
     case "create":
       return (
-        `New sales entry created by ${actorName} for party ${pName}` +
+        `New proforma entry created by ${actorName} for party ${pName}` +
         (amount != null ? ` of ₹${amount}.` : ".")
       );
     case "update":
-      return `Sales entry updated by ${actorName} for party ${pName}.`;
+      return `Proforma entry updated by ${actorName} for party ${pName}.`;
     case "delete":
-      return `Sales entry deleted by ${actorName} for party ${pName}.`;
+      return `Proforma entry deleted by ${actorName} for party ${pName}.`;
     default:
-      return `Sales entry ${action} by ${actorName} for party ${pName}.`;
+      return `Proforma entry ${action} by ${actorName} for party ${pName}.`;
   }
 }
 
-// Unified notifier for sales module
-async function notifyAdminOnSalesAction({
+// Unified notifier for proforma module
+async function notifyAdminOnProformaAction({
   req,
   action,
   partyName,
@@ -117,11 +116,11 @@ async function notifyAdminOnSalesAction({
   const actor = await resolveActor(req);
   const adminUser = await findAdminUser(companyId);
   if (!adminUser) {
-    console.warn("notifyAdminOnSalesAction: no admin user found");
+    console.warn("notifyAdminOnProformaAction: no admin user found");
     return;
   }
 
-  const message = buildSalesNotificationMessage(action, {
+  const message = buildProformaNotificationMessage(action, {
     actorName: actor.name,
     partyName,
     amount,
@@ -132,14 +131,14 @@ async function notifyAdminOnSalesAction({
     adminUser._id, // recipient (admin)
     actor.id, // actor id (user OR client)
     action, // "create" | "update" | "delete"
-    "sales", // entry type / category
-    entryId, // sales entry id
+    "proforma", // entry type / category
+    entryId, // proforma entry id
     req.auth.clientId
   );
 }
 
-// In your getSalesEntries controller
-exports.getSalesEntries = async (req, res) => {
+// In your getProformaEntries controller
+exports.getProformaEntries = async (req, res) => {
   try {
     const filter = {};
 
@@ -152,7 +151,7 @@ exports.getSalesEntries = async (req, res) => {
     }
 
     // Construct a cache key based on the filter
-    const cacheKey = `salesEntries:${JSON.stringify(filter)}`;
+    const cacheKey = `proformaEntries:${JSON.stringify(filter)}`;
 
     // Check if the data is cached in Redis
     const cachedEntries = await getFromCache(cacheKey);
@@ -166,7 +165,7 @@ exports.getSalesEntries = async (req, res) => {
     }
 
     // If not cached, fetch the data from the database
-    const entries = await SalesEntry.find(filter)
+    const entries = await ProformaEntry.find(filter)
       .populate("party", "name")
       .populate("products.product", "name")
       .populate({
@@ -189,7 +188,7 @@ exports.getSalesEntries = async (req, res) => {
       data: entries, // Use consistent key
     });
   } catch (err) {
-    console.error("Error fetching sales entries:", err.message);
+    console.error("Error fetching proforma entries:", err.message);
     res.status(500).json({
       success: false,
       error: err.message,
@@ -197,13 +196,13 @@ exports.getSalesEntries = async (req, res) => {
   }
 };
 
-// GET Sales Entries by clientId (for master admin)
-exports.getSalesEntriesByClient = async (req, res) => {
+// GET Proforma Entries by clientId (for master admin)
+exports.getProformaEntriesByClient = async (req, res) => {
   try {
     const { clientId } = req.params;
 
     // Construct a cache key based on clientId
-    const cacheKey = `salesEntriesByClient:${clientId}`;
+    const cacheKey = `proformaEntriesByClient:${clientId}`;
 
     // Check if the data is cached in Redis
     const cachedEntries = await getFromCache(cacheKey);
@@ -217,7 +216,7 @@ exports.getSalesEntriesByClient = async (req, res) => {
     }
 
     // Fetch data from database if not cached
-    const entries = await SalesEntry.find({ client: clientId })
+    const entries = await ProformaEntry.find({ client: clientId })
       .populate("party", "name")
       .populate("products.product", "name")
       .populate({
@@ -242,8 +241,7 @@ exports.getSalesEntriesByClient = async (req, res) => {
   }
 };
 
-
-exports.createSalesEntry = async (req, res) => {
+exports.createProformaEntry = async (req, res) => {
   const session = await mongoose.startSession();
   let entry, companyDoc, partyDoc, selectedBank;
 
@@ -253,7 +251,7 @@ exports.createSalesEntry = async (req, res) => {
     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
       return res
         .status(403)
-        .json({ message: "Not allowed to create sales entries" });
+        .json({ message: "Not allowed to create proforma entries" });
     }
 
     // Destructure the request body
@@ -270,23 +268,11 @@ exports.createSalesEntry = async (req, res) => {
       return res.status(400).json({ message: "Customer ID is required" });
     }
 
-    if (paymentMethod === "Credit") {
-      partyDoc = await Party.findById(party);
-      if (!partyDoc) {
-        return res.status(404).json({ message: "Customer not found" });
-      }
-      partyDoc.balance += totalAmount;
-      await partyDoc.save();
-    }
-
     if (!companyAllowedForUser(req, companyId)) {
       return res
         .status(403)
         .json({ message: "You are not allowed to use this company" });
     }
-
-    // 🔴 IMPORTANT: remove the pre-transaction save that caused validation
-    // if (paymentMethod === "Credit") { ... partyDoc.save() }  <-- DELETE THIS WHOLE BLOCK
 
     await session.withTransaction(async () => {
       // Handle transaction logic here
@@ -370,10 +356,10 @@ exports.createSalesEntry = async (req, res) => {
       while (true) {
         attempts++;
         const { invoiceNumber, yearYY, seq, prefix } =
-          await issueSalesInvoiceNumber(companyDoc._id, atDate, { session });
+          await issueProformaInvoiceNumber(companyDoc._id, atDate, { session });
 
         try {
-          const docs = await SalesEntry.create(
+          const docs = await ProformaEntry.create(
             [
               {
                 party: partyDoc._id,
@@ -411,10 +397,10 @@ exports.createSalesEntry = async (req, res) => {
 
           // Ensure only one response is sent
           if (!res.headersSent) {
-            // After sales entry is created, notify the admin
+            // After proforma entry is created, notify the admin
 
             // Notify admin AFTER entry created (and before response)
-            await notifyAdminOnSalesAction({
+            await notifyAdminOnProformaAction({
               req,
               action: "create",
               partyName: partyDoc?.name,
@@ -427,7 +413,7 @@ exports.createSalesEntry = async (req, res) => {
               [
                 {
                   company: companyDoc._id,
-                  series: "sales",
+                  series: "proforma",
                   invoiceNumber,
                   yearYY,
                   seq,
@@ -440,7 +426,7 @@ exports.createSalesEntry = async (req, res) => {
             // Send response after notification creation
             return res
               .status(201)
-              .json({ message: "Sales entry created successfully", entry });
+              .json({ message: "Proforma entry created successfully", entry });
           }
         } catch (e) {
           if (e?.code === 11000 && attempts < 20) continue;
@@ -454,7 +440,7 @@ exports.createSalesEntry = async (req, res) => {
     // Call the reusable cache deletion function
     await deleteSalesEntryCache(clientId, companyId);
   } catch (err) {
-    console.error("createSalesEntry error:", err);
+    console.error("createProformaEntry error:", err);
     return res
       .status(500)
       .json({ message: "Something went wrong", error: err.message });
@@ -467,22 +453,21 @@ const sameTenant = (entryClientId, userClientId) => {
   return entryClientId.toString() === userClientId.toString();
 };
 
-
-
-exports.updateSalesEntry = async (req, res) => {
+// UPDATE a proforma entry
+exports.updateProformaEntry = async (req, res) => {
   const session = await mongoose.startSession();
 
   try {
     // Ensure the user has permission
     await ensureAuthCaps(req);
     if (!userIsPriv(req) && !req.auth.caps?.canCreateSaleEntries) {
-      return res.status(403).json({ message: "Not allowed to update sales entries" });
+      return res.status(403).json({ message: "Not allowed to update proforma entries" });
     }
 
-    // Find the sales entry by ID
-    const entry = await SalesEntry.findById(req.params.id);
+    // Find the proforma entry by ID
+    const entry = await ProformaEntry.findById(req.params.id);
     if (!entry)
-      return res.status(404).json({ message: "Sales entry not found" });
+      return res.status(404).json({ message: "Proforma entry not found" });
 
     // Tenant auth: allow privileged roles or same tenant only
     if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
@@ -587,64 +572,7 @@ exports.updateSalesEntry = async (req, res) => {
       entry.totalAmount = sumProducts + sumServices;
     }
 
-    // CREDIT BALANCE ADJUSTMENT LOGIC
-    await session.withTransaction(async () => {
-      const currentPartyId = party || originalPartyId;
-      const currentPaymentMethod = paymentMethod || originalPaymentMethod;
-      const currentTotalAmount = entry.totalAmount;
-
-      // Find the current party document
-      const currentPartyDoc = await Party.findOne({
-        _id: currentPartyId,
-        createdByClient: req.auth.clientId,
-      }).session(session);
-      
-      if (!currentPartyDoc) {
-        throw new Error("Party not found");
-      }
-
-      // Handle credit balance adjustments
-      if (originalPaymentMethod === "Credit" && currentPaymentMethod === "Credit") {
-        // Both old and new are Credit - adjust the balance by the difference
-        if (originalPartyId === currentPartyId) {
-          // Same party - adjust balance by amount difference
-          const amountDifference = currentTotalAmount - originalTotalAmount;
-          currentPartyDoc.balance += amountDifference;
-        } else {
-          // Different parties - remove from old party, add to new party
-          const originalPartyDoc = await Party.findOne({
-            _id: originalPartyId,
-            createdByClient: req.auth.clientId,
-          }).session(session);
-          
-          if (originalPartyDoc) {
-            originalPartyDoc.balance -= originalTotalAmount;
-            await originalPartyDoc.save({ session });
-          }
-          
-          currentPartyDoc.balance += currentTotalAmount;
-        }
-      } else if (originalPaymentMethod === "Credit" && currentPaymentMethod !== "Credit") {
-        // Changed from Credit to non-Credit - remove from party balance
-        const originalPartyDoc = await Party.findOne({
-          _id: originalPartyId,
-          createdByClient: req.auth.clientId,
-        }).session(session);
-        
-        if (originalPartyDoc) {
-          originalPartyDoc.balance -= originalTotalAmount;
-          await originalPartyDoc.save({ session });
-        }
-      } else if (originalPaymentMethod !== "Credit" && currentPaymentMethod === "Credit") {
-        // Changed from non-Credit to Credit - add to party balance
-        currentPartyDoc.balance += currentTotalAmount;
-      }
-      // If both are non-Credit, no balance adjustment needed
-
-      await currentPartyDoc.save({ session });
-    });
-
-    await notifyAdminOnSalesAction({
+    await notifyAdminOnProformaAction({
       req,
       action: "update",
       partyName: (partyDoc ? partyDoc.name : null) || (entry?.party?.name) || "Unknown Party",
@@ -654,34 +582,32 @@ exports.updateSalesEntry = async (req, res) => {
 
     await entry.save();
 
-    // Retrieve companyId and clientId from the sales entry to delete related cache
+    // Retrieve companyId and clientId from the proforma entry to delete related cache
     const companyId = entry.company.toString();
     const clientId = entry.client.toString();
 
     // Call the reusable cache deletion function
     await deleteSalesEntryCache(clientId, companyId);
 
-    res.json({ message: "Sales entry updated successfully", entry });
+    res.json({ message: "Proforma entry updated successfully", entry });
   } catch (err) {
-    console.error("Error updating sales entry:", err);
+    console.error("Error updating proforma entry:", err);
     res.status(500).json({ error: err.message });
   } finally {
     session.endSession();
   }
 };
 
-
-
-exports.deleteSalesEntry = async (req, res) => {
+exports.deleteProformaEntry = async (req, res) => {
   const session = await mongoose.startSession();
 
   try {
     await ensureAuthCaps(req);
-    // Find the sales entry by ID
-    const entry = await SalesEntry.findById(req.params.id);
+    // Find the proforma entry by ID
+    const entry = await ProformaEntry.findById(req.params.id);
 
     if (!entry) {
-      return res.status(404).json({ message: "Sales entry not found" });
+      return res.status(404).json({ message: "Proforma entry not found" });
     }
 
     // Only allow clients to delete their own entries
@@ -698,14 +624,14 @@ exports.deleteSalesEntry = async (req, res) => {
 
     // Start the transaction
     await session.withTransaction(async () => {
-      // Delete the sales entry
+      // Delete the proforma entry
       await entry.deleteOne();
 
-      // Retrieve companyId and clientId from the sales entry to delete related cache
+      // Retrieve companyId and clientId from the proforma entry to delete related cache
       const companyId = entry.company.toString();
       const clientId = entry.client.toString(); // Retrieve clientId from the entry
 
-      await notifyAdminOnSalesAction({
+      await notifyAdminOnProformaAction({
         req,
         action: "delete",
         partyName: partyDoc?.name,
@@ -715,340 +641,12 @@ exports.deleteSalesEntry = async (req, res) => {
       // Invalidate cache next
       await deleteSalesEntryCache(clientId, companyId);
       // Respond
-      res.status(200).json({ message: "Sales entry deleted successfully" });
+      res.status(200).json({ message: "Proforma entry deleted successfully" });
     });
   } catch (err) {
-    console.error("Error deleting sales entry:", err);
+    console.error("Error deleting proforma entry:", err);
     res.status(500).json({ error: err.message });
   } finally {
     session.endSession();
   }
 };
-
-
-
-// controllers/salesController.js - Update sendCreditReminder function
-// exports.sendCreditReminder = async (req, res) => {
-//   try {
-//     const { 
-//       transactionId, 
-//       partyId, 
-//       daysOverdue, 
-//       pendingAmount,
-//       emailSubject,
-//       emailContent,
-//       isHtml = false
-//     } = req.body;
-
-//     // Get transaction details with populated data
-//     const transaction = await SalesEntry.findById(transactionId)
-//       .populate('party', 'name email contactNumber')
-//       .populate('company', 'businessName emailId')
-//       .populate('client');
-
-//     if (!transaction) {
-//       return res.status(404).json({ message: 'Transaction not found' });
-//     }
-
-//     // Get party details
-//     const party = await Party.findById(partyId);
-//     if (!party) {
-//       return res.status(404).json({ message: 'Party not found' });
-//     }
-
-//     // Check if party has email
-//     if (!party.email) {
-//       return res.status(400).json({ 
-//         message: 'Customer does not have an email address' 
-//       });
-//     }
-
-//     // Use custom content if provided, otherwise generate default
-//     const subject = emailSubject || `Payment Reminder - Invoice ${transaction.invoiceNumber}`;
-//     const content = emailContent || generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount);
-
-//     // Send credit reminder email
-//     await sendCreditReminderEmail({
-//       to: party.email,
-//       customerName: party.name,
-//       companyName: transaction.company.businessName,
-//       invoiceNumber: transaction.invoiceNumber || transaction.referenceNumber || 'N/A',
-//       invoiceDate: transaction.date,
-//       daysOverdue: daysOverdue,
-//       pendingAmount: pendingAmount,
-//       companyEmail: transaction.company.emailId,
-//       customSubject: subject,
-//       customContent: content,
-//       isHtml: isHtml
-//     });
-
-//     // Create notification for the reminder
-//     // await createNotification(
-//     //   `Credit reminder sent to ${party.name} for ₹${pendingAmount} (Invoice: ${transaction.invoiceNumber})`,
-//     //   req.auth.userId,
-//     //   req.auth.userId,
-//     //   'reminder',
-//     //   'sales',
-//     //   transactionId,
-//     //   req.auth.clientId
-//     // );
-
-//     res.json({ 
-//       message: 'Credit reminder sent successfully',
-//       sentTo: party.email,
-//       customerName: party.name,
-//       amount: pendingAmount
-//     });
-//      console.log(`Credit reminder sent to ${party.email} for ${party.name}`);
-
-//   } catch (error) {
-//     console.error('Error in sendCreditReminder:', error);
-//     res.status(500).json({ 
-//       message: 'Failed to send credit reminder', 
-//       error: error.message 
-//     });
-//   }
-// };
-
-exports.sendCreditReminder = async (req, res) => {
-  try {
-    const { 
-      transactionId, 
-      partyId, 
-      daysOverdue, 
-      pendingAmount,
-      emailSubject,
-      emailContent,
-      isHtml = false
-    } = req.body;
-
-    // Get transaction details with populated data
-    const transaction = await SalesEntry.findById(transactionId)
-      .populate('party', 'name email contactNumber')
-      .populate('company', 'businessName emailId owner')
-      .populate('client');
-
-    if (!transaction) {
-      return res.status(404).json({ message: 'Transaction not found' });
-    }
-
-    // Get party details
-    const party = await Party.findById(partyId);
-    if (!party) {
-      return res.status(404).json({ message: 'Party not found' });
-    }
-
-    // Check if party has email
-    if (!party.email) {
-      return res.status(400).json({ 
-        message: 'Customer does not have an email address' 
-      });
-    }
-
-    // Use custom content if provided, otherwise generate default
-    const subject = emailSubject || `Payment Reminder - Invoice ${transaction.invoiceNumber}`;
-    const content = emailContent || generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount);
-
-    // Determine the client ID for sending email
-    let senderClientId = null;
-
-    // 1. Try to get from company owner
-    if (transaction.company?.owner) {
-      senderClientId = transaction.company.owner;
-      console.log('🔧 Using company owner as sender client:', senderClientId);
-    }
-    // 2. Fallback to authenticated client
-    else if (req.auth?.clientId) {
-      senderClientId = req.auth.clientId;
-      console.log('🔧 Using authenticated client as sender:', senderClientId);
-    }
-    // 3. Fallback to transaction client
-    else if (transaction.client) {
-      senderClientId = transaction.client._id || transaction.client;
-      console.log('🔧 Using transaction client as sender:', senderClientId);
-    }
-
-    if (!senderClientId) {
-      return res.status(400).json({ 
-        message: 'Unable to determine sender. Please connect Gmail integration.' 
-      });
-    }
-
-    // Send credit reminder email using client's Gmail
-    await sendCreditReminderEmail({
-      to: party.email,
-      customerName: party.name,
-      companyName: transaction.company.businessName,
-      invoiceNumber: transaction.invoiceNumber || transaction.referenceNumber || 'N/A',
-      invoiceDate: transaction.date,
-      daysOverdue: daysOverdue,
-      pendingAmount: pendingAmount,
-      companyEmail: transaction.company.emailId,
-      companyId: transaction.company?._id, // Pass company ID
-      clientId: senderClientId, // Pass determined client ID
-      customSubject: subject,
-      customContent: content,
-      isHtml: isHtml
-    });
-
-    // Create notification for the reminder
-    // await createNotification(
-    //   `Credit reminder sent to ${party.name} for ₹${pendingAmount} (Invoice: ${transaction.invoiceNumber})`,
-    //   req.auth.userId,
-    //   req.auth.userId,
-    //   'reminder',
-    //   'sales',
-    //   transactionId,
-    //   req.auth.clientId
-    // );
-
-    res.json({ 
-      message: 'Credit reminder sent successfully',
-      sentTo: party.email,
-      customerName: party.name,
-      amount: pendingAmount,
-      sentFrom: 'Client Gmail' // Indicate it was sent from client's email
-    });
-    
-    console.log(`✅ Credit reminder sent from client Gmail to ${party.email} for ${party.name}`);
-
-  } catch (error) {
-    console.error('Error in sendCreditReminder:', error);
-    
-    // Handle specific Gmail connection errors
-    if (error.message.includes('Gmail is not connected') || 
-        error.message.includes('No client Gmail available') ||
-        error.message.includes('Gmail access was revoked')) {
-      return res.status(400).json({ 
-        message: 'Gmail not connected. Please connect your Gmail account in settings to send emails.',
-        error: error.message 
-      });
-    }
-    
-    res.status(500).json({ 
-      message: 'Failed to send credit reminder', 
-      error: error.message 
-    });
-  }
-};
-
-// Helper function to generate default email content
-// function generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount) {
-//   const invoiceNumber = transaction.invoiceNumber || transaction.referenceNumber || 'N/A';
-//   const invoiceDate = new Date(transaction.date).toLocaleDateString();
-//   const formattedAmount = new Intl.NumberFormat('en-IN').format(pendingAmount);
-  
-//   return `Dear ${party.name},
-
-// This is a friendly reminder regarding your outstanding payment. The following invoice is currently pending:
-
-// Invoice Number: ${invoiceNumber}
-// Invoice Date: ${invoiceDate}
-// Days Outstanding: ${daysOverdue} days
-// Pending Amount: ₹${formattedAmount}
-
-// ${daysOverdue > 30 ? `This invoice is ${daysOverdue - 30} days overdue. Please process the payment immediately to avoid any disruption in services.` : 'Please process this payment at your earliest convenience.'}
-
-// If you have already made the payment, please disregard this reminder. For any queries regarding this invoice, please contact us.
-
-// Thank you for your business!
-
-// Best regards,
-// ${transaction.company.businessName}
-// ${transaction.company.emailId ? `Email: ${transaction.company.emailId}` : ''}`;
-// }
-
-// Enhanced helper function to generate HTML email content
-function generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount) {
-  const invoiceNumber = transaction.invoiceNumber || transaction.referenceNumber || 'N/A';
-  const invoiceDate = new Date(transaction.date).toLocaleDateString();
-  const formattedAmount = new Intl.NumberFormat('en-IN').format(pendingAmount);
-  
-  const overdueNotice = daysOverdue > 30 
-    ? `<p style="color: #d32f2f; font-weight: bold;">This invoice is ${daysOverdue - 30} days overdue. Please process the payment immediately to avoid any disruption in services.</p>`
-    : '<p>Please process this payment at your earliest convenience.</p>';
-
-  return `
-<!DOCTYPE html>
-<html>
-<head>
-  <style>
-    body { 
-      font-family: Arial, sans-serif; 
-      line-height: 1.6; 
-      color: #333; 
-      max-width: 600px; 
-      margin: 0 auto; 
-      padding: 20px;
-      background-color: #f9f9f9;
-    }
-    .container {
-      background: white;
-      padding: 30px;
-      border-radius: 8px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-    }
-    .header {
-      border-bottom: 2px solid #4CAF50;
-      padding-bottom: 15px;
-      margin-bottom: 20px;
-    }
-    .amount {
-      font-size: 24px;
-      font-weight: bold;
-      color: #d32f2f;
-      margin: 15px 0;
-    }
-    .footer {
-      margin-top: 30px;
-      padding-top: 20px;
-      border-top: 1px solid #ddd;
-      color: #666;
-      font-size: 14px;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h2>Payment Reminder</h2>
-    </div>
-    
-    <p>Dear <strong>${party.name}</strong>,</p>
-    
-    <p>This is a friendly reminder regarding your outstanding payment. The following invoice is currently pending:</p>
-    
-    <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
-      <tr>
-        <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Invoice Number:</strong></td>
-        <td style="padding: 8px; border-bottom: 1px solid #eee;">${invoiceNumber}</td>
-      </tr>
-      <tr>
-        <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Invoice Date:</strong></td>
-        <td style="padding: 8px; border-bottom: 1px solid #eee;">${invoiceDate}</td>
-      </tr>
-      <tr>
-        <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Days Outstanding:</strong></td>
-        <td style="padding: 8px; border-bottom: 1px solid #eee;">${daysOverdue} days</td>
-      </tr>
-      <tr>
-        <td style="padding: 8px;"><strong>Pending Amount:</strong></td>
-        <td style="padding: 8px;" class="amount">₹${formattedAmount}</td>
-      </tr>
-    </table>
-    
-    ${overdueNotice}
-    
-    <p>If you have already made the payment, please disregard this reminder. For any queries regarding this invoice, please contact us.</p>
-    
-    <p>Thank you for your business!</p>
-    
-    <div class="footer">
-      <p><strong>Best regards,</strong><br>
-      ${transaction.company.businessName}<br>
-      ${transaction.company.emailId ? `Email: ${transaction.company.emailId}` : ''}</p>
-    </div>
-  </div>
-</body>
-</html>`;
-}

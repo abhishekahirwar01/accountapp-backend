@@ -62,7 +62,7 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['sales', 'purchase', 'journal', 'system', 'user' , 'payment', 'receipt'],
+    enum: ['sales', 'purchase', 'journal', 'system', 'user' , 'payment', 'receipt', 'party', 'vendor', 'product', 'service', 'proforma'],
     required: true
   },
   action: {

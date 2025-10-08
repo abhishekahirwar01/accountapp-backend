@@ -510,6 +510,12 @@ const deleteJournalEntryCache = async (clientId, companyId) => {
       // legacy JSON field names (if used earlier in code)
       `journalEntries:${JSON.stringify({ client: clientId, company: companyId })}`,
       `journalEntries:${JSON.stringify({ company: companyId, client: clientId })}`,
+
+      // Additional keys for getJournals (all companies cache)
+      `journalEntries:${JSON.stringify({ clientId, companyId: null })}`,
+
+      // Additional keys for getJournalsByClient with companyId
+      `journalEntriesByClient:${JSON.stringify({ clientId, companyId })}`,
     ];
 
     // Check & delete each explicitly (EXISTS per key gives you a clear log)
