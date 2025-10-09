@@ -154,15 +154,15 @@ exports.getProformaEntries = async (req, res) => {
     const cacheKey = `proformaEntries:${JSON.stringify(filter)}`;
 
     // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   // If cached, return the data directly
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
 
     // If not cached, fetch the data from the database
     const entries = await ProformaEntry.find(filter)
@@ -180,7 +180,7 @@ exports.getProformaEntries = async (req, res) => {
     // Return consistent format
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, entries);
+    // await setToCache(cacheKey, entries);
 
     res.status(200).json({
       success: true,
@@ -205,15 +205,15 @@ exports.getProformaEntriesByClient = async (req, res) => {
     const cacheKey = `proformaEntriesByClient:${clientId}`;
 
     // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   // If cached, return the data directly
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
 
     // Fetch data from database if not cached
     const entries = await ProformaEntry.find({ client: clientId })
@@ -230,7 +230,7 @@ exports.getProformaEntriesByClient = async (req, res) => {
       .sort({ date: -1 });
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, entries);
+    // await setToCache(cacheKey, entries);
 
     // Return the fetched data
     res.status(200).json({ entries });
