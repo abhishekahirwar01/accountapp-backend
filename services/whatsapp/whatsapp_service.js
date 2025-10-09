@@ -1,14 +1,16 @@
 // // // services/whatsapp/whatsapp.service.js - Optimized Version
-const {
-  default: makeWASocket,
-  useMultiFileAuthState,
-  DisconnectReason,
-  Browsers,
-} = require("@whiskeysockets/baileys");
+// const {
+//   default: makeWASocket,
+//   useMultiFileAuthState,
+//   DisconnectReason,
+//   Browsers,
+// } = require("@whiskeysockets/baileys");
 const qrcode = require("qrcode-terminal");
 const WhatsappSession = require("../../models/WhatsappSession");
 const path = require("path");
 const fs = require("fs");
+let makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers;
+
 
 class WhatsAppService {
   constructor() {
@@ -18,19 +20,399 @@ class WhatsAppService {
     this.sessionFolders = new Map();
 
     // 🚨 AGGRESSIVE RATE LIMITING
-   this.rateLimiter = new Map();
-    this.MAX_MESSAGES_PER_MINUTE = 2; // Only 2 messages per minute
-    this.MIN_DELAY_BETWEEN_MESSAGES = 30000; // 30 seconds minimum
-    this.lastMessageTime = 0;
-    this.messageCount = 0;
+    this.rateLimiter = new Map();
+    // this.MAX_MESSAGES_PER_MINUTE = 2; // Only 2 messages per minute
+    // this.MIN_DELAY_BETWEEN_MESSAGES = 30000; // 30 seconds minimum
+    // this.lastMessageTime = 0;
+    // this.messageCount = 0;
+   
+    this.MAX_STAFF_MESSAGES_PER_HOUR = 10;
+    this.STAFF_MESSAGE_DELAY_MS = 10000; // 10-second delay like Go GST Bill
+    this.userRoles = new Map(); // Track clientId -> role
+    this.initBaileys();
   }
 
-  async initializeClient(clientId, userId) {
+   async initBaileys() {
     try {
+      const baileys = await import('@whiskeysockets/baileys');
+      makeWASocket = baileys.default;
+      useMultiFileAuthState = baileys.useMultiFileAuthState;
+      DisconnectReason = baileys.DisconnectReason;
+      Browsers = baileys.Browsers;
+      console.log('✅ Baileys ES module loaded successfully');
+    } catch (error) {
+      console.error('❌ Failed to load Baileys:', error);
+      throw error;
+    }
+  }
+
+
+  // async initializeClient(clientId, userId) {
+  //   try {
+  //     if (this.clients.has(clientId)) {
+  //       const existingClient = this.clients.get(clientId);
+  //       if (existingClient && existingClient.connection === "open") {
+  //         return { success: true, message: "WhatsApp already connected" };
+  //       }
+  //     }
+
+  //     let session = await WhatsappSession.findOne({
+  //       clientId,
+  //       isActive: true,
+  //     });
+
+  //     if (!session) {
+  //       session = new WhatsappSession({
+  //         clientId,
+  //         userId,
+  //         sessionId: `wa_${clientId}_${Date.now()}`,
+  //         status: "authenticating",
+  //       });
+  //       await session.save();
+  //     }
+
+  //     // Create session folder
+  //     const sessionFolder = path.join(
+  //       __dirname,
+  //       "..",
+  //       "..",
+  //       "sessions",
+  //       session.sessionId
+  //     );
+  //     if (!fs.existsSync(sessionFolder)) {
+  //       fs.mkdirSync(sessionFolder, { recursive: true });
+  //     }
+  //     this.sessionFolders.set(clientId, sessionFolder);
+
+  //     const { state, saveCreds } = await useMultiFileAuthState(sessionFolder);
+
+  //     const sock = makeWASocket({
+  //       auth: state,
+  //       printQRInTerminal: true, // Uses qrcode-terminal internally
+  //       browser: Browsers.ubuntu("Chrome"),
+  //       syncFullHistory: false,
+  //       markOnlineOnConnect: false,
+  //     });
+
+  //     this.clients.set(clientId, sock);
+
+  //     //   // QR Code Handler
+  //     //   sock.ev.on("connection.update", async (update) => {
+  //     //     const {
+  //     //       connection,
+  //     //       lastDisconnect,
+  //     //       qr,
+  //     //       isNewLogin,
+  //     //       receivedPendingNotifications,
+  //     //     } = update;
+
+  //     //     console.log("🔐 WhatsApp Connection Update:", {
+  //     //       connection,
+  //     //       qr: qr ? "QR Received" : "No QR",
+  //     //       isNewLogin,
+  //     //       receivedPendingNotifications,
+  //     //       lastDisconnect: lastDisconnect ? lastDisconnect.error : "None",
+  //     //     });
+
+  //     //     if (qr) {
+  //     //       console.log(`\n=== WhatsApp QR Code for Client: ${clientId} ===`);
+  //     //       qrcode.generate(qr, { small: true });
+  //     //       console.log(`=== Scan the QR code above ===\n`);
+
+  //     //       // Store raw QR code for frontend if needed
+  //     //       await WhatsappSession.findByIdAndUpdate(session._id, {
+  //     //         qrCode: qr, // Store the raw QR string
+  //     //         status: "authenticating",
+  //     //       });
+
+  //     //       // Notify frontend (they can generate QR on their side)
+  //     //       if (this.qrCallbacks.has(clientId)) {
+  //     //         this.qrCallbacks.get(clientId)({ qrString: qr, clientId });
+  //     //       }
+  //     //     }
+
+  //     //     if (connection === "open") {
+  //     //       console.log(`✅ WhatsApp connected for client: ${clientId}`);
+  //     //       console.log("📱 User Info:", await sock.user);
+  //     //       await WhatsappSession.findByIdAndUpdate(session._id, {
+  //     //         status: "authenticated",
+  //     //         phoneNumber: sock.user?.id,
+  //     //         profileName: sock.user?.name,
+  //     //         lastActivity: new Date(),
+  //     //         qrCode: null,
+  //     //       });
+
+  //     //       this.qrCallbacks.delete(clientId);
+  //     //     }
+
+  //     //     if (connection === "close") {
+  //     //       console.log("❌ WhatsApp Disconnected:", lastDisconnect?.error);
+  //     //       const shouldReconnect =
+  //     //         lastDisconnect?.error?.output?.statusCode !==
+  //     //         DisconnectReason.loggedOut;
+  //     //       console.log(
+  //     //         `Connection closed for ${clientId}. Reconnect: ${shouldReconnect}`
+  //     //       );
+
+  //     //       if (shouldReconnect) {
+  //     //         setTimeout(() => this.initializeClient(clientId, userId), 5000);
+  //     //       } else {
+  //     //         await WhatsappSession.findByIdAndUpdate(session._id, {
+  //     //           status: "disconnected",
+  //     //           isActive: false,
+  //     //         });
+  //     //         this.clients.delete(clientId);
+  //     //       }
+  //     //     }
+  //     //   });
+
+  //     //   sock.ev.on("creds.update", saveCreds);
+
+  //     // QR Code Handler
+  //     sock.ev.on("connection.update", async (update) => {
+  //       const {
+  //         connection,
+  //         lastDisconnect,
+  //         qr,
+  //         isNewLogin,
+  //         receivedPendingNotifications,
+  //       } = update;
+
+  //       console.log("🔐 WhatsApp Connection Update:", {
+  //         connection,
+  //         qr: qr ? "QR Received" : "No QR",
+  //         isNewLogin,
+  //         receivedPendingNotifications,
+  //         lastDisconnect: lastDisconnect ? lastDisconnect.error : "None",
+  //       });
+
+  //       if (qr) {
+  //         console.log(`\n=== WhatsApp QR Code for Client: ${clientId} ===`);
+  //         qrcode.generate(qr, { small: true });
+  //         console.log(`=== Scan the QR code above ===\n`);
+
+  //         // Store raw QR code for frontend if needed
+  //         await WhatsappSession.findByIdAndUpdate(session._id, {
+  //           qrCode: qr, // Store the raw QR string
+  //           status: "authenticating",
+  //         });
+
+  //         // Notify frontend (they can generate QR on their side)
+  //         if (this.qrCallbacks.has(clientId)) {
+  //           this.qrCallbacks.get(clientId)({ qrString: qr, clientId });
+  //         }
+  //       }
+
+  //       if (connection === "open") {
+  //         console.log(`✅ WhatsApp connected for client: ${clientId}`);
+  //         console.log("📱 User Info:", sock.user);
+
+  //         // Reset rate limiting on new connection
+  //         this.rateLimiter.delete(clientId);
+  //         this.lastMessageTime = 0;
+  //         this.messageCount = 0; // Reset message counter
+
+  //         await WhatsappSession.findByIdAndUpdate(session._id, {
+  //           status: "authenticated",
+  //           phoneNumber: sock.user?.id,
+  //           profileName: sock.user?.name,
+  //           lastActivity: new Date(),
+  //           qrCode: null,
+  //         });
+
+  //         this.qrCallbacks.delete(clientId);
+
+  //         console.log(`✅ Ready to send messages for client: ${clientId}`);
+  //         console.log(`📊 Rate limiting reset for new connection`);
+  //       }
+
+  //       if (connection === "close") {
+  //         console.log("❌ WhatsApp Disconnected:", lastDisconnect?.error);
+
+  //         const statusCode = lastDisconnect?.error?.output?.statusCode;
+  //         const isDeviceRemoved =
+  //           lastDisconnect?.error?.data?.content?.[0]?.attrs?.type ===
+  //           "device_removed";
+  //         const isConflict = statusCode === 401;
+
+  //         console.log(`🔍 Disconnect Analysis:`, {
+  //           statusCode: statusCode,
+  //           isDeviceRemoved: isDeviceRemoved,
+  //           isConflict: isConflict,
+  //           error: lastDisconnect?.error?.message,
+  //         });
+
+  //         // 🚨 CRITICAL: Handle device_removed and conflict errors
+  //         if (isDeviceRemoved || isConflict) {
+  //           console.log(`🚨 WHATSAPP SECURITY ALERT: Session terminated`);
+  //           console.log(
+  //             `🚨 Reason: ${isDeviceRemoved ? "device_removed" : "conflict"}`
+  //           );
+  //           console.log(`🚨 This usually happens due to:`);
+  //           console.log(`🚨 1. Sending messages too rapidly`);
+  //           console.log(`🚨 2. Sending to unsaved numbers`);
+  //           console.log(`🚨 3. Using unofficial API detection`);
+  //           console.log(`🚨 4. Multiple simultaneous connections`);
+
+  //           // 🚨 COMPLETE CLEANUP - don't auto-reconnect
+  //           await this.cleanupClient(clientId);
+
+  //           // Update session to show manual reconnection required
+  //           await WhatsappSession.findByIdAndUpdate(session._id, {
+  //             status: "device_removed",
+  //             isActive: false,
+  //             qrCode: null,
+  //             lastActivity: new Date(),
+  //           });
+
+  //           console.log(
+  //             `🚨 Manual re-initialization required. User must scan QR again.`
+  //           );
+  //           return;
+  //         }
+
+  //         const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+  //         console.log(
+  //           `Connection closed for ${clientId}. Reconnect: ${shouldReconnect}`
+  //         );
+
+  //         if (shouldReconnect) {
+  //           console.log(`🔄 Reconnecting in 10 seconds...`);
+  //           setTimeout(() => {
+  //             console.log(`🔄 Attempting reconnect for ${clientId}`);
+  //             this.initializeClient(clientId, userId).catch((error) => {
+  //               console.error(`❌ Reconnect failed: ${error.message}`);
+  //             });
+  //           }, 10000);
+  //         } else {
+  //           console.log(`🚪 User logged out, cleaning up...`);
+  //           await WhatsappSession.findByIdAndUpdate(session._id, {
+  //             status: "disconnected",
+  //             isActive: false,
+  //           });
+  //           this.clients.delete(clientId);
+  //         }
+  //       }
+
+  //       // Handle connecting state
+  //       if (connection === "connecting") {
+  //         console.log(`🔄 WhatsApp connecting for client: ${clientId}`);
+  //         await WhatsappSession.findByIdAndUpdate(session._id, {
+  //           status: "connecting",
+  //         });
+  //       }
+  //     });
+
+  //     sock.ev.on("creds.update", saveCreds);
+
+  //     return {
+  //       success: true,
+  //       message: "WhatsApp client initialized. Check terminal for QR code.",
+  //       sessionId: session._id,
+  //     };
+  //   } catch (error) {
+  //     console.error("❌ Error initializing WhatsApp:", error);
+  //     await WhatsappSession.findOneAndUpdate(
+  //       { clientId, isActive: true },
+  //       { status: "error" }
+  //     );
+  //     throw error;
+  //   }
+  // }
+
+  //   async sendAutomatedMessage(
+  //     clientId,
+  //     vendorPhone,
+  //     message,
+  //     invoiceData = null
+  //   ) {
+  //     try {
+  //       await this.enforceStrictRateLimit();
+  //       console.log(`\n📤 SEND MESSAGE REQUEST: ${clientId} -> ${vendorPhone}`);
+
+  //       const sock = this.clients.get(clientId);
+  //       if (!sock || !sock.user) {
+  //         throw new Error(
+  //           "WhatsApp client not initialized. Please initialize first."
+  //         );
+  //       }
+
+  //       // ✅ SIMPLIFIED: Just check if user exists (we're authenticated)
+  //       if (!sock.user) {
+  //         throw new Error(
+  //           "WhatsApp not authenticated. Please scan QR code and connect first."
+  //         );
+  //       }
+
+  //       console.log(`🔍 Connection Status:`, {
+  //         phoneNumber: sock.user.id,
+  //         isAuthenticated: true,
+  //       });
+
+  //       const formattedPhone = this.formatPhoneNumber(vendorPhone);
+  //       let finalMessage = message;
+
+  //       if (invoiceData) {
+  //         finalMessage = this.generateInvoiceMessage(message, invoiceData);
+  //       }
+
+  //       console.log(`📤 Sending to: ${formattedPhone}`);
+  //       console.log(`💬 Message length: ${finalMessage.length} chars`);
+  //       console.log(`📝 Message preview: ${finalMessage.substring(0, 100)}...`);
+
+  //       // ✅ TRY SENDING DIRECTLY (remove timeouts for now to see actual error)
+  //       console.log("🚀 Attempting to send message...");
+  //       const result = await sock.sendMessage(formattedPhone, {
+  //         text: finalMessage,
+  //       });
+
+  //       this.updateRateLimit(clientId);
+
+  //       // Update last activity
+  //       await WhatsappSession.findOneAndUpdate(
+  //         { clientId, isActive: true },
+  //         {
+  //           lastActivity: new Date(),
+  //           status: "authenticated", // Ensure status is updated
+  //         }
+  //       );
+
+  //       console.log(`✅ MESSAGE SENT SUCCESSFULLY!`);
+  //       console.log(`📨 Message ID: ${result.key.id}`);
+
+  //       return {
+  //         success: true,
+  //         messageId: result.key.id,
+  //         timestamp: Math.floor(Date.now() / 1000),
+  //       };
+  //     } catch (error) {
+  //       console.error("❌ Error sending message:", error);
+  //       console.error("🔍 Error details:", {
+  //         name: error.name,
+  //         message: error.message,
+  //         stack: error.stack,
+  //       });
+
+  //       throw error;
+  //     }
+  //   }
+
+   async initializeClient(clientId, userId, role = 'staff') {
+     if (!makeWASocket) {
+      await this.initBaileys();
+    }
+    try {
+      console.log(`🎯 Initializing WhatsApp for ${role}: ${clientId}`);
+      
       if (this.clients.has(clientId)) {
         const existingClient = this.clients.get(clientId);
-        if (existingClient && existingClient.connection === "open") {
-          return { success: true, message: "WhatsApp already connected" };
+        if (existingClient && existingClient.user) {
+          return { 
+            success: true, 
+            message: `WhatsApp already connected for ${role}`,
+            userType: role
+          };
         }
       }
 
@@ -66,224 +448,91 @@ class WhatsAppService {
 
       const sock = makeWASocket({
         auth: state,
-        printQRInTerminal: true, // Uses qrcode-terminal internally
+        printQRInTerminal: true,
         browser: Browsers.ubuntu("Chrome"),
         syncFullHistory: false,
         markOnlineOnConnect: false,
       });
 
       this.clients.set(clientId, sock);
+      this.userRoles.set(clientId, role); // Store user role
 
-    //   // QR Code Handler
-    //   sock.ev.on("connection.update", async (update) => {
-    //     const {
-    //       connection,
-    //       lastDisconnect,
-    //       qr,
-    //       isNewLogin,
-    //       receivedPendingNotifications,
-    //     } = update;
+      // Connection handler
+      sock.ev.on("connection.update", async (update) => {
+        const { connection, lastDisconnect, qr } = update;
 
-    //     console.log("🔐 WhatsApp Connection Update:", {
-    //       connection,
-    //       qr: qr ? "QR Received" : "No QR",
-    //       isNewLogin,
-    //       receivedPendingNotifications,
-    //       lastDisconnect: lastDisconnect ? lastDisconnect.error : "None",
-    //     });
-
-    //     if (qr) {
-    //       console.log(`\n=== WhatsApp QR Code for Client: ${clientId} ===`);
-    //       qrcode.generate(qr, { small: true });
-    //       console.log(`=== Scan the QR code above ===\n`);
-
-    //       // Store raw QR code for frontend if needed
-    //       await WhatsappSession.findByIdAndUpdate(session._id, {
-    //         qrCode: qr, // Store the raw QR string
-    //         status: "authenticating",
-    //       });
-
-    //       // Notify frontend (they can generate QR on their side)
-    //       if (this.qrCallbacks.has(clientId)) {
-    //         this.qrCallbacks.get(clientId)({ qrString: qr, clientId });
-    //       }
-    //     }
-
-    //     if (connection === "open") {
-    //       console.log(`✅ WhatsApp connected for client: ${clientId}`);
-    //       console.log("📱 User Info:", await sock.user);
-    //       await WhatsappSession.findByIdAndUpdate(session._id, {
-    //         status: "authenticated",
-    //         phoneNumber: sock.user?.id,
-    //         profileName: sock.user?.name,
-    //         lastActivity: new Date(),
-    //         qrCode: null,
-    //       });
-
-    //       this.qrCallbacks.delete(clientId);
-    //     }
-
-    //     if (connection === "close") {
-    //       console.log("❌ WhatsApp Disconnected:", lastDisconnect?.error);
-    //       const shouldReconnect =
-    //         lastDisconnect?.error?.output?.statusCode !==
-    //         DisconnectReason.loggedOut;
-    //       console.log(
-    //         `Connection closed for ${clientId}. Reconnect: ${shouldReconnect}`
-    //       );
-
-    //       if (shouldReconnect) {
-    //         setTimeout(() => this.initializeClient(clientId, userId), 5000);
-    //       } else {
-    //         await WhatsappSession.findByIdAndUpdate(session._id, {
-    //           status: "disconnected",
-    //           isActive: false,
-    //         });
-    //         this.clients.delete(clientId);
-    //       }
-    //     }
-    //   });
-
-    //   sock.ev.on("creds.update", saveCreds);
-
-
-    // QR Code Handler
-sock.ev.on("connection.update", async (update) => {
-  const {
-    connection,
-    lastDisconnect,
-    qr,
-    isNewLogin,
-    receivedPendingNotifications,
-  } = update;
-
-  console.log("🔐 WhatsApp Connection Update:", {
-    connection,
-    qr: qr ? "QR Received" : "No QR",
-    isNewLogin,
-    receivedPendingNotifications,
-    lastDisconnect: lastDisconnect ? lastDisconnect.error : "None",
-  });
-
-  if (qr) {
-    console.log(`\n=== WhatsApp QR Code for Client: ${clientId} ===`);
-    qrcode.generate(qr, { small: true });
-    console.log(`=== Scan the QR code above ===\n`);
-
-    // Store raw QR code for frontend if needed
-    await WhatsappSession.findByIdAndUpdate(session._id, {
-      qrCode: qr, // Store the raw QR string
-      status: "authenticating",
-    });
-
-    // Notify frontend (they can generate QR on their side)
-    if (this.qrCallbacks.has(clientId)) {
-      this.qrCallbacks.get(clientId)({ qrString: qr, clientId });
-    }
-  }
-
- if (connection === "open") {
-    console.log(`✅ WhatsApp connected for client: ${clientId}`);
-    console.log("📱 User Info:", sock.user);
-    
-    // Reset rate limiting on new connection
-    this.rateLimiter.delete(clientId);
-    this.lastMessageTime = 0;
-    this.messageCount = 0; // Reset message counter
-    
-    await WhatsappSession.findByIdAndUpdate(session._id, {
-        status: "authenticated",
-        phoneNumber: sock.user?.id,
-        profileName: sock.user?.name,
-        lastActivity: new Date(),
-        qrCode: null,
-    });
-
-    this.qrCallbacks.delete(clientId);
-    
-    console.log(`✅ Ready to send messages for client: ${clientId}`);
-    console.log(`📊 Rate limiting reset for new connection`);
-}
-
-  if (connection === "close") {
-    console.log("❌ WhatsApp Disconnected:", lastDisconnect?.error);
-    
-    const statusCode = lastDisconnect?.error?.output?.statusCode;
-    const isDeviceRemoved = lastDisconnect?.error?.data?.content?.[0]?.attrs?.type === 'device_removed';
-    const isConflict = statusCode === 401;
-    
-    console.log(`🔍 Disconnect Analysis:`, {
-      statusCode: statusCode,
-      isDeviceRemoved: isDeviceRemoved,
-      isConflict: isConflict,
-      error: lastDisconnect?.error?.message
-    });
-
-    // 🚨 CRITICAL: Handle device_removed and conflict errors
-    if (isDeviceRemoved || isConflict) {
-      console.log(`🚨 WHATSAPP SECURITY ALERT: Session terminated`);
-      console.log(`🚨 Reason: ${isDeviceRemoved ? 'device_removed' : 'conflict'}`);
-      console.log(`🚨 This usually happens due to:`);
-      console.log(`🚨 1. Sending messages too rapidly`);
-      console.log(`🚨 2. Sending to unsaved numbers`);
-      console.log(`🚨 3. Using unofficial API detection`);
-      console.log(`🚨 4. Multiple simultaneous connections`);
-      
-      // 🚨 COMPLETE CLEANUP - don't auto-reconnect
-      await this.cleanupClient(clientId);
-      
-      // Update session to show manual reconnection required
-      await WhatsappSession.findByIdAndUpdate(session._id, {
-        status: 'device_removed',
-        isActive: false,
-        qrCode: null,
-        lastActivity: new Date()
-      });
-      
-      console.log(`🚨 Manual re-initialization required. User must scan QR again.`);
-      return;
-    }
-
-    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-    
-    console.log(`Connection closed for ${clientId}. Reconnect: ${shouldReconnect}`);
-
-    if (shouldReconnect) {
-      console.log(`🔄 Reconnecting in 10 seconds...`);
-      setTimeout(() => {
-        console.log(`🔄 Attempting reconnect for ${clientId}`);
-        this.initializeClient(clientId, userId).catch(error => {
-          console.error(`❌ Reconnect failed: ${error.message}`);
+        console.log(`🔐 ${role.toUpperCase()} Connection Update:`, {
+          connection,
+          qr: qr ? "QR Received" : "No QR",
         });
-      }, 10000);
-    } else {
-      console.log(`🚪 User logged out, cleaning up...`);
-      await WhatsappSession.findByIdAndUpdate(session._id, {
-        status: "disconnected",
-        isActive: false,
-      });
-      this.clients.delete(clientId);
-    }
-  }
-  
-  // Handle connecting state
-  if (connection === "connecting") {
-    console.log(`🔄 WhatsApp connecting for client: ${clientId}`);
-    await WhatsappSession.findByIdAndUpdate(session._id, {
-      status: "connecting"
-    });
-  }
-});
 
-sock.ev.on("creds.update", saveCreds);
+        if (qr) {
+          console.log(`\n=== WhatsApp QR Code for ${role.toUpperCase()}: ${clientId} ===`);
+          qrcode.generate(qr, { small: true });
+          console.log(`=== Scan the QR code above ===\n`);
+
+          await WhatsappSession.findByIdAndUpdate(session._id, {
+            qrCode: qr,
+            status: "authenticating",
+          });
+
+          if (this.qrCallbacks.has(clientId)) {
+            this.qrCallbacks.get(clientId)({ qrString: qr, clientId });
+          }
+        }
+
+        if (connection === "open") {
+          console.log(`✅ WhatsApp connected for ${role}: ${clientId}`);
+          console.log("📱 User Info:", sock.user);
+          
+          await WhatsappSession.findByIdAndUpdate(session._id, {
+            status: "authenticated",
+            phoneNumber: sock.user?.id,
+            profileName: sock.user?.name,
+            lastActivity: new Date(),
+            qrCode: null,
+          });
+
+          this.qrCallbacks.delete(clientId);
+          console.log(`✅ Ready for ${role} messages`);
+        }
+
+        if (connection === "close") {
+          console.log(`❌ ${role} WhatsApp Disconnected:`, lastDisconnect?.error);
+          
+          const statusCode = lastDisconnect?.error?.output?.statusCode;
+          const isDeviceRemoved = lastDisconnect?.error?.data?.content?.[0]?.attrs?.type === 'device_removed';
+          
+          if (isDeviceRemoved || statusCode === 401) {
+            console.log(`🚨 ${role} session terminated (device_removed)`);
+            await this.cleanupClient(clientId);
+            await WhatsappSession.findByIdAndUpdate(session._id, {
+              status: 'device_removed',
+              isActive: false,
+              qrCode: null,
+            });
+            return;
+          }
+
+          const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+          if (shouldReconnect) {
+            setTimeout(() => this.initializeClient(clientId, userId, role), 10000);
+          } else {
+            await this.cleanupClient(clientId);
+          }
+        }
+      });
+
+      sock.ev.on("creds.update", saveCreds);
 
       return {
         success: true,
-        message: "WhatsApp client initialized. Check terminal for QR code.",
+        message: `WhatsApp client initialized for ${role}. ${role === 'client' ? 'Scan QR code to connect.' : 'Check terminal for QR code.'}`,
         sessionId: session._id,
+        userType: role
       };
     } catch (error) {
-      console.error("❌ Error initializing WhatsApp:", error);
+      console.error(`❌ Error initializing WhatsApp for ${role}:`, error);
       await WhatsappSession.findOneAndUpdate(
         { clientId, isActive: true },
         { status: "error" }
@@ -292,225 +541,234 @@ sock.ev.on("creds.update", saveCreds);
     }
   }
 
-  
-
-//   async sendAutomatedMessage(
-//     clientId,
-//     vendorPhone,
-//     message,
-//     invoiceData = null
-//   ) {
-//     try {
-//       await this.enforceStrictRateLimit();
-//       console.log(`\n📤 SEND MESSAGE REQUEST: ${clientId} -> ${vendorPhone}`);
-
-//       const sock = this.clients.get(clientId);
-//       if (!sock || !sock.user) {
-//         throw new Error(
-//           "WhatsApp client not initialized. Please initialize first."
-//         );
-//       }
-
-//       // ✅ SIMPLIFIED: Just check if user exists (we're authenticated)
-//       if (!sock.user) {
-//         throw new Error(
-//           "WhatsApp not authenticated. Please scan QR code and connect first."
-//         );
-//       }
-
-//       console.log(`🔍 Connection Status:`, {
-//         phoneNumber: sock.user.id,
-//         isAuthenticated: true,
-//       });
-
-//       const formattedPhone = this.formatPhoneNumber(vendorPhone);
-//       let finalMessage = message;
-
-//       if (invoiceData) {
-//         finalMessage = this.generateInvoiceMessage(message, invoiceData);
-//       }
-
-//       console.log(`📤 Sending to: ${formattedPhone}`);
-//       console.log(`💬 Message length: ${finalMessage.length} chars`);
-//       console.log(`📝 Message preview: ${finalMessage.substring(0, 100)}...`);
-
-//       // ✅ TRY SENDING DIRECTLY (remove timeouts for now to see actual error)
-//       console.log("🚀 Attempting to send message...");
-//       const result = await sock.sendMessage(formattedPhone, {
-//         text: finalMessage,
-//       });
-
-//       this.updateRateLimit(clientId);
-
-//       // Update last activity
-//       await WhatsappSession.findOneAndUpdate(
-//         { clientId, isActive: true },
-//         {
-//           lastActivity: new Date(),
-//           status: "authenticated", // Ensure status is updated
-//         }
-//       );
-
-//       console.log(`✅ MESSAGE SENT SUCCESSFULLY!`);
-//       console.log(`📨 Message ID: ${result.key.id}`);
-
-//       return {
-//         success: true,
-//         messageId: result.key.id,
-//         timestamp: Math.floor(Date.now() / 1000),
-//       };
-//     } catch (error) {
-//       console.error("❌ Error sending message:", error);
-//       console.error("🔍 Error details:", {
-//         name: error.name,
-//         message: error.message,
-//         stack: error.stack,
-//       });
-
-//       throw error;
-//     }
-//   }
+  generateOwnerMessageLink(phone, message) {
+    const formattedPhone = this.formatPhoneNumber(phone);
+    const encodedMessage = encodeURIComponent(message);
+    return `https://web.whatsapp.com/send?phone=${formattedPhone}&text=${encodedMessage}`;
+  }
 
 
-async sendAutomatedMessage(clientId, vendorPhone, message, invoiceData = null) {
+  // async sendAutomatedMessage(
+  //   clientId,
+  //   vendorPhone,
+  //   message,
+  //   invoiceData = null
+  // ) {
+  //   try {
+  //     // 🚨 STRICT RATE LIMITING CHECKS
+  //     await this.enforceUltraStrictRateLimit(clientId);
+  //     await this.checkRateLimit(clientId);
+
+  //     console.log(`\n📤 SEND MESSAGE REQUEST: ${clientId} -> ${vendorPhone}`);
+
+  //     const sock = this.clients.get(clientId);
+  //     if (!sock || !sock.user) {
+  //       throw new Error("WhatsApp not connected. Please reconnect.");
+  //     }
+
+  //     console.log(`🔍 Connection Status:`, {
+  //       phoneNumber: sock.user.id,
+  //       isAuthenticated: true,
+  //     });
+
+  //     const formattedPhone = this.formatPhoneNumber(vendorPhone);
+  //     let finalMessage = message;
+
+  //     if (invoiceData) {
+  //       finalMessage = this.generateInvoiceMessage(message, invoiceData);
+  //     }
+
+  //     console.log(`📤 Sending to: ${formattedPhone}`);
+  //     console.log(`💬 Message length: ${finalMessage.length} chars`);
+  //     console.log(`📝 Message preview: ${finalMessage.substring(0, 100)}...`);
+
+  //     // 🚨 RANDOMIZED DELAY BETWEEN 15-25 SECONDS
+  //     const randomDelay = 15000 + Math.random() * 10000;
+  //     console.log(`⏳ Adding safety delay: ${Math.round(randomDelay / 1000)}s`);
+  //     await this.delay(randomDelay);
+
+  //     console.log("🚀 Attempting to send message...");
+  //     const result = await sock.sendMessage(formattedPhone, {
+  //       text: finalMessage,
+  //     });
+
+  //     // Update last activity
+  //     await WhatsappSession.findOneAndUpdate(
+  //       { clientId, isActive: true },
+  //       {
+  //         lastActivity: new Date(),
+  //         status: "authenticated",
+  //       }
+  //     );
+
+  //     console.log(`✅ MESSAGE SENT SUCCESSFULLY!`);
+  //     console.log(`📨 Message ID: ${result.key.id}`);
+
+  //     return {
+  //       success: true,
+  //       messageId: result.key.id,
+  //       timestamp: Math.floor(Date.now() / 1000),
+  //     };
+  //   } catch (error) {
+  //     console.error("❌ Error sending message:", error);
+  //     console.error("🔍 Error details:", {
+  //       name: error.name,
+  //       message: error.message,
+  //       stack: error.stack,
+  //     });
+
+  //     throw error;
+  //   }
+  // }
+
+   async sendStaffMessage(clientId, vendorPhone, message, invoiceData = null) {
+       if (!makeWASocket) {
+      await this.initBaileys();
+    }
     try {
-        // 🚨 STRICT RATE LIMITING CHECKS
-            await this.enforceUltraStrictRateLimit(clientId);
-        await this.checkRateLimit(clientId);
-        
-        console.log(`\n📤 SEND MESSAGE REQUEST: ${clientId} -> ${vendorPhone}`);
-        
-        const sock = this.clients.get(clientId);
-        if (!sock || !sock.user) {
-            throw new Error('WhatsApp not connected. Please reconnect.');
-        }
+      const userRole = this.userRoles.get(clientId);
+      
+      // 🚨 SAFETY CHECK: Ensure only staff can use automated sending
+      if (userRole !== 'staff') {
+        throw new Error('Automated sending is only available for staff accounts. Please use manual WhatsApp Web link.');
+      }
 
-        console.log(`🔍 Connection Status:`, {
-            phoneNumber: sock.user.id,
-            isAuthenticated: true
-        });
+      // 🎯 ENFORCE 10-SECOND DELAY BETWEEN STAFF MESSAGES
+      await this.enforceStaffMessageDelay(clientId);
+      
+      console.log(`🎯 STAFF sending automated message: ${clientId} -> ${vendorPhone}`);
+      
+      const sock = this.clients.get(clientId);
+      if (!sock || !sock.user) {
+        throw new Error('WhatsApp not connected. Please initialize first.');
+      }
 
-        const formattedPhone = this.formatPhoneNumber(vendorPhone);
-        let finalMessage = message;
-        
-        if (invoiceData) {
-            finalMessage = this.generateInvoiceMessage(message, invoiceData);
-        }
+      const formattedPhone = this.formatPhoneNumber(vendorPhone);
+      let finalMessage = message;
+      
+      if (invoiceData) {
+        finalMessage = this.generateInvoiceMessage(message, invoiceData);
+      }
 
-        console.log(`📤 Sending to: ${formattedPhone}`);
-        console.log(`💬 Message length: ${finalMessage.length} chars`);
-        console.log(`📝 Message preview: ${finalMessage.substring(0, 100)}...`);
+      console.log(`📤 Sending to: ${formattedPhone}`);
+      console.log(`💬 Message length: ${finalMessage.length} chars`);
 
-        // 🚨 RANDOMIZED DELAY BETWEEN 15-25 SECONDS
-        const randomDelay = 15000 + Math.random() * 10000;
-        console.log(`⏳ Adding safety delay: ${Math.round(randomDelay/1000)}s`);
-        await this.delay(randomDelay);
+      // 🎯 EXACTLY 10-SECOND DELAY LIKE GO GST BILL
+      console.log(`⏳ Enforcing 10-second delay between staff messages...`);
+      await this.delay(this.STAFF_MESSAGE_DELAY_MS);
 
-        console.log('🚀 Attempting to send message...');
-        const result = await sock.sendMessage(formattedPhone, { 
-            text: finalMessage 
-        });
-        
-        // Update last activity
-        await WhatsappSession.findOneAndUpdate(
-            { clientId, isActive: true },
-            { 
-                lastActivity: new Date(),
-                status: 'authenticated'
-            }
-        );
+      console.log('🚀 Attempting to send automated message...');
+      const result = await sock.sendMessage(formattedPhone, { 
+        text: finalMessage 
+      });
+      
+      // 🎯 UPDATE STAFF RATE LIMIT
+      this.updateStaffRateLimit(clientId);
+      
+      await WhatsappSession.findOneAndUpdate(
+        { clientId, isActive: true },
+        { lastActivity: new Date() }
+      );
 
-        console.log(`✅ MESSAGE SENT SUCCESSFULLY!`);
-        console.log(`📨 Message ID: ${result.key.id}`);
-        
-        return { 
-            success: true, 
-            messageId: result.key.id,
-            timestamp: Math.floor(Date.now() / 1000)
-        };
+      console.log(`✅ STAFF AUTOMATED MESSAGE SENT SUCCESSFULLY!`);
+      
+      const rateLimitInfo = this.getStaffRateLimit(clientId);
+      
+      return { 
+        success: true, 
+        messageId: result.key.id,
+        userType: 'staff',
+        automated: true,
+        rateLimit: rateLimitInfo,
+        nextMessageAvailable: Date.now() + this.STAFF_MESSAGE_DELAY_MS
+      };
 
     } catch (error) {
-        console.error('❌ Error sending message:', error);
-        console.error('🔍 Error details:', {
-            name: error.name,
-            message: error.message,
-            stack: error.stack
-        });
-        
-        throw error;
+      console.error('❌ Staff automated message error:', error);
+      throw error;
     }
-}
+  }
 
 
   // 🚨 STRICTER RATE LIMIT ENFORCEMENT
   async enforceUltraStrictRateLimit(clientId) {
     const now = Date.now();
-    
+
     // Minimum 30 seconds between messages
     if (this.lastMessageTime > 0) {
-        const timeSinceLastMessage = now - this.lastMessageTime;
-        if (timeSinceLastMessage < this.MIN_DELAY_BETWEEN_MESSAGES) {
-            const waitTime = this.MIN_DELAY_BETWEEN_MESSAGES - timeSinceLastMessage;
-            console.log(`⏳ Enforcing ultra-safe delay: ${Math.ceil(waitTime/1000)}s`);
-            await this.delay(waitTime);
-        }
+      const timeSinceLastMessage = now - this.lastMessageTime;
+      if (timeSinceLastMessage < this.MIN_DELAY_BETWEEN_MESSAGES) {
+        const waitTime = this.MIN_DELAY_BETWEEN_MESSAGES - timeSinceLastMessage;
+        console.log(
+          `⏳ Enforcing ultra-safe delay: ${Math.ceil(waitTime / 1000)}s`
+        );
+        await this.delay(waitTime);
+      }
     }
-    
+
     // Maximum 2 messages per minute
     if (this.messageCount >= this.MAX_MESSAGES_PER_MINUTE) {
-        const waitTime = 60000; // Wait 1 minute
-        console.log(`🚨 Maximum messages per minute reached. Waiting ${waitTime/1000}s`);
-        await this.delay(waitTime);
-        this.messageCount = 0; // Reset counter
+      const waitTime = 60000; // Wait 1 minute
+      console.log(
+        `🚨 Maximum messages per minute reached. Waiting ${waitTime / 1000}s`
+      );
+      await this.delay(waitTime);
+      this.messageCount = 0; // Reset counter
     }
-}
+  }
 
   // 🚨 RATE LIMITING METHODS - ADD THESE TO YOUR CLASS
 
-// Update rate limit counter
-updateRateLimit(clientId) {
+  // Update rate limit counter
+  updateRateLimit(clientId) {
     const now = Date.now();
-    const clientLimit = this.rateLimiter.get(clientId) || { 
-        count: 0, 
-        lastReset: now,
-        lastMessageTime: 0 
+    const clientLimit = this.rateLimiter.get(clientId) || {
+      count: 0,
+      lastReset: now,
+      lastMessageTime: 0,
     };
-    
+
     // Reset counter every minute
     if (now - clientLimit.lastReset > 60000) {
-        clientLimit.count = 0;
-        clientLimit.lastReset = now;
+      clientLimit.count = 0;
+      clientLimit.lastReset = now;
     }
-    
+
     clientLimit.count++;
     clientLimit.lastMessageTime = now;
     this.rateLimiter.set(clientId, clientLimit);
-    
-    console.log(`📊 Rate limit: ${clientLimit.count}/${this.MAX_MESSAGES_PER_MINUTE} messages this minute`);
-    
+
+    console.log(
+      `📊 Rate limit: ${clientLimit.count}/${this.MAX_MESSAGES_PER_MINUTE} messages this minute`
+    );
+
     // Enforce maximum of 3 messages per minute
     if (clientLimit.count >= this.MAX_MESSAGES_PER_MINUTE) {
-        const waitTime = 60000 - (now - clientLimit.lastReset);
-        console.log(`🚨 Rate limit exceeded. Waiting ${Math.ceil(waitTime/1000)} seconds...`);
-        return waitTime;
+      const waitTime = 60000 - (now - clientLimit.lastReset);
+      console.log(
+        `🚨 Rate limit exceeded. Waiting ${Math.ceil(
+          waitTime / 1000
+        )} seconds...`
+      );
+      return waitTime;
     }
-    
-    return 0;
-}
 
-// Check rate limit before sending
-async checkRateLimit(clientId) {
+    return 0;
+  }
+
+  // Check rate limit before sending
+  async checkRateLimit(clientId) {
     const waitTime = this.updateRateLimit(clientId);
     if (waitTime > 0) {
-        console.log(`⏳ Rate limit cooldown: ${Math.ceil(waitTime/1000)}s`);
-        await this.delay(waitTime);
+      console.log(`⏳ Rate limit cooldown: ${Math.ceil(waitTime / 1000)}s`);
+      await this.delay(waitTime);
     }
-}
+  }
 
-// Safety delay method
-delay(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-}
+  // Safety delay method
+  delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
 
   generateManualMessageLink(phone, message) {
     const formattedPhone = this.formatPhoneNumber(phone);
@@ -688,17 +946,17 @@ delay(ms) {
   }
 
   // Cleanup client method - ADD THIS TO YOUR CLASS
-async cleanupClient(clientId) {
+  async cleanupClient(clientId) {
     console.log(`🧹 Cleaning up client: ${clientId}`);
-    
+
     const sock = this.clients.get(clientId);
     if (sock) {
-        try {
-            await sock.end();
-            console.log(`✅ Socket ended for ${clientId}`);
-        } catch (error) {
-            console.error('Error ending socket:', error);
-        }
+      try {
+        await sock.end();
+        console.log(`✅ Socket ended for ${clientId}`);
+      } catch (error) {
+        console.error("Error ending socket:", error);
+      }
     }
 
     this.clients.delete(clientId);
@@ -708,16 +966,16 @@ async cleanupClient(clientId) {
     this.rateLimiter.delete(clientId);
 
     await WhatsappSession.updateMany(
-        { clientId, isActive: true },
-        { 
-            isActive: false, 
-            status: 'disconnected',
-            qrCode: null
-        }
+      { clientId, isActive: true },
+      {
+        isActive: false,
+        status: "disconnected",
+        qrCode: null,
+      }
     );
 
     console.log(`✅ Client ${clientId} fully cleaned up`);
-}
+  }
 
   async logout(clientId) {
     try {
@@ -753,12 +1011,6 @@ async cleanupClient(clientId) {
 }
 
 module.exports = new WhatsAppService();
-
-
-
-
-
-
 
 // services/whatsapp/whatsapp.service.js - FINAL WORKING VERSION
 // const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, Browsers } = require('@whiskeysockets/baileys');
