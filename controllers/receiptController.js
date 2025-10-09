@@ -3,14 +3,13 @@ const mongoose = require("mongoose");
 const ReceiptEntry = require("../models/ReceiptEntry");
 const Company = require("../models/Company");
 const Party = require("../models/Party");
+const User = require("../models/User")
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { getFromCache, setToCache } = require('../RedisCache');
 const { deleteReceiptEntryCache, deleteReceiptEntryCacheByUser, flushAllCache } = require("../utils/cacheHelpers");
 
 const { createNotification } = require("./notificationController");
-const User = require("../models/User");
-const Client = require("../models/Client");
-const Role = require("../models/Role")
+const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 
 // privileged roles that can skip allowedCompanies checks
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
@@ -83,94 +82,6 @@ async function ensureAuthCaps(req) {
   }
 }
 
-// ---- Actor resolver: supports staff users and clients ----
-async function resolveActor(req) {
-  const role = req.auth?.role;
-
-  // treat placeholders as invalid
-  const validName = (v) => {
-    const s = String(v ?? "").trim();
-    return s && !/^unknown$/i.test(s) && s !== "-";
-  };
-
-  // CLIENT path: prefer token's clientName; else fetch Client.contactName
-  if (role === "client") {
-    if (validName(req.auth?.clientName)) {
-      return {
-        id: req.auth?.clientId || null,
-        name: String(req.auth.clientName).trim(),
-        role,
-        kind: "client",
-      };
-    }
-    const clientId = req.auth?.clientId;
-    if (!clientId) return { id: null, name: "Unknown User", role, kind: "client" };
-
-    const clientDoc = await Client.findById(clientId)
-      .select("contactName clientUsername email phone")
-      .lean();
-
-    const name =
-      (validName(clientDoc?.contactName) && clientDoc.contactName) ||
-      (validName(clientDoc?.clientUsername) && clientDoc.clientUsername) ||
-      (validName(clientDoc?.email) && clientDoc.email) ||
-      (validName(clientDoc?.phone) && clientDoc.phone) ||
-      "Unknown User";
-
-    return { id: clientId, name: String(name).trim(), role, kind: "client" };
-  }
-
-  // STAFF path: claims first, else fetch User
-  const claimName =
-    req.auth?.displayName ||
-    req.auth?.fullName ||
-    req.auth?.name ||
-    req.auth?.userName ||
-    req.auth?.username ||
-    null;
-
-  if (validName(claimName)) {
-    return {
-      id: req.auth?.userId || req.auth?.id || req.user?.id || null,
-      name: String(claimName).trim(),
-      role,
-      kind: "user",
-    };
-  }
-
-  const userId = req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
-  if (!userId) return { id: null, name: "Unknown User", role, kind: "user" };
-
-  const userDoc = await User.findById(userId)
-    .select("displayName fullName name userName username email")
-    .lean();
-
-  const name =
-    (validName(userDoc?.displayName) && userDoc.displayName) ||
-    (validName(userDoc?.fullName) && userDoc.fullName) ||
-    (validName(userDoc?.name) && userDoc.name) ||
-    (validName(userDoc?.userName) && userDoc.userName) ||
-    (validName(userDoc?.username) && userDoc.username) ||
-    (validName(userDoc?.email) && userDoc.email) ||
-    "Unknown User";
-
-  return { id: userId, name: String(name).trim(), role, kind: "user" };
-}
-
-// Try to find an admin tied to company; fallback to any admin
-async function findAdminUser(companyId) {
-  const adminRole = await Role.findOne({ name: "admin" }).select("_id");
-  if (!adminRole) return null;
-
-  let adminUser = null;
-  if (companyId) {
-    adminUser = await User.findOne({ role: adminRole._id, companies: companyId }).select("_id");
-  }
-  if (!adminUser) {
-    adminUser = await User.findOne({ role: adminRole._id }).select("_id");
-  }
-  return adminUser;
-}
 
 // Build message text per action (receipt wording)
 function buildReceiptNotificationMessage(action, { actorName, customerName, oldAmount, newAmount }) {
@@ -222,73 +133,6 @@ function companyAllowedForUser(req, companyId) {
     : [];
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
-
-
-// ---- Actor resolver: supports staff users and clients ----
-async function resolveActor(req) {
-  // Fast path: use names from JWT if present
-  const claimName =
-    req.auth?.displayName ||
-    req.auth?.fullName ||
-    req.auth?.name ||
-    req.auth?.userName ||
-    req.auth?.username ||
-    req.auth?.clientName || // if you add this in JWT for clients
-    null;
-
-  const role = req.auth?.role;
-
-  // If the claim has a string, return with best-effort id as well
-  if (claimName && String(claimName).trim()) {
-    return {
-      id: req.auth?.userId || req.auth?.id || req.user?.id || req.auth?.clientId || null,
-      name: String(claimName).trim(),
-      role,
-      kind: role === "client" ? "client" : "user",
-    };
-  }
-
-  // If actor is a client, fetch from Client model
-  if (role === "client") {
-    const clientId = req.auth?.clientId;
-    if (!clientId) return { id: null, name: "Unknown User", role, kind: "client" };
-
-    const clientDoc = await Client.findById(clientId)
-      .select("contactName clientUsername email phone")
-      .lean();
-
-    const name =
-      clientDoc?.contactName ||
-      clientDoc?.clientUsername ||
-      clientDoc?.email ||
-      clientDoc?.phone ||
-      "Unknown User";
-
-    return { id: clientId, name: String(name).trim(), role, kind: "client" };
-  }
-
-  // Otherwise treat as internal user
-  const userId = req.auth?.userId || req.auth?.id || req.user?.id || req.user?._id;
-  if (!userId) return { id: null, name: "Unknown User", role, kind: "user" };
-
-  const userDoc = await User.findById(userId)
-    .select("displayName fullName name userName username email")
-    .lean();
-
-  const name =
-    userDoc?.displayName ||
-    userDoc?.fullName ||
-    userDoc?.name ||
-    userDoc?.userName ||
-    userDoc?.username ||
-    userDoc?.email ||
-    "Unknown User";
-
-  return { id: userId, name: String(name).trim(), role, kind: "user" };
-}
-
-
-
 // exports.createReceipt = async (req, res) => {
 //   try {
 //     await ensureAuthCaps(req);

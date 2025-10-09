@@ -2,6 +2,8 @@
 const Party = require("../models/Party");
 const Customer = require("../models/Client")
 const { getEffectivePermissions } = require("../services/effectivePermissions");
+const { createNotification } = require("./notificationController");
+const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
@@ -36,6 +38,47 @@ async function ensureAuthCaps(req) {
   }
 }
 
+
+// Build message text per action
+function buildPartyNotificationMessage(action, { actorName, partyName }) {
+  const pName = partyName || "Unknown Party";
+  switch (action) {
+    case "create":
+      return `New party created by ${actorName}: ${pName}`;
+    case "update":
+      return `Party updated by ${actorName}: ${pName}`;
+    case "delete":
+      return `Party deleted by ${actorName}: ${pName}`;
+    default:
+      return `Party ${action} by ${actorName}: ${pName}`;
+  }
+}
+
+// Unified notifier for party module
+async function notifyAdminOnPartyAction({ req, action, partyName, entryId }) {
+  const actor = await resolveActor(req);
+  const adminUser = await findAdminUser();
+  if (!adminUser) {
+    console.warn("notifyAdminOnPartyAction: no admin user found");
+    return;
+  }
+
+  const message = buildPartyNotificationMessage(action, {
+    actorName: actor.name,
+    partyName,
+  });
+
+  await createNotification(
+    message,
+    adminUser._id, // recipient (admin)
+    actor.id, // actor id (user OR client)
+    action, // "create" | "update" | "delete"
+    "party", // entry type / category
+    entryId, // party id
+    req.auth.clientId
+  );
+}
+
 exports.createParty = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -50,10 +93,13 @@ exports.createParty = async (req, res) => {
       address,
       city,
       state,
+      pincode,
       gstin,
       gstRegistrationType,
       pan,
       isTDSApplicable,
+      tdsRate,
+      tdsSection,
       contactNumber,
       email,
     } = req.body;
@@ -81,14 +127,25 @@ exports.createParty = async (req, res) => {
       address,
       city,
       state,
+      pincode,
       gstin,
       gstRegistrationType,
       pan,
       isTDSApplicable,
+      tdsRate,
+      tdsSection,
       contactNumber,
       email: email?.toLowerCase(),
       createdByClient: req.auth.clientId,
       createdByUser: req.auth.userId,
+    });
+
+    // Notify admin after party created
+    await notifyAdminOnPartyAction({
+      req,
+      action: "create",
+      partyName: party.name,
+      entryId: party._id,
     });
 
     res.status(201).json({ message: "Party created", party });
@@ -222,6 +279,14 @@ exports.updateParty = async (req, res) => {
     Object.assign(doc, req.body);
     await doc.save();
 
+    // Notify admin after party updated
+    await notifyAdminOnPartyAction({
+      req,
+      action: "update",
+      partyName: doc.name,
+      entryId: doc._id,
+    });
+
     res.json({ message: "Party updated", party: doc });
   } catch (err) {
     if (err.code === 11000) {
@@ -247,6 +312,14 @@ exports.deleteParty = async (req, res) => {
     if (!PRIV_ROLES.has(req.auth.role) && !sameTenant) {
       return res.status(403).json({ message: "Not authorized" });
     }
+
+    // Notify admin before deleting (since doc will be gone after)
+    await notifyAdminOnPartyAction({
+      req,
+      action: "delete",
+      partyName: doc.name,
+      entryId: doc._id,
+    });
 
     await doc.deleteOne();
 

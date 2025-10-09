@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const UNIT_TYPES = ["Kg", "Litre", "Piece", "Box", "Meter", "Dozen", "Pack", "Other"];
 
-const salesItemSchema = new mongoose.Schema({
+const proformaItemSchema = new mongoose.Schema({
   product: { type: mongoose.Schema.Types.ObjectId, ref: "Product", required: true },
   quantity: { type: Number, required: true, min: 1 },
   pricePerUnit: { type: Number, required: true, min: 0 },
@@ -16,7 +16,7 @@ const salesItemSchema = new mongoose.Schema({
   hsn: { type: String, trim: true },
 }, { _id: false });
 
-const salesServiceSchema = new mongoose.Schema({
+const proformaServiceSchema = new mongoose.Schema({
   service: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
   amount: { type: Number, required: true, min: 1 },
   description: { type: String },
@@ -29,7 +29,7 @@ const salesServiceSchema = new mongoose.Schema({
 }, { _id: false });
 
 
-const salesSchema = new mongoose.Schema({
+const proformaSchema = new mongoose.Schema({
   party: { type: mongoose.Schema.Types.ObjectId, ref: "Party", required: true },
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: true },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
@@ -41,7 +41,7 @@ const salesSchema = new mongoose.Schema({
   shippingAddress: { type: mongoose.Schema.Types.ObjectId, ref: "ShippingAddress" },
 
   products: {
-    type: [salesItemSchema],
+    type: [proformaItemSchema],
     required: false,
     validate: {
       validator: function () {
@@ -55,7 +55,7 @@ const salesSchema = new mongoose.Schema({
 
   // ✅ top-level array is plural: services
   services: {
-    type: [salesServiceSchema],
+    type: [proformaServiceSchema],
     required: false,
     validate: {
       validator: function () {
@@ -89,9 +89,9 @@ const salesSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 // Unique per company + year + number (ignore when not set)
-salesSchema.index(
+proformaSchema.index(
   { company: 1, invoiceYearYY: 1, invoiceNumber: 1 },
   { unique: true, partialFilterExpression: { invoiceNumber: { $exists: true, $type: "string" } } }
 );
 
-module.exports = mongoose.model("SalesEntry", salesSchema);
+module.exports = mongoose.model("ProformaEntry", proformaSchema);

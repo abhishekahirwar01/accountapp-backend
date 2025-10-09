@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 
 const IssuedInvoiceNumberSchema = new mongoose.Schema({
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", index: true, required: true },
-  series:  { type: String, enum: ["sales", "purchase"], index: true, required: true },
+  series:  { type: String, enum: ["sales", "purchase", "proforma"], index: true, required: true },
   invoiceNumber: { type: String, index: true, required: true },
   yearYY:  { type: Number, index: true, required: true },
   seq:     { type: Number, required: true },

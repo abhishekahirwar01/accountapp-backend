@@ -17,6 +17,7 @@ const serviceSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+    sac: { type: String, trim: true },
     createdByClient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Client",

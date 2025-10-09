@@ -10,6 +10,7 @@ const masterAdminRoutes = require("./routes/masterAdminRoutes");
 const clientRoutes = require("./routes/clientRoutes");
 const companyRoutes = require("./routes/companyRoutes");
 const salesRoutes = require("./routes/salesEntry");
+const proformaRoutes = require("./routes/proformaRoutes");
 const purchaseRoutes = require("./routes/purchaseEntry");
 const productRoutes = require("./routes/productRoute");
 const partyRoutes = require("./routes/partyRoute");
@@ -28,6 +29,10 @@ const roleRoutes = require('./routes/roleRoutes')
 const userPermissionsRoutes = require("./routes/userPermissionsRoutes");
 const bankDetailRoutes = require("./routes/bankDetailRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+
+const shippingAddressRoutes = require("./routes/shippingAddressRoutes");
+
+
 const unitRoutes = require("./routes/unitRoutes")
 const supportRoutes = require("./routes/support")
 const updateNotificationRoutes = require("./routes/updateNotificationRoutes");
@@ -105,6 +110,7 @@ app.post("/api/clients/:slug/login-otp",   loginClientWithOtp);
 app.use("/api/clients", clientRoutes);
 app.use("/api/companies", companyRoutes);
 app.use("/api/sales", salesRoutes);
+app.use("/api/proforma", proformaRoutes);
 app.use("/api/purchase", purchaseRoutes);
 app.use("/api/receipts", receiptRoutes);
 app.use("/api/payments", paymentRoutes);
@@ -121,6 +127,7 @@ app.use("/api/account", AccountValidityRoutes);
 app.use("/api/user-permissions", userPermissionsRoutes);
 app.use("/api/bank-details", bankDetailRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/shipping-addresses", shippingAddressRoutes);
 
 app.use("/api/update-notifications", updateNotificationRoutes);
 
