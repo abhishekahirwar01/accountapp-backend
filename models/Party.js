@@ -32,7 +32,7 @@ const partySchema = new mongoose.Schema(
       ref: "Client",
       required: true,
     },
-    createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
      balance: { type: Number, default: 0 },
   },
   { timestamps: true }
