@@ -453,11 +453,14 @@ exports.createSalesEntry = async (req, res) => {
       shippingAddress,
     } = req.body;
 
+    // Normalize paymentMethod to handle empty strings
+    const normalizedPaymentMethod = paymentMethod || undefined;
+
     if (!party) {
       return res.status(400).json({ message: "Customer ID is required" });
     }
 
-    if (paymentMethod === "Credit") {
+    if (normalizedPaymentMethod === "Credit") {
       partyDoc = await Party.findById(party);
       if (!partyDoc) {
         return res.status(404).json({ message: "Customer not found" });
@@ -584,7 +587,7 @@ exports.createSalesEntry = async (req, res) => {
                 gstin: companyDoc.gstin || null,
                 invoiceNumber,
                 invoiceYearYY: yearYY,
-                paymentMethod,
+                paymentMethod: normalizedPaymentMethod,
                 createdByUser: req.auth.userId,
                 notes: notes || "",
                 shippingAddress: shippingAddress,
@@ -845,6 +848,9 @@ exports.updateSalesEntry = async (req, res) => {
 
     const { products, services, paymentMethod, totalAmount, party, shippingAddress, bank, ...otherUpdates } = req.body;
 
+    // Normalize paymentMethod
+    const normalizedPaymentMethod = paymentMethod || undefined;
+
     // Store original values for credit adjustment
     const originalPaymentMethod = entry.paymentMethod;
     const originalTotalAmount = entry.totalAmount;
@@ -917,7 +923,7 @@ exports.updateSalesEntry = async (req, res) => {
 
     // Handle payment method and party changes for credit adjustment
     if (paymentMethod !== undefined) {
-      entry.paymentMethod = paymentMethod;
+      entry.paymentMethod = normalizedPaymentMethod;
     }
 
     if (party !== undefined) {
@@ -944,7 +950,7 @@ exports.updateSalesEntry = async (req, res) => {
     // CREDIT BALANCE ADJUSTMENT LOGIC
     await session.withTransaction(async () => {
       const currentPartyId = party || originalPartyId;
-      const currentPaymentMethod = paymentMethod || originalPaymentMethod;
+      const currentPaymentMethod = normalizedPaymentMethod || originalPaymentMethod;
       const currentTotalAmount = entry.totalAmount;
 
       // Find the current party document
@@ -998,10 +1004,19 @@ exports.updateSalesEntry = async (req, res) => {
       await currentPartyDoc.save({ session });
     });
 
+    // Fetch party name for notification
+    let partyName = "Unknown Party";
+    if (partyDoc) {
+      partyName = partyDoc.name;
+    } else {
+      const fetchedParty = await Party.findById(entry.party);
+      if (fetchedParty) partyName = fetchedParty.name;
+    }
+
     await notifyAdminOnSalesAction({
       req,
       action: "update",
-      partyName: (partyDoc ? partyDoc.name : null) || (entry?.party?.name) || "Unknown Party",
+      partyName,
       entryId: entry._id,
       companyId: entry.company?.toString(),
     });

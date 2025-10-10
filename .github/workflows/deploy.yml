@@ -5,6 +5,7 @@ on:
     branches:
       - main  # Trigger deployment on push to main branch
 
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
