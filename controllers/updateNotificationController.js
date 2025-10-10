@@ -406,6 +406,26 @@ exports.propagateToAdminsOnly = async (req, res) => {
   }
 };
 
+// Get update notifications for users (propagated notifications)
+exports.getUpdateNotificationsForUser = async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    // For users, return all update notifications that have been propagated
+    const notifications = await UpdateNotification.find({
+      propagatedToClients: true,
+      dismissed: false
+    })
+    .sort({ createdAt: -1 })
+    .lean();
+
+    res.status(200).json({ notifications });
+  } catch (err) {
+    console.error("Error fetching update notifications for user:", err);
+    res.status(500).json({ message: "Failed to fetch update notifications" });
+  }
+};
+
 // Get all update notifications (for admin dashboard)
 exports.getAllUpdateNotifications = async (req, res) => {
   try {
