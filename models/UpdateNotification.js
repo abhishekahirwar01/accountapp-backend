@@ -51,6 +51,11 @@ const updateNotificationSchema = new mongoose.Schema({
   propagatedAt: {
     type: Date
   },
+  visibility: {
+    type: String,
+    enum: ['all', 'admins'],
+    default: 'all' // 'all' means clients + users, 'admins' means clients only
+  },
   metadata: {
     type: Map,
     of: mongoose.Schema.Types.Mixed,
