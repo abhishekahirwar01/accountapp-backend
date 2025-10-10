@@ -43,9 +43,14 @@ jobs:
             git stash || exit   # Stash any local changes
             git pull origin main || exit
             npm install || exit
+
+            # Create update notification for new deployment before restart
+            echo "🚀 Creating deployment notification..."
+            node deploy-notification.js "${{ secrets.MASTER_TOKEN }}" "https://accountbackend.sharda.co.in" "$(date +%Y.%m.%d-%H%M)" || echo "⚠️  Notification creation failed, but deployment continues"
+
             pm2 restart accountbackend || exit
 
-            # Wait for server to be ready
+            # Wait for server to be ready after restart
             echo "⏳ Waiting for server to be ready..."
             for i in {1..30}; do
               if curl -f -s "https://accountbackend.sharda.co.in/api/db-status" > /dev/null 2>&1; then
@@ -55,8 +60,4 @@ jobs:
               echo "⏳ Server not ready yet, waiting... ($i/30)"
               sleep 5
             done
-
-            # Create update notification for new deployment
-            echo "🚀 Creating deployment notification..."
-            node deploy-notification.js "${{ secrets.MASTER_TOKEN }}" "https://accountbackend.sharda.co.in" "$(date +%Y.%m.%d-%H%M)" || echo "⚠️  Notification creation failed, but deployment continues"
           EOF
