@@ -20,6 +20,12 @@ router.patch("/dismiss/:notificationId", verifyMasterAdmin, updateNotificationCo
 // Propagate update notification to clients
 router.post("/propagate/:notificationId", verifyMasterAdmin, updateNotificationController.propagateToClients);
 
+// Propagate to all users (clients and their users)
+router.post("/propagate-all/:notificationId", verifyMasterAdmin, updateNotificationController.propagateToAllUsers);
+
+// Propagate to admins only (clients only, not their users)
+router.post("/propagate-admins/:notificationId", verifyMasterAdmin, updateNotificationController.propagateToAdminsOnly);
+
 // Get all update notifications (for admin dashboard)
 router.get("/", verifyMasterAdmin, updateNotificationController.getAllUpdateNotifications);
 
