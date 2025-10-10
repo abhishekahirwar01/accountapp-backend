@@ -490,6 +490,39 @@ exports.getCompaniesByClientId = async (req, res) => {
 };
 
 
+// Get single company by ID
+exports.getCompany = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const company = await Company.findById(id);
+    if (!company) {
+      return res.status(404).json({ message: "Company not found" });
+    }
+
+    // Check if user has access to this company
+    const { role, companies = [], createdByClient } = req.user || {};
+    let hasAccess = false;
+
+    if (["user", "manager", "admin"].includes(role)) {
+      hasAccess = Array.isArray(companies) && companies.includes(id);
+    } else if (["client", "customer"].includes(role)) {
+      hasAccess = String(company.client) === req.user.id;
+    } else if (role === "master") {
+      hasAccess = !createdByClient || String(company.client) === createdByClient;
+    }
+
+    if (!hasAccess) {
+      return res.status(403).json({ message: "Access denied" });
+    }
+
+    res.json(company);
+  } catch (err) {
+    console.error("Error fetching company:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
 // controllers/companyController.js (or wherever getMyCompanies lives)
 exports.getMyCompanies = async (req, res) => {
   try {

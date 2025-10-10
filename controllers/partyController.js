@@ -205,6 +205,28 @@ exports.getParties = async (req, res) => {
   }
 };
 
+exports.getParty = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const party = await Party.findById(id);
+    if (!party) {
+      return res.status(404).json({ message: "Party not found" });
+    }
+
+    // Check if party belongs to the same client
+    const sameTenant = String(party.createdByClient) === req.auth.clientId;
+    if (!PRIV_ROLES.has(req.auth.role) && !sameTenant) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    res.json(party);
+  } catch (err) {
+    console.error("Error fetching party:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
 exports.getPartyBalance = async (req, res) => {
   try {
     const { partyId } = req.params; // Get the partyId from the URL parameter
