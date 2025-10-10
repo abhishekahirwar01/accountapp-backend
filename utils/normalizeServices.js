@@ -18,8 +18,10 @@ module.exports = async function normalizeServices(rows, clientId) {
     if (!svc) continue;
 
     const amount = Number(r.amount) || 0;
+    if (amount <= 0) continue; // Skip services with non-positive amount
+
     const description = r.description || "";
-    
+
     // Get GST percentage from the request or use service default
     const gstPercentage = Number(r.gstPercentage ?? svc.gstPercentage ?? 18);
     

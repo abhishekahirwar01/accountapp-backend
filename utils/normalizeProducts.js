@@ -49,6 +49,7 @@ module.exports = async (rawProducts = [], clientId, userId) => {
     if (isNaN(pricePerUnit)) throw new Error("Invalid price");
 
     const amount = Number(item.amount ?? quantity * pricePerUnit);
+    if (amount < 0) continue; // Skip products with negative amount
 
     // Get GST percentage from the request or use product default
     const gstPercentage = Number(item.gstPercentage ?? product.gstPercentage ?? 18);

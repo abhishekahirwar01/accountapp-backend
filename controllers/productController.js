@@ -307,12 +307,12 @@ exports.updateStockBulk = async (req, res) => {
       }
     }
 
-    // compute new stocks (allow negatives for sales)
+    // compute new stocks (prevent negatives)
     const sign = action === "increase" ? 1 : -1;
     for (const [id, qty] of qtyById.entries()) {
       const p = productMap.get(id);
       const current = Number(p.stocks || 0);
-      const next = current + sign * qty;
+      const next = Math.max(0, current + sign * qty);
       p.stocks = next;
     }
 
