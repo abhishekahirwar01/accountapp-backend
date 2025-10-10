@@ -12,10 +12,10 @@ router.post("/", verifyMasterAdmin, updateNotificationController.createUpdateNot
 router.get("/master/:masterId", verifyMasterAdmin, updateNotificationController.getUpdateNotificationsForMaster);
 
 // Mark a section as explored
-router.patch("/explore-section", verifyMasterAdmin, updateNotificationController.markSectionAsExplored);
+router.patch("/explore-section", auth.authenticateToken, updateNotificationController.markSectionAsExplored);
 
 // Dismiss an update notification
-router.patch("/dismiss/:notificationId", verifyMasterAdmin, updateNotificationController.dismissUpdateNotification);
+router.patch("/dismiss/:notificationId", auth.authenticateToken, updateNotificationController.dismissUpdateNotification);
 
 // Propagate update notification to clients
 router.post("/propagate/:notificationId", verifyMasterAdmin, updateNotificationController.propagateToClients);
@@ -25,6 +25,9 @@ router.post("/propagate-all/:notificationId", verifyMasterAdmin, updateNotificat
 
 // Propagate to admins only (clients only, not their users)
 router.post("/propagate-admins/:notificationId", verifyMasterAdmin, updateNotificationController.propagateToAdminsOnly);
+
+// Get update notifications for users (propagated notifications)
+router.get("/user/:userId", auth.authenticateToken, updateNotificationController.getUpdateNotificationsForUser);
 
 // Get all update notifications (for admin dashboard)
 router.get("/", verifyMasterAdmin, updateNotificationController.getAllUpdateNotifications);
