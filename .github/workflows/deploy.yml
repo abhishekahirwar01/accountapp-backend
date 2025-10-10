@@ -46,7 +46,15 @@ jobs:
             pm2 restart accountbackend || exit
 
             # Wait for server to be ready
-            sleep 10
+            echo "⏳ Waiting for server to be ready..."
+            for i in {1..30}; do
+              if curl -f -s "https://accountbackend.sharda.co.in/api/db-status" > /dev/null 2>&1; then
+                echo "✅ Server is ready!"
+                break
+              fi
+              echo "⏳ Server not ready yet, waiting... ($i/30)"
+              sleep 5
+            done
 
             # Create update notification for new deployment
             echo "🚀 Creating deployment notification..."
