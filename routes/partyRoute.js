@@ -10,6 +10,8 @@ router.post("/", verifyClientOrAdmin, partyController.createParty);
 
 router.get("/", verifyClientOrAdmin, partyController.getParties);
 
+router.get("/:id", verifyClientOrAdmin, partyController.getParty);
+
 router.get("/:partyId/balance",verifyClientOrAdmin, partyController.getPartyBalance);
 
 router.get("/balances", verifyClientOrAdmin, partyController.getPartyBalancesBulk); // bulk

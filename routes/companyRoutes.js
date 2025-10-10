@@ -9,7 +9,8 @@ const {
     updateCompany,
     deleteCompany,
     getCompaniesByClientId,
-    getMyCompanies
+    getMyCompanies,
+    getCompany
 } = require("../controllers/companyController");
 
 const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
@@ -40,14 +41,16 @@ router.delete("/:id", verifyClientOrAdmin, deleteCompany);
 
 router.get("/by-client/:clientId", verifyMasterAdmin, getCompaniesByClientId);
 
-
-// ✅ NEW: role-agnostic “my companies”
+// ✅ NEW: role-agnostic "my companies"
 // Usage
 router.get(
   "/my",
   verifyClientOrAdmin,
   getMyCompanies
 );
+
+// Get single company by ID
+router.get("/:id", verifyClientOrAdmin, getCompany);
 
 
 
