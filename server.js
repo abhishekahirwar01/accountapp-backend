@@ -90,6 +90,7 @@ app.use(express.json({ limit: "15mb" }));
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.use(async (req, res, next) => {
+  console.log(`📨 ${req.method} ${req.url}`);
   try {
     await connectDB();
     next();

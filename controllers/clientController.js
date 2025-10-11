@@ -196,8 +196,11 @@ exports.getClients = async (req, res) => {
 // Client Login
 exports.loginClient = async (req, res) => {
   try {
-    // slug comes from URL: /api/:slug/login
-    const { slug } = req.params;
+    console.log("🔍 loginClient called");
+    console.log("Headers:", req.headers);
+    console.log("Params:", req.params);
+    console.log("Body:", req.body);
+
     const { clientUsername, password , captchaToken } = req.body;
 
     // Verify reCAPTCHA
@@ -213,7 +216,8 @@ exports.loginClient = async (req, res) => {
       return res.status(400).json({ message: "reCAPTCHA verification failed" });
     }
 
-    const client = await Client.findOne({ slug });
+    const normalizedUsername = String(clientUsername).trim().toLowerCase();
+    const client = await Client.findOne({ clientUsername: normalizedUsername });
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
@@ -238,12 +242,6 @@ exports.loginClient = async (req, res) => {
       return res
         .status(403)
         .json({ message: "Account validity expired. Contact support." });
-    }
-
-    if (clientUsername && clientUsername !== client.clientUsername) {
-      return res
-        .status(403)
-        .json({ message: "Username mismatch for this tenant" });
     }
 
     const isMatch = await bcrypt.compare(password, client.password);
