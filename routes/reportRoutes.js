@@ -5,4 +5,5 @@ const { getDailyReport, getMonthlyReport } = require('../controllers/reportContr
 router.get('/daily', getDailyReport);
 router.get('/monthly', getMonthlyReport);
 
+
 module.exports = router;
