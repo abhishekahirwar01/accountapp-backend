@@ -528,10 +528,9 @@ async function suggestUsernames(seed, excludeId, alreadyTried) {
   return available.slice(0, 6);
 }
 
-// --- Request OTP: POST /api/clients/:slug/request-otp ---
+// --- Request OTP: POST /api/clients/request-otp ---
 exports.requestClientOtp = async (req, res) => {
   try {
-    const { slug } = req.params;
     const { clientUsername } = req.body;
 
     if (!clientUsername)
@@ -539,7 +538,6 @@ exports.requestClientOtp = async (req, res) => {
 
     const normalizedUsername = String(clientUsername).trim().toLowerCase();
     const client = await Client.findOne({
-      slug,
       clientUsername: normalizedUsername,
     });
     if (!client) return res.status(404).json({ message: "Client not found" });
@@ -613,10 +611,9 @@ exports.requestClientOtp = async (req, res) => {
   }
 };
 
-// --- Login with OTP: POST /api/clients/:slug/login-otp ---
+// --- Login with OTP: POST /api/clients/login-otp ---
 exports.loginClientWithOtp = async (req, res) => {
   try {
-    const { slug } = req.params;
     const { clientUsername, otp, captchaToken } = req.body;
 
     // Verify reCAPTCHA
@@ -640,7 +637,6 @@ exports.loginClientWithOtp = async (req, res) => {
 
     const normalizedUsername = String(clientUsername).trim().toLowerCase();
     const client = await Client.findOne({
-      slug,
       clientUsername: normalizedUsername,
     });
     if (!client) return res.status(404).json({ message: "Client not found" });

@@ -36,8 +36,8 @@ const otpVerifyLimiter = rateLimit({
 router.post("/login", loginClient);
 
 // ✅  PUBLIC OTP endpoints (do not require middleware)
-router.post("/:slug/request-otp", otpRequestLimiter, requestClientOtp);
-router.post("/:slug/login-otp", otpVerifyLimiter, loginClientWithOtp);
+router.post("/request-otp", otpRequestLimiter, requestClientOtp);
+router.post("/login-otp", otpVerifyLimiter, loginClientWithOtp);
 router.get("/check-username", usernameCheckLimiter, checkUsername);
 
 // Create a client
