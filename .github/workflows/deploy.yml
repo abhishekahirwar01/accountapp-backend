@@ -79,7 +79,7 @@ jobs:
                 echo "✅ Server is ready!"
                 exit 0
               fi
-              echo "⏳ Server not ready yet, waiting... ($i/30)"
+              echo "⏳ Server not ready yet, waiting... ($i/5)"
               sleep 5
             done
             
