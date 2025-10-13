@@ -43,7 +43,7 @@ jobs:
             cd /home/accountAppBackend || exit
             
             # Stash any local changes and pull latest code
-            git stash || true  # Continue even if stash fails
+            git stash || true
             git pull origin main
             
             # Install dependencies
@@ -52,36 +52,45 @@ jobs:
             # Update PM2 in memory
             pm2 update || echo "PM2 update failed, continuing..."
             
+            # Stop and delete any existing processes for this app
+            echo "🛑 Stopping any existing account backend processes..."
+            pm2 delete accountAppBackend accountbackend || echo "No existing processes to delete"
+            
+            # Wait a moment for processes to fully stop
+            sleep 3
+            
             # Create update notification for new deployment
             echo "🚀 Creating deployment notification..."
             node deploy-notification.js "${{ secrets.MASTER_TOKEN }}" "https://accountbackend.sharda.co.in" "$(date +%Y.%m.%d-%H%M)" || echo "⚠️ Notification creation failed, but deployment continues"
             
-            # Check if the PM2 process exists, if not start it
-            if pm2 describe accountbackend > /dev/null 2>&1; then
-              echo "🔄 Restarting existing PM2 process..."
-              pm2 restart accountbackend
-            else
-              echo "🚀 Starting new PM2 process..."
-              pm2 start server.js --name accountbackend
-            fi
+            # Start the application with consistent naming
+            echo "🚀 Starting application..."
+            pm2 start server.js --name accountAppBackend
             
-            # Save PM2 process list to ensure it persists
-            pm2 save || echo "⚠️ PM2 save failed, but continuing..."
+            # Save PM2 process list
+            pm2 save || echo "⚠️ PM2 save failed"
             
             # Wait for server to be ready after restart
             echo "⏳ Waiting for server to be ready..."
-            for i in {1..30}; do
-              if curl -f -s "https://accountbackend.sharda.co.in/api/db-status" > /dev/null 2>&1; then
+            for i in {1..5}; do
+              if curl -f -s "https://accountbackend.sharda.co.in/api/health" > /dev/null 2>&1 || 
+                 curl -f -s "https://accountbackend.sharda.co.in/api/db-status" > /dev/null 2>&1 ||
+                 curl -f -s "https://accountbackend.sharda.co.in/" > /dev/null 2>&1; then
                 echo "✅ Server is ready!"
-                break
+                exit 0
               fi
               echo "⏳ Server not ready yet, waiting... ($i/30)"
               sleep 5
             done
             
-            # Final check - if server still not ready, exit with error
-            if ! curl -f -s "https://accountbackend.sharda.co.in/api/db-status" > /dev/null 2>&1; then
-              echo "❌ Server failed to start within the expected time"
-              exit 1
-            fi
+            echo "❌ Server failed to start within the expected time"
+            
+            # Show PM2 status for debugging
+            echo "📋 Current PM2 status:"
+            pm2 status
+            
+            echo "📋 PM2 logs for accountAppBackend:"
+            pm2 logs accountAppBackend --lines 20
+            
+            exit 1
           EOF
