@@ -54,7 +54,9 @@ connectDB();
 const allowedOrigins = [
   'https://accountapp-theta.vercel.app',
   'http://localhost:3000',
-  'http://localhost:8678'
+  'http://localhost:8678',
+  "https://vinimay.sharda.co.in",
+  "http://vinimay.sharda.co.in"
 ];
 
 
