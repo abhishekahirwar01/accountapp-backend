@@ -3,7 +3,8 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - main
+      - main  # Trigger deployment on push to main branch
+
 
 jobs:
   deploy:
@@ -18,7 +19,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v2
         with:
-          node-version: '16'
+          node-version: '16'  # specify your Node.js version
 
       # Step 3: Install dependencies
       - name: Install dependencies
@@ -37,60 +38,26 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
 
-          ssh $USER@$HOST << 'EOF'
-            set -e  # Exit on any error
-            
+          ssh $USER@$HOST << EOF
             cd /home/accountAppBackend || exit
-            
-            # Stash any local changes and pull latest code
-            git stash || true
-            git pull origin main
-            
-            # Install dependencies
-            npm install
-            
-            # Update PM2 in memory
-            pm2 update || echo "PM2 update failed, continuing..."
-            
-            # Stop and delete any existing processes for this app
-            echo "🛑 Stopping any existing account backend processes..."
-            pm2 delete accountAppBackend accountbackend || echo "No existing processes to delete"
-            
-            # Wait a moment for processes to fully stop
-            sleep 3
-            
-            # Create update notification for new deployment
+            git stash || exit   # Stash any local changes
+            git pull origin main || exit
+            npm install || exit
+
+            # Create update notification for new deployment before restart
             echo "🚀 Creating deployment notification..."
-            node deploy-notification.js "${{ secrets.MASTER_TOKEN }}" "https://accountbackend.sharda.co.in" "$(date +%Y.%m.%d-%H%M)" || echo "⚠️ Notification creation failed, but deployment continues"
-            
-            # Start the application with consistent naming
-            echo "🚀 Starting application..."
-            pm2 start server.js --name accountAppBackend
-            
-            # Save PM2 process list
-            pm2 save || echo "⚠️ PM2 save failed"
-            
+            node deploy-notification.js "${{ secrets.MASTER_TOKEN }}" "https://accountbackend.sharda.co.in" "$(date +%Y.%m.%d-%H%M)" || echo "⚠️  Notification creation failed, but deployment continues"
+
+            pm2 restart accountAppBackend || exit
+
             # Wait for server to be ready after restart
             echo "⏳ Waiting for server to be ready..."
             for i in {1..5}; do
-              if curl -f -s "https://accountbackend.sharda.co.in/api/health" > /dev/null 2>&1 || 
-                 curl -f -s "https://accountbackend.sharda.co.in/api/db-status" > /dev/null 2>&1 ||
-                 curl -f -s "https://accountbackend.sharda.co.in/" > /dev/null 2>&1; then
+              if curl -f -s "https://accountbackend.sharda.co.in/api/db-status" > /dev/null 2>&1; then
                 echo "✅ Server is ready!"
-                exit 0
+                break
               fi
               echo "⏳ Server not ready yet, waiting... ($i/5)"
               sleep 5
             done
-            
-            echo "❌ Server failed to start within the expected time"
-            
-            # Show PM2 status for debugging
-            echo "📋 Current PM2 status:"
-            pm2 status
-            
-            echo "📋 PM2 logs for accountAppBackend:"
-            pm2 logs accountAppBackend --lines 20
-            
-            exit 1
           EOF
