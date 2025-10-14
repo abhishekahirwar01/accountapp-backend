@@ -599,7 +599,7 @@ exports.requestClientOtp = async (req, res) => {
     await transporter.sendMail({
       from: process.env.EMAIL_USER || process.env.MAIL_FROM,
       to: client.email,
-      subject: "Your AccounTech Pro Login OTP",
+      subject: "Your Vinimay Login OTP",
       text: `Your OTP is ${otp}. It expires in ${OTP_TTL_MIN} minutes.`,
       html: `<p>Your OTP is <b>${otp}</b>. It expires in ${OTP_TTL_MIN} minutes.</p>`,
     });

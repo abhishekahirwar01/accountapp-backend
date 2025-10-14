@@ -14,7 +14,7 @@ async function submitSupportRequest(req, res) {
 
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; max-width: 600px;">
-        <h2 style="color: #2563eb;">New Support Request - AccountTech Pro</h2>
+        <h2 style="color: #2563eb;">New Support Request - Vinimay</h2>
         <div style="background: #f3f4f6; padding: 15px; border-radius: 5px;">
           <p><strong>User:</strong> ${name}</p>
           <p><strong>Email:</strong> ${email}</p>
