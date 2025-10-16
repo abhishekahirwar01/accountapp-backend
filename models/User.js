@@ -4,7 +4,7 @@ const mongoose = require("mongoose");
 const userSchema = new mongoose.Schema(
   {
     userName: { type: String, required: true, trim: true },
-    userId: { type: String, required: true, unique: true, lowercase: true, trim: true },
+    userId: { type: String, required: true,  lowercase: true, trim: true },
     password: { type: String, required: true },
     contactNumber: { type: String, trim: true },
     email: { type: String, trim: true },
@@ -23,6 +23,8 @@ const userSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+userSchema.index({ userId: 1, createdByClient: 1 }, { unique: true });
 
 // (Optional) derived roleName to not break old code immediately
 userSchema.virtual("roleName").get(function () {
