@@ -96,21 +96,16 @@ app.get('/health', (req, res) => {
   });
 });
 
+// In your server.js health endpoint
 app.get('/health/deep', async (req, res) => {
-  try {
-    const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
-    res.status(200).json({
-      status: 'OK',
-      timestamp: new Date().toISOString(),
-      uptime: process.uptime(),
-      database: dbStatus
-    });
-  } catch (error) {
-    res.status(503).json({
-      status: 'ERROR',
-      error: error.message
-    });
-  }
+  const dbHealth = await connectDB.checkHealth();
+  
+  res.json({
+    status: dbHealth.status === 'connected' ? 'OK' : 'ERROR',
+    database: dbHealth,
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString()
+  });
 });
 // ======= END HEALTH CHECKS =======
 
