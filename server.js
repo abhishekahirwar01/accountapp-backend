@@ -89,6 +89,33 @@ app.use(cors({ origin: "*" }));
 // app.use(express.json());
 app.use(express.json({ limit: "15mb" }));
 
+// ======= ADD HEALTH CHECKS HERE =======
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+app.get('/health/deep', async (req, res) => {
+  try {
+    const dbStatus = mongoose.connection.readyState === 1 ? 'connected' : 'disconnected';
+    res.status(200).json({
+      status: 'OK',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: dbStatus
+    });
+  } catch (error) {
+    res.status(503).json({
+      status: 'ERROR',
+      error: error.message
+    });
+  }
+});
+// ======= END HEALTH CHECKS =======
+
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
 app.use(async (req, res, next) => {
