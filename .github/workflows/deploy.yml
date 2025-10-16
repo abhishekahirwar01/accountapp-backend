@@ -3,8 +3,7 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - main  # Trigger deployment on push to main branch
-
+      - main
 
 jobs:
   deploy:
@@ -13,13 +12,15 @@ jobs:
     steps:
       # Step 1: Check out code from GitHub
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4  # Updated to v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}  # Add this line
 
       # Step 2: Set up Node.js
       - name: Set up Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4  # Updated to v4
         with:
-          node-version: '16'  # specify your Node.js version
+          node-version: '22'  # Updated to match your server
 
       # Step 3: Install dependencies
       - name: Install dependencies
@@ -38,9 +39,13 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -H $HOST >> ~/.ssh/known_hosts
 
-          ssh $USER@$HOST << EOF
+          ssh $USER@$HOST << 'EOF'
             cd /home/accountAppBackend || exit
-            git stash || exit   # Stash any local changes
+            
+            # Switch repository to SSH URL to avoid authentication issues
+            git remote set-url origin git@github.com:Finaxis002/accountAppBackend.git
+            
+            git stash || exit
             git pull origin main || exit
             npm install || exit
 
@@ -48,7 +53,7 @@ jobs:
             echo "🚀 Creating deployment notification..."
             node deploy-notification.js "${{ secrets.MASTER_TOKEN }}" "https://accountbackend.sharda.co.in" "$(date +%Y.%m.%d-%H%M)" || echo "⚠️  Notification creation failed, but deployment continues"
 
-            pm2 restart accountAppBackend || exit
+            pm2 restart accountbackend || exit  # Fixed: changed accountAppBackend to accountbackend
 
             # Wait for server to be ready after restart
             echo "⏳ Waiting for server to be ready..."
