@@ -79,7 +79,7 @@ let cachedDb = null;
 
 const connectDB = async () => {
   if (cachedDb && cachedDb.connection.readyState === 1) {
-    // console.log("♻️ Using existing DB connection");
+    
     return cachedDb;
   }
 
@@ -127,5 +127,18 @@ mongoose.connection.on('disconnected', () => {
   console.log("❌ DB Disconnected");
   cachedDb = null; // Clear cache on disconnect
 });
+
+// Health check method
+connectDB.checkHealth = async () => {
+  try {
+    if (cachedDb && cachedDb.connection.readyState === 1) {
+      await cachedDb.connection.db.admin().ping();
+      return { status: 'connected', readyState: 1 };
+    }
+    return { status: 'disconnected', readyState: 0 };
+  } catch (error) {
+    return { status: 'error', error: error.message };
+  }
+};
 
 module.exports = connectDB;
