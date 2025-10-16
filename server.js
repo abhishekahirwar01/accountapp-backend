@@ -171,7 +171,7 @@ app.use("/api/support", supportRoutes)
 app.use('/api/whatsapp', whatsappRoutes)
 
 app.get('/', (req, res) => {
-  res.send("Account App CI/CD is working...error fixes in getJournalsByClient");
+  res.send("Account App CI/CD is working on New server(VPS)");
 });
 
 
