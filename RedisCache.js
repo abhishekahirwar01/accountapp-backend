@@ -1,68 +1,69 @@
-//RedisCache.js
-
 const Redis = require("ioredis");
+require("dotenv").config();
 
-// Create a new Redis instance with default settings (localhost, port 6379)
-const redis = new Redis({
-  host: "127.0.0.1", // Redis server hostname (default: 127.0.0.1)
-  port: 6379, // Redis server port (default: 6379)
-  // password: 'yourpassword',  // Uncomment this if your Redis server requires authentication
-  db: 0, // Redis database to use
-});
+let redis;
 
-// Connect to Redis
+if (process.env.REDIS_URL) {
+  // ✅ Use environment Redis (Render)
+  redis = new Redis(process.env.REDIS_URL);
+  console.log("Using Redis from environment URL");
+} else {
+  // ✅ Fallback to local Redis (for development)
+  redis = new Redis({
+    host: "127.0.0.1",
+    port: 6379,
+  });
+  console.log("Using local Redis instance");
+}
+
+// Event listeners
 redis.on("connect", () => {
-  console.log("Connected to Redis");
+  console.log("✅ Connected to Redis");
 });
 
-// Handle Redis errors
 redis.on("error", (err) => {
-  console.error("Redis error:", err);
+  console.error("❌ Redis error:", err);
 });
 
-// Function to get data from Redis cache
+// Cache functions (same as before)
 const getFromCache = async (key) => {
   try {
     const cachedData = await redis.get(key);
-
     if (cachedData) {
-      console.log("data fetched from redis");
-      return JSON.parse(cachedData); // Return parsed data from Redis cache
+      console.log("📦 Data fetched from Redis");
+      return JSON.parse(cachedData);
     }
-    return null; // If data not found in cache, return null
+    return null;
   } catch (error) {
-    console.error("Error getting data from Redis cache:", error);
+    console.error("Error getting data from Redis:", error);
     return null;
   }
 };
 
-// Function to set data in Redis cache
 const setToCache = async (key, value, ttl = 300) => {
   try {
-    await redis.setex(key, ttl, JSON.stringify(value)); // Cache data for 'ttl' seconds
-    console.log(`Data cached with key: ${key}`);
+    await redis.setex(key, ttl, JSON.stringify(value));
+    console.log(`📝 Data cached with key: ${key}`);
   } catch (error) {
-    console.error("Error setting data to Redis cache:", error);
+    console.error("Error setting data to Redis:", error);
   }
 };
 
-// Function to delete data from Redis cache
 const deleteFromCache = async (key) => {
   try {
-    await redis.del(key); // Delete the cache entry by key
-    console.log(`Cache deleted for key: ${key}`);
+    await redis.del(key);
+    console.log(`🗑️ Cache deleted for key: ${key}`);
   } catch (error) {
-    console.error("Error deleting data from Redis cache:", error);
+    console.error("Error deleting cache:", error);
   }
 };
 
-// Function to refresh the cache (update cached data)
 const refreshCache = async (key, value, ttl = 3600) => {
   try {
-    await redis.setex(key, ttl, JSON.stringify(value)); // Update cache with new value and ttl
-    console.log(`Cache refreshed for key: ${key}`);
+    await redis.setex(key, ttl, JSON.stringify(value));
+    console.log(`♻️ Cache refreshed for key: ${key}`);
   } catch (error) {
-    console.error("Error refreshing cache in Redis:", error);
+    console.error("Error refreshing cache:", error);
   }
 };
 
