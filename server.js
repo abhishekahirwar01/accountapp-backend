@@ -35,6 +35,7 @@ const shippingAddressRoutes = require("./routes/shippingAddressRoutes");
 
 const unitRoutes = require("./routes/unitRoutes")
 const supportRoutes = require("./routes/support")
+const faqRoutes = require("./routes/faqRoutes")
 const updateNotificationRoutes = require("./routes/updateNotificationRoutes");
 // const whatsappRoutes = require("./routes/whatsappRoutes")
 const templateRouter = require('./routes/templateRoutes');
@@ -126,6 +127,10 @@ app.use(async (req, res, next) => {
     });
   }
 });
+
+// FAQ routes placed before auth middleware since they don't require authentication
+app.use("/api/faq", faqRoutes)
+
 app.use("/api/integrations", integrationsRoutes);
 
 app.use("/api/master-admin", masterAdminRoutes);
@@ -167,6 +172,7 @@ app.use('./api', reportRoutes)
 app.use("/api/units", unitRoutes);
 
 app.use("/api/support", supportRoutes)
+
 // app.use('/api/whatsapp', whatsappConnectionRoutes);
 app.use('/api/whatsapp', whatsappRoutes)
 
