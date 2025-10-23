@@ -122,10 +122,14 @@ exports.createPayment = async (req, res) => {
       return res.status(403).json({ message: "Not allowed to create payment entries" });
     }
 
-    const { vendor, date, amount, description, referenceNumber, company: companyId } = req.body;
+    const { vendor, date, amount, description, paymentMethod, referenceNumber, company: companyId } = req.body;
 
     if (!companyAllowedForUser(req, companyId)) {
       return res.status(403).json({ message: "You are not allowed to use this company" });
+    }
+
+    if (paymentMethod && !["Cash", "UPI", "Bank Transfer", "Cheque"].includes(paymentMethod)) {
+      return res.status(400).json({ message: "Invalid payment method" });
     }
 
     // Tenant ownership checks
@@ -141,6 +145,7 @@ exports.createPayment = async (req, res) => {
       date,
       amount,
       description,
+      paymentMethod,
       referenceNumber,
       company: companyDoc._id,
       client: req.auth.clientId,
@@ -332,7 +337,11 @@ exports.updatePayment = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const { vendor, company: newCompanyId, ...rest } = req.body;
+    const { vendor, company: newCompanyId, paymentMethod, ...rest } = req.body;
+
+      if (paymentMethod && !["Cash", "UPI", "Bank Transfer", "Cheque"].includes(paymentMethod)) {
+      return res.status(400).json({ message: "Invalid payment method" });
+    }
 
     // Company move check
     if (newCompanyId) {
@@ -355,6 +364,10 @@ exports.updatePayment = async (req, res) => {
       vendorDoc = await Vendor.findById(payment.vendor);
     }
 
+     if (paymentMethod !== undefined) {
+      payment.paymentMethod = paymentMethod;
+    }
+    
     Object.assign(payment, rest);
     await payment.save();
     const companyId = payment.company.toString();

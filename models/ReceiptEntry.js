@@ -5,7 +5,11 @@ const receiptSchema = new mongoose.Schema({
   date: { type: Date, required: false },
   amount: { type: Number, required: false },
   description: { type: String },
-  referenceNumber: { type: String },  // optional UTR/Cheque/Transaction ID
+  paymentMethod: {
+    type: String,
+    enum: ["Cash", "UPI", "Bank Transfer", "Cheque"]
+  },
+  referenceNumber: { type: String }, 
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: false },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: false },
   createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },

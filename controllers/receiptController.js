@@ -261,7 +261,7 @@ exports.createReceipt = async (req, res) => {
   try {
     await ensureAuthCaps(req);
 
-    const { party, date, amount, description, referenceNumber, company: companyId } = req.body;
+    const { party, date, amount, description, paymentMethod, referenceNumber, company: companyId } = req.body;
 
     if (!party || !companyId) {
       return res.status(400).json({ message: "party and company are required" });
@@ -319,6 +319,7 @@ exports.createReceipt = async (req, res) => {
         description: hasExcess ? 
           `${description} (Note: Only ₹${amountToDeduct} applied to balance. Customer had credit of ₹${amt - amountToDeduct})` : 
           description,
+           paymentMethod,
         referenceNumber,
         company: companyDoc._id,
         client: req.auth.clientId,
@@ -357,6 +358,7 @@ exports.createReceipt = async (req, res) => {
         description: hasExcess ? 
           `${description} (Note: Only ₹${amountToDeduct} applied to balance. Customer had credit of ₹${amt - amountToDeduct})` : 
           description,
+           paymentMethod,
         referenceNumber,
         company: companyDoc._id,
         client: req.auth.clientId,
@@ -623,10 +625,15 @@ exports.updateReceipt = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const { party, company: newCompanyId, amount, date, description, referenceNumber } = req.body;
+    const { party, company: newCompanyId, amount, date, description, paymentMethod, referenceNumber } = req.body;
     const newAmount = amount != null ? Number(amount) : undefined;
     if (newAmount != null && !(newAmount > 0)) {
       return res.status(400).json({ message: "Amount must be > 0" });
+    }
+
+    // Validate paymentMethod if provided
+    if (paymentMethod && !["Cash", "UPI", "Bank Transfer", "Cheque"].includes(paymentMethod)) {
+      return res.status(400).json({ message: "Invalid payment method" });
     }
 
     // Validate company move
@@ -700,7 +707,7 @@ exports.updateReceipt = async (req, res) => {
       } else if (description !== undefined) {
         receipt.description = description;
       }
-      
+      if (paymentMethod !== undefined) receipt.paymentMethod = paymentMethod;
       if (referenceNumber !== undefined) receipt.referenceNumber = referenceNumber;
 
       await receipt.save({ session });
