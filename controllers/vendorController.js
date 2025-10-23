@@ -200,10 +200,34 @@ exports.getVendorBalance = async (req, res) => {
       return res.status(404).json({ message: "Vendor not found" });
     }
 
+    // Check if vendor belongs to the same client
+    const sameTenant = String(vendor.createdByClient) === req.auth.clientId;
+    if (!PRIV_ROLES.has(req.auth.role) && !sameTenant) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
     res.json({ balance: vendor.balance });
   } catch (err) {
     console.error("Error fetching vendor balance:", err);
     res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+// GET /api/vendors/balances
+exports.getVendorBalancesBulk = async (req, res) => {
+  try {
+    const where = { createdByClient: req.auth.clientId };
+
+    const rows = await Vendor.find(where)
+      .select({ _id: 1, balance: 1 })
+      .lean();
+
+    const balances = {};
+
+    return res.json({ balances });
+  } catch (err) {
+    console.error("getVendorBalancesBulk error:", err);
+    return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
 
