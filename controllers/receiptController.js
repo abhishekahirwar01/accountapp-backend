@@ -261,7 +261,7 @@ exports.createReceipt = async (req, res) => {
   try {
     await ensureAuthCaps(req);
 
-    const { party, date, amount, description, referenceNumber, company: companyId } = req.body;
+    const { party, date, amount, description, paymentMethod, referenceNumber, company: companyId } = req.body;
 
     if (!party || !companyId) {
       return res.status(400).json({ message: "party and company are required" });
@@ -319,6 +319,7 @@ exports.createReceipt = async (req, res) => {
         description: hasExcess ? 
           `${description} (Note: Only ₹${amountToDeduct} applied to balance. Customer had credit of ₹${amt - amountToDeduct})` : 
           description,
+           paymentMethod,
         referenceNumber,
         company: companyDoc._id,
         client: req.auth.clientId,
@@ -357,6 +358,7 @@ exports.createReceipt = async (req, res) => {
         description: hasExcess ? 
           `${description} (Note: Only ₹${amountToDeduct} applied to balance. Customer had credit of ₹${amt - amountToDeduct})` : 
           description,
+           paymentMethod,
         referenceNumber,
         company: companyDoc._id,
         client: req.auth.clientId,
@@ -478,6 +480,140 @@ exports.getReceipts = async (req, res) => {
 
 
 /** UPDATE */
+// exports.updateReceipt = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req);
+
+//     const receipt = await ReceiptEntry.findById(req.params.id);
+//     if (!receipt) return res.status(404).json({ message: "Receipt not found" });
+
+//     if (!userIsPriv(req) && !sameTenant(receipt.client, req.auth.clientId)) {
+//       return res.status(403).json({ message: "Not authorized" });
+//     }
+
+//     const { party, company: newCompanyId, amount, date, description, referenceNumber } = req.body;
+//     const newAmount = amount != null ? Number(amount) : undefined;
+//     if (newAmount != null && !(newAmount > 0)) {
+//       return res.status(400).json({ message: "Amount must be > 0" });
+//     }
+
+//     // Validate company move
+//     if (newCompanyId) {
+//       if (!companyAllowedForUser(req, newCompanyId)) {
+//         return res.status(403).json({ message: "You are not allowed to use this company" });
+//       }
+//       const companyDoc = await Company.findOne({ _id: newCompanyId, client: req.auth.clientId });
+//       if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
+//       receipt.company = companyDoc._id;
+//     }
+
+//     // Validate party move and get party info for notification
+//     let partyDoc;
+//     if (party) {
+//       partyDoc = await Party.findOne({ _id: party, createdByClient: req.auth.clientId });
+//       if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
+//       receipt.party = partyDoc._id;
+//     } else {
+//       // Get party info for notification if not changing
+//       partyDoc = await Party.findById(receipt.party);
+//     }
+
+//     // Compute delta
+//     const oldAmount = Number(receipt.amount || 0);
+//     const finalAmount = newAmount != null ? newAmount : oldAmount;
+//     const delta = finalAmount - oldAmount; // >0 means more deduction, <0 means refund
+
+//     // Try transaction
+//     let session;
+//     try {
+//       session = await mongoose.startSession();
+//       session.startTransaction();
+
+//       // Apply delta to current receipt.party
+//       if (delta !== 0) {
+//         const updatedParty = await adjustBalanceGuarded({
+//           partyId: receipt.party,
+//           clientId: req.auth.clientId,
+//           delta: -delta, // if delta>0, -delta is negative (deduct); if delta<0, -delta is positive (refund)
+//           session,
+//         });
+//         if (!updatedParty) {
+//           throw new Error("Increase exceeds customer's remaining balance");
+//         }
+//       }
+
+//       // Persist receipt
+//       if (newAmount != null) receipt.amount = finalAmount;
+//       if (date != null) receipt.date = new Date(date);
+//       if (description !== undefined) receipt.description = description;
+//       if (referenceNumber !== undefined) receipt.referenceNumber = referenceNumber;
+
+//       await receipt.save({ session });
+
+//       await notifyAdminOnReceiptAction({
+//         req,
+//         action: "update",
+//         customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
+//         entryId: receipt._id,
+//         companyId: receipt.company.toString(),
+//         oldAmount: oldAmount,
+//         newAmount: finalAmount,
+//       });
+
+//       await session.commitTransaction();
+//       session.endSession();
+
+//       const companyId = receipt.company.toString();
+
+//       // Call the cache deletion function
+//       await deleteReceiptEntryCache(req.auth.clientId, companyId);
+
+//       return res.json({ message: "Receipt updated", receipt });
+//     } catch (txErr) {
+//       if (session) { try { await session.abortTransaction(); session.endSession(); } catch (_) { } }
+
+//       // Fallback non-transaction
+//       try {
+//         if (delta !== 0) {
+//           const updatedParty = await adjustBalanceGuarded({
+//             partyId: receipt.party,
+//             clientId: req.auth.clientId,
+//             delta: -delta,
+//             session: undefined,
+//           });
+//           if (!updatedParty) {
+//             return res.status(400).json({ message: "Increase exceeds customer's remaining balance" });
+//           }
+//         }
+
+//         if (newAmount != null) receipt.amount = finalAmount;
+//         if (date != null) receipt.date = new Date(date);
+//         if (description !== undefined) receipt.description = description;
+//         if (referenceNumber !== undefined) receipt.referenceNumber = referenceNumber;
+
+//         await receipt.save();
+
+//         await notifyAdminOnReceiptAction({
+//           req,
+//           action: "update",
+//           customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
+//           entryId: receipt._id,
+//           companyId: receipt.company.toString(),
+//           oldAmount: oldAmount,
+//           newAmount: finalAmount,
+//         });
+
+
+//         return res.json({ message: "Receipt updated", receipt });
+//       } catch (fallbackErr) {
+//         return res.status(400).json({ message: fallbackErr.message || "Failed to update receipt" });
+//       }
+//     }
+//   } catch (err) {
+//     console.error("updateReceipt error:", err);
+//     res.status(500).json({ message: "Server error", error: err.message });
+//   }
+// };
 exports.updateReceipt = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -489,10 +625,15 @@ exports.updateReceipt = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const { party, company: newCompanyId, amount, date, description, referenceNumber } = req.body;
+    const { party, company: newCompanyId, amount, date, description, paymentMethod, referenceNumber } = req.body;
     const newAmount = amount != null ? Number(amount) : undefined;
     if (newAmount != null && !(newAmount > 0)) {
       return res.status(400).json({ message: "Amount must be > 0" });
+    }
+
+    // Validate paymentMethod if provided
+    if (paymentMethod && !["Cash", "UPI", "Bank Transfer", "Cheque"].includes(paymentMethod)) {
+      return res.status(400).json({ message: "Invalid payment method" });
     }
 
     // Validate company move
@@ -521,29 +662,52 @@ exports.updateReceipt = async (req, res) => {
     const finalAmount = newAmount != null ? newAmount : oldAmount;
     const delta = finalAmount - oldAmount; // >0 means more deduction, <0 means refund
 
-    // Try transaction
+    // ✅ SMART FIX: Calculate actual amount to deduct (cap at current balance)
+    let actualDelta = delta;
+    let hasExcess = false;
+    let amountApplied = 0;
+
+    if (delta > 0) { // Increasing receipt amount
+      const currentParty = await Party.findById(receipt.party);
+      const maxDeductible = currentParty.balance;
+      
+      if (delta > maxDeductible) {
+        // Cap the deduction to available balance
+        actualDelta = maxDeductible;
+        hasExcess = true;
+        amountApplied = maxDeductible;
+      }
+    }
+
     let session;
     try {
       session = await mongoose.startSession();
       session.startTransaction();
 
-      // Apply delta to current receipt.party
-      if (delta !== 0) {
+      // Apply actualDelta to current receipt.party
+      if (actualDelta !== 0) {
         const updatedParty = await adjustBalanceGuarded({
           partyId: receipt.party,
           clientId: req.auth.clientId,
-          delta: -delta, // if delta>0, -delta is negative (deduct); if delta<0, -delta is positive (refund)
+          delta: -actualDelta, // Use the capped delta
           session,
         });
         if (!updatedParty) {
-          throw new Error("Increase exceeds customer's remaining balance");
+          throw new Error("Failed to update party balance");
         }
       }
 
-      // Persist receipt
+      // Persist receipt with the FULL requested amount (even if we applied less)
       if (newAmount != null) receipt.amount = finalAmount;
       if (date != null) receipt.date = new Date(date);
-      if (description !== undefined) receipt.description = description;
+      
+      // Update description to note the excess if applicable
+      if (hasExcess) {
+        receipt.description = `${description || receipt.description} (Note: Only ₹${actualDelta} applied to balance increase. Customer had credit of ₹${delta - actualDelta})`;
+      } else if (description !== undefined) {
+        receipt.description = description;
+      }
+      if (paymentMethod !== undefined) receipt.paymentMethod = paymentMethod;
       if (referenceNumber !== undefined) receipt.referenceNumber = referenceNumber;
 
       await receipt.save({ session });
@@ -562,57 +726,33 @@ exports.updateReceipt = async (req, res) => {
       session.endSession();
 
       const companyId = receipt.company.toString();
-
-      // Call the cache deletion function
       await deleteReceiptEntryCache(req.auth.clientId, companyId);
 
-      return res.json({ message: "Receipt updated", receipt });
-    } catch (txErr) {
-      if (session) { try { await session.abortTransaction(); session.endSession(); } catch (_) { } }
-
-      // Fallback non-transaction
-      try {
-        if (delta !== 0) {
-          const updatedParty = await adjustBalanceGuarded({
-            partyId: receipt.party,
-            clientId: req.auth.clientId,
-            delta: -delta,
-            session: undefined,
-          });
-          if (!updatedParty) {
-            return res.status(400).json({ message: "Increase exceeds customer's remaining balance" });
-          }
-        }
-
-        if (newAmount != null) receipt.amount = finalAmount;
-        if (date != null) receipt.date = new Date(date);
-        if (description !== undefined) receipt.description = description;
-        if (referenceNumber !== undefined) receipt.referenceNumber = referenceNumber;
-
-        await receipt.save();
-
-        await notifyAdminOnReceiptAction({
-          req,
-          action: "update",
-          customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
-          entryId: receipt._id,
-          companyId: receipt.company.toString(),
-          oldAmount: oldAmount,
-          newAmount: finalAmount,
-        });
-
-
-        return res.json({ message: "Receipt updated", receipt });
-      } catch (fallbackErr) {
-        return res.status(400).json({ message: fallbackErr.message || "Failed to update receipt" });
+      // Return appropriate response
+      let message = "Receipt updated";
+      if (hasExcess) {
+        message = `Receipt updated. Only ₹${actualDelta} applied to balance increase. Customer has credit of ₹${delta - actualDelta}`;
       }
+
+      return res.json({ 
+        message, 
+        receipt,
+        amountRequested: delta,
+        amountApplied: actualDelta,
+        creditAmount: hasExcess ? delta - actualDelta : 0
+      });
+
+    } catch (txErr) {
+      if (session) { 
+        try { await session.abortTransaction(); session.endSession(); } catch (_) { } 
+      }
+      return res.status(400).json({ message: txErr.message || "Failed to update receipt" });
     }
   } catch (err) {
     console.error("updateReceipt error:", err);
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-
 
 
 /** DELETE */

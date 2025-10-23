@@ -6,6 +6,10 @@ const paymentSchema = new mongoose.Schema({
   amount: { type: Number, required: false },
 //   mode: { type: String, enum: ["Cash", "Bank", "UPI", "Cheque"], required: false },
   description: { type: String },
+  paymentMethod: {
+    type: String,
+    enum: ["Cash", "UPI", "Bank Transfer", "Cheque"]
+  },
   referenceNumber: { type: String },
   company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: false },
   client: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: false },
