@@ -492,56 +492,61 @@ exports.getUsersByClient = async (req, res) => {
 
 exports.loginUser = async (req, res) => {
   try {
-    const { userId, password , captchaToken } = req.body;
+    const { userId, password } = req.body;
 
-    // Verify reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
+    // Validate input
+    if (!userId || !password) {
+      return res.status(400).json({ message: "User ID and password are required" });
     }
 
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
-
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
-    }
-
+    // Find user
     const user = await User.findOne({ userId })
       .populate("companies")
-      .populate("role"); // 👈 important
+      .populate("role"); // include role details
 
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
+    // Check password
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
+    if (!isMatch) {
+      return res.status(401).json({ message: "Invalid credentials" });
+    }
 
-    // permissions = role.permissions ∪ user.permissions
-    const perms = Array.from(new Set([...(user.role?.permissions || []), ...(user.permissions || [])]));
+    // Merge permissions from role and user
+    const perms = Array.from(
+      new Set([...(user.role?.permissions || []), ...(user.permissions || [])])
+    );
 
+    // Generate JWT token
     const token = jwt.sign(
       {
         id: user._id,
-        role: user.role?.name || "user",      // 👈 role NAME for convenience
-        roleId: user.role?._id,               // 👈 role id
-        perms,                                // 👈 capabilities
-        companies: user.companies.map(c => c._id),
-        createdByClient: user.createdByClient
+        role: user.role?.name || "user",
+        roleId: user.role?._id,
+        perms,
+        companies: user.companies.map((c) => c._id),
+        createdByClient: user.createdByClient,
       },
       process.env.JWT_SECRET,
       { expiresIn: "8h" }
     );
 
-    res.json({
+    // Send response
+    res.status(200).json({
+      message: "Login successful",
       token,
       user: {
         _id: user._id,
         userName: user.userName,
-        role: user.role?.name || "user",     // 👈 send name, not ObjectId
+        role: user.role?.name || "user",
         companies: user.companies,
       },
     });
   } catch (err) {
+    console.error("❌ loginUser error:", err);
     res.status(500).json({ error: err.message });
   }
 };
+

@@ -201,26 +201,22 @@ exports.loginClient = async (req, res) => {
     console.log("Params:", req.params);
     console.log("Body:", req.body);
 
-    const { clientUsername, password , captchaToken } = req.body;
+    const { clientUsername, password } = req.body;
 
-    // Verify reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
+    // 🧩 Validate input
+    if (!clientUsername || !password) {
+      return res.status(400).json({ message: "Username and password are required" });
     }
 
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
-
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
-    }
-
+    // 🔎 Normalize username
     const normalizedUsername = String(clientUsername).trim().toLowerCase();
+
+    // 🔍 Find client
     const client = await Client.findOne({ clientUsername: normalizedUsername });
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
+
     // 🔒 Account validity gate
     const validity = await AccountValidity.findOne({ client: client._id });
     if (!validity) {
@@ -228,33 +224,38 @@ exports.loginClient = async (req, res) => {
         .status(403)
         .json({ message: "Account validity not set. Contact support." });
     }
+
     if (validity.status === "disabled") {
       return res
         .status(403)
         .json({ message: "Account disabled. Contact support." });
     }
+
     if (new Date() >= new Date(validity.expiresAt)) {
       // (optional) mark as expired asynchronously
       AccountValidity.updateOne(
         { _id: validity._id },
         { $set: { status: "expired" } }
-      ).catch(() => { });
+      ).catch(() => {});
       return res
         .status(403)
         .json({ message: "Account validity expired. Contact support." });
     }
 
+    // 🔐 Compare password
     const isMatch = await bcrypt.compare(password, client.password);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid password" });
     }
 
+    // 🎟️ Generate JWT token
     const token = jwt.sign(
       { id: client._id, role: "client", slug: client.slug },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
+    // ✅ Successful login response
     res.status(200).json({
       message: "Login successful",
       token,
@@ -269,9 +270,11 @@ exports.loginClient = async (req, res) => {
       },
     });
   } catch (err) {
+    console.error("❌ Error in loginClient:", err);
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // Update Client (Only Master Admin)
 exports.updateClient = async (req, res) => {
