@@ -190,6 +190,23 @@ exports.getVendors = async (req, res) => {
   }
 };
 
+exports.getVendorBalance = async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+
+    const vendor = await Vendor.findById(vendorId);
+
+    if (!vendor) {
+      return res.status(404).json({ message: "Vendor not found" });
+    }
+
+    res.json({ balance: vendor.balance });
+  } catch (err) {
+    console.error("Error fetching vendor balance:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
 exports.updateVendor = async (req, res) => {
   try {
     const doc = await Vendor.findById(req.params.id);

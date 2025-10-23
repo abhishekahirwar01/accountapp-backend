@@ -147,6 +147,10 @@ exports.createPayment = async (req, res) => {
       createdByUser: req.auth.userId, // optional if your schema has it
     });
 
+    // Handle vendor balance increase for payments (reduce what we owe)
+    vendorDoc.balance += amount;
+    await vendorDoc.save();
+
     // Notify admin AFTER creation succeeds
     const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
     await notifyAdminOnPaymentAction({
@@ -355,8 +359,23 @@ exports.updatePayment = async (req, res) => {
       vendorDoc = await Vendor.findById(payment.vendor);
     }
 
+    // Store original amount for balance adjustment
+    const originalAmount = payment.amount;
+    const newAmount = rest.amount != null ? Number(rest.amount) : originalAmount;
+
     Object.assign(payment, rest);
     await payment.save();
+
+    // Handle vendor balance adjustment for amount changes
+    const amountDifference = newAmount - originalAmount;
+    if (amountDifference !== 0) {
+      const currentVendorDoc = await Vendor.findById(payment.vendor);
+      if (currentVendorDoc) {
+        currentVendorDoc.balance += amountDifference; // Add the difference (if amount increased, balance increases more)
+        await currentVendorDoc.save();
+      }
+    }
+
     const companyId = payment.company.toString();
     const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
 
@@ -392,6 +411,12 @@ exports.deletePayment = async (req, res) => {
     }
     // NEW: Get vendor info before deletion for notification
     const vendorDoc = await Vendor.findById(payment.vendor);
+
+    // Handle vendor balance reversal for payment deletion
+    if (vendorDoc) {
+      vendorDoc.balance -= payment.amount; // Subtract the payment amount from vendor balance
+      await vendorDoc.save();
+    }
 
     await payment.deleteOne();
 

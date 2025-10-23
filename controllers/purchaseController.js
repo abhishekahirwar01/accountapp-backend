@@ -211,6 +211,12 @@ exports.createPurchaseEntry = async (req, res) => {
           }], { session });
           entry = docs[0];
 
+          // Handle vendor balance for credit purchases
+          if (paymentMethod === "Credit") {
+            vendorDoc.balance -= finalTotal; // Negative balance means we owe the vendor
+            await vendorDoc.save({ session });
+          }
+
 
 
         }, txnOpts);
@@ -412,6 +418,11 @@ exports.updatePurchaseEntry = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
+    // Store original values BEFORE any modifications
+    const originalPaymentMethod = entry.paymentMethod;
+    const originalTotalAmount = entry.totalAmount;
+    const originalVendorId = entry.vendor.toString();
+
     const { products, services, ...otherUpdates } = req.body;
 
     // Company change checks
@@ -461,6 +472,35 @@ exports.updatePurchaseEntry = async (req, res) => {
         (Array.isArray(entry.services) ? entry.services.reduce((s, it) => s + (Number(it.amount) || 0), 0) : 0);
       entry.totalAmount = sumProducts + sumServices;
     }
+
+    // Handle vendor balance adjustments for payment method changes
+    const newPaymentMethod = otherUpdates.paymentMethod || originalPaymentMethod;
+    const newTotalAmount = entry.totalAmount; // after update
+
+    if (originalPaymentMethod === "Credit" && newPaymentMethod === "Credit") {
+      // Both credit - adjust by difference (negative means we owe more)
+      const amountDifference = newTotalAmount - originalTotalAmount;
+      const vendorDoc = await Vendor.findById(entry.vendor);
+      if (vendorDoc) {
+        vendorDoc.balance -= amountDifference; // Subtract difference (more negative = owe more)
+        await vendorDoc.save();
+      }
+    } else if (originalPaymentMethod === "Credit" && newPaymentMethod !== "Credit") {
+      // Changed from credit to non-credit - add back to balance (owe less)
+      const vendorDoc = await Vendor.findById(entry.vendor);
+      if (vendorDoc) {
+        vendorDoc.balance += originalTotalAmount; // Add back what we owed
+        await vendorDoc.save();
+      }
+    } else if (originalPaymentMethod !== "Credit" && newPaymentMethod === "Credit") {
+      // Changed from non-credit to credit - subtract from balance (owe more)
+      const vendorDoc = await Vendor.findById(entry.vendor);
+      if (vendorDoc) {
+        vendorDoc.balance -= newTotalAmount; // Subtract new amount (owe more)
+        await vendorDoc.save();
+      }
+    }
+    // If both non-credit, no change needed
 
     await entry.save();
     // Notify after save
@@ -518,6 +558,14 @@ exports.deletePurchaseEntry = async (req, res) => {
       vendorDoc?.title || 'Unknown Vendor';
 
     console.log("Final values - UserName:", userName, "VendorName:", vendorName);
+
+    // Handle vendor balance reversal for credit purchases
+    if (entry.paymentMethod === "Credit") {
+      if (vendorDoc) {
+        vendorDoc.balance += entry.totalAmount; // Add back what we owed (less negative)
+        await vendorDoc.save();
+      }
+    }
 
     await entry.deleteOne();
 
