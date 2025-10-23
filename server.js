@@ -42,7 +42,8 @@ const templateRouter = require('./routes/templateRoutes');
 const reportRoutes = require('./routes/reportRoutes')
 const whatsappConnectionRoutes = require('./routes/whatsappConnectionRoutes');
 const whatsappRoutes = require('./routes/whatsapp.routes')
-const { startSchedulers, testReportImmediately } = require('./services/schedulerService'); 
+const ledgerRoutes = require('./routes/ledgerRoutes');
+const { startSchedulers, testReportImmediately } = require('./services/schedulerService');
 
 
 dotenv.config();
@@ -175,6 +176,7 @@ app.use("/api/support", supportRoutes)
 
 // app.use('/api/whatsapp', whatsappConnectionRoutes);
 app.use('/api/whatsapp', whatsappRoutes)
+app.use('/api/ledger', ledgerRoutes);
 
 app.get('/', (req, res) => {
   res.send("Account App CI/CD is working on New server(VPS) ......");

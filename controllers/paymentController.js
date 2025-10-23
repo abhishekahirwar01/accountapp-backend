@@ -152,8 +152,8 @@ exports.createPayment = async (req, res) => {
       createdByUser: req.auth.userId, // optional if your schema has it
     });
 
-    // Handle vendor balance increase for payments (reduce what we owe)
-    vendorDoc.balance += amount;
+    // Handle vendor balance for payments (reduce what we owe - make balance less negative)
+    vendorDoc.balance += Number(amount);
     await vendorDoc.save();
 
     // Notify admin AFTER creation succeeds
@@ -173,7 +173,7 @@ exports.createPayment = async (req, res) => {
     const clientId = payment.client.toString();
 
     // Call the cache deletion function
-    await deletePaymentEntryCache(clientId, companyId);
+    // await deletePaymentEntryCache(clientId, companyId);
     // await deletePaymentEntryCacheByUser(clientId, companyId);
 
     res.status(201).json({ message: "Payment entry created", payment });
@@ -222,19 +222,19 @@ exports.getPayments = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a cache key based on the query parameters
-    const cacheKey = `paymentEntries:${JSON.stringify({ clientId, companyId })}`;
+    // // Construct a cache key based on the query parameters
+    // const cacheKey = `paymentEntries:${JSON.stringify({ clientId, companyId })}`;
 
-    // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
+    // // Check if the data is cached in Redis
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   // If cached, return the data directly
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
 
     // If not cached, fetch the data from the database
     const query = PaymentEntry.find(where)
@@ -250,7 +250,7 @@ exports.getPayments = async (req, res) => {
     ]);
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, entries);
+    // await setToCache(cacheKey, entries);
 
     res.status(200).json({
       success: true,
@@ -292,19 +292,19 @@ exports.getPaymentsByClient = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a cache key based on clientId and query parameters
-    const cacheKey = `paymentEntriesByClient:${JSON.stringify({ client: clientId, company: companyId })}`;
+    // // Construct a cache key based on clientId and query parameters
+    // const cacheKey = `paymentEntriesByClient:${JSON.stringify({ client: clientId, company: companyId })}`;
 
-    // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
+    // // Check if the data is cached in Redis
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   // If cached, return the data directly
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
 
     const [entries, total] = await Promise.all([
       PaymentEntry.find(where)
@@ -318,7 +318,7 @@ exports.getPaymentsByClient = async (req, res) => {
     ]);
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, entries);
+    // await setToCache(cacheKey, entries);
 
     res.status(200).json({ entries, total, page: Number(page), limit: perPage });
   } catch (err) {
@@ -343,7 +343,7 @@ exports.updatePayment = async (req, res) => {
 
     const { vendor, company: newCompanyId, paymentMethod, ...rest } = req.body;
 
-      if (paymentMethod && !["Cash", "UPI", "Bank Transfer", "Cheque"].includes(paymentMethod)) {
+    if (paymentMethod && !["Cash", "UPI", "Bank Transfer", "Cheque"].includes(paymentMethod)) {
       return res.status(400).json({ message: "Invalid payment method" });
     }
 
@@ -368,8 +368,13 @@ exports.updatePayment = async (req, res) => {
       vendorDoc = await Vendor.findById(payment.vendor);
     }
 
+    // Update payment method if provided
+    if (paymentMethod !== undefined) {
+      payment.paymentMethod = paymentMethod;
+    }
+
     // Store original amount for balance adjustment
-    const originalAmount = payment.amount;
+    const originalAmount = Number(payment.amount);
     const newAmount = rest.amount != null ? Number(rest.amount) : originalAmount;
 
     Object.assign(payment, rest);
@@ -380,7 +385,7 @@ exports.updatePayment = async (req, res) => {
     if (amountDifference !== 0) {
       const currentVendorDoc = await Vendor.findById(payment.vendor);
       if (currentVendorDoc) {
-        currentVendorDoc.balance += amountDifference; // Add the difference (if amount increased, balance increases more)
+        currentVendorDoc.balance += Number(amountDifference); // Add the difference (if amount increased, balance increases more)
         await currentVendorDoc.save();
       }
     }
@@ -397,7 +402,7 @@ exports.updatePayment = async (req, res) => {
     });
 
     // Invalidate cache
-    await deletePaymentEntryCache(payment.client.toString(), companyId);
+    // await deletePaymentEntryCache(payment.client.toString(), companyId);
 
     res.json({ message: "Payment updated", payment });
 
@@ -423,7 +428,7 @@ exports.deletePayment = async (req, res) => {
 
     // Handle vendor balance reversal for payment deletion
     if (vendorDoc) {
-      vendorDoc.balance -= payment.amount; // Subtract the payment amount from vendor balance
+      vendorDoc.balance -= Number(payment.amount); // Subtract the payment amount from vendor balance
       await vendorDoc.save();
     }
 
@@ -441,7 +446,7 @@ exports.deletePayment = async (req, res) => {
 
     // Invalidate cache
     const companyId = payment.company.toString();
-    await deletePaymentEntryCache(payment.client.toString(), companyId);
+    // await deletePaymentEntryCache(payment.client.toString(), companyId);
 
     res.json({ message: "Payment deleted" });
 
