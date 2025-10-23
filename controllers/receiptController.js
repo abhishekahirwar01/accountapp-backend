@@ -133,129 +133,6 @@ function companyAllowedForUser(req, companyId) {
     : [];
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
-// exports.createReceipt = async (req, res) => {
-//   try {
-//     await ensureAuthCaps(req);
-
-//     const { party, date, amount, description, referenceNumber, company: companyId } = req.body;
-
-//     if (!party || !companyId) {
-//       return res.status(400).json({ message: "party and company are required" });
-//     }
-    
-//     const amt = Number(amount || 0);
-//     if (!(amt > 0)) {
-//       return res.status(400).json({ message: "Amount must be > 0" });
-//     }
-    
-//     if (!companyAllowedForUser(req, companyId)) {
-//       return res.status(403).json({ message: "You are not allowed to use this company" });
-//     }
-
-//     // Ensure company & party belong to this tenant
-//     const [companyDoc, partyDoc] = await Promise.all([
-//       Company.findOne({ _id: companyId, client: req.auth.clientId }),
-//       Party.findOne({ _id: party, createdByClient: req.auth.clientId }).select({ balance: 1, name: 1 }),
-//     ]);
-    
-//     if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
-//     if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
-
-//     // DEBUG: Log current state
-//     console.log('Creating receipt:', {
-//       party: partyDoc._id,
-//       currentBalance: partyDoc.balance,
-//       amount: amt,
-//       expectedNewBalance: partyDoc.balance - amt
-//     });
-
-//     let session;
-//     let receipt;
-//     let updatedParty;
-
-//     try {
-//       // Try transaction approach first
-//       session = await mongoose.startSession();
-//       session.startTransaction();
-
-//       // 1) Deduct amount from party balance
-//       updatedParty = await Party.findOneAndUpdate(
-//         { _id: party, createdByClient: req.auth.clientId },
-//         { $inc: { balance: -amt } },
-//         { new: true, session }
-//       );
-
-//       if (!updatedParty) {
-//         throw new Error("Failed to update party balance");
-//       }
-
-//       // 2) Create receipt
-//       [receipt] = await ReceiptEntry.create([{
-//         party: partyDoc._id,
-//         date,
-//         amount: amt,
-//         description,
-//         referenceNumber,
-//         company: companyDoc._id,
-//         client: req.auth.clientId,
-//         createdByUser: req.auth.userId,
-//         type: "receipt",
-//       }], { session });
-
-//       await session.commitTransaction();
-      
-//       console.log('Transaction successful. New balance:', updatedParty.balance);
-
-//     } catch (txErr) {
-//       console.error('Transaction failed, trying fallback:', txErr);
-      
-//       if (session) {
-//         try { await session.abortTransaction(); } catch (abortErr) {}
-//         try { session.endSession(); } catch (endErr) {}
-//       }
-
-//       // Fallback: Non-transaction approach
-//       updatedParty = await Party.findOneAndUpdate(
-//         { _id: party, createdByClient: req.auth.clientId },
-//         { $inc: { balance: -amt } },
-//         { new: true }
-//       );
-
-//       if (!updatedParty) {
-//         return res.status(400).json({ message: "Failed to update party balance" });
-//       }
-
-//       receipt = await ReceiptEntry.create({
-//         party: partyDoc._id,
-//         date,
-//         amount: amt,
-//         description,
-//         referenceNumber,
-//         company: companyDoc._id,
-//         client: req.auth.clientId,
-//         createdByUser: req.auth.userId,
-//         type: "receipt",
-//       });
-
-//       console.log('Fallback successful. New balance:', updatedParty.balance);
-//     } finally {
-//       if (session) {
-//         try { session.endSession(); } catch (e) {}
-//       }
-//     }
-
-//     // Send response
-//     return res.status(201).json({
-//       message: "Receipt entry created",
-//       receipt,
-//       updatedBalance: updatedParty.balance
-//     });
-
-//   } catch (err) {
-//     console.error("createReceipt error:", err);
-//     res.status(500).json({ message: "Server error", error: err.message });
-//   }
-// };
 
 exports.createReceipt = async (req, res) => {
   try {
@@ -273,9 +150,12 @@ exports.createReceipt = async (req, res) => {
     }
     
     if (!companyAllowedForUser(req, companyId)) {
-      return res.status(400).json({ message: "You are not allowed to use this company" });
+      return res.status(403).json({ message: "You are not allowed to use this company" });
     }
 
+     if (paymentMethod && !["Cash", "UPI", "Bank Transfer", "Cheque"].includes(paymentMethod)) {
+      return res.status(400).json({ message: "Invalid payment method" });
+    }
     // Ensure company & party belong to this tenant
     const [companyDoc, partyDoc] = await Promise.all([
       Company.findOne({ _id: companyId, client: req.auth.clientId }),
@@ -285,10 +165,13 @@ exports.createReceipt = async (req, res) => {
     if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
     if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
 
-    // ✅ SMART FIX: Calculate actual amount to deduct (cap at current balance)
-    const amountToDeduct = Math.min(amt, partyDoc.balance);
-    const willClearBalance = amountToDeduct === partyDoc.balance;
-    const hasExcess = amt > partyDoc.balance;
+    // DEBUG: Log current state
+    console.log('Creating receipt:', {
+      party: partyDoc._id,
+      currentBalance: partyDoc.balance,
+      amount: amt,
+      expectedNewBalance: partyDoc.balance - amt
+    });
 
     let session;
     let receipt;
@@ -299,10 +182,10 @@ exports.createReceipt = async (req, res) => {
       session = await mongoose.startSession();
       session.startTransaction();
 
-      // 1) Deduct amount from party balance (capped at current balance)
+      // 1) Deduct amount from party balance
       updatedParty = await Party.findOneAndUpdate(
         { _id: party, createdByClient: req.auth.clientId },
-        { $inc: { balance: -amountToDeduct } },
+        { $inc: { balance: -amt } },
         { new: true, session }
       );
 
@@ -310,17 +193,14 @@ exports.createReceipt = async (req, res) => {
         throw new Error("Failed to update party balance");
       }
 
-      // 2) Create receipt for the FULL amount (even if we deducted less)
+      // 2) Create receipt
       [receipt] = await ReceiptEntry.create([{
         party: partyDoc._id,
         date,
-        amount: amt, // Store the original amount requested
-        actualAmountApplied: amountToDeduct, // Store how much was actually applied
-        description: hasExcess ? 
-          `${description} (Note: Only ₹${amountToDeduct} applied to balance. Customer had credit of ₹${amt - amountToDeduct})` : 
-          description,
-           paymentMethod,
+        amount: amt,
+        description,
         referenceNumber,
+        paymentMethod,
         company: companyDoc._id,
         client: req.auth.clientId,
         createdByUser: req.auth.userId,
@@ -329,7 +209,7 @@ exports.createReceipt = async (req, res) => {
 
       await session.commitTransaction();
       
-      console.log('Receipt processed. Amount requested:', amt, 'Amount applied:', amountToDeduct, 'New balance:', updatedParty.balance);
+      console.log('Transaction successful. New balance:', updatedParty.balance);
 
     } catch (txErr) {
       console.error('Transaction failed, trying fallback:', txErr);
@@ -342,7 +222,7 @@ exports.createReceipt = async (req, res) => {
       // Fallback: Non-transaction approach
       updatedParty = await Party.findOneAndUpdate(
         { _id: party, createdByClient: req.auth.clientId },
-        { $inc: { balance: -amountToDeduct } },
+        { $inc: { balance: -amt } },
         { new: true }
       );
 
@@ -354,41 +234,32 @@ exports.createReceipt = async (req, res) => {
         party: partyDoc._id,
         date,
         amount: amt,
-        actualAmountApplied: amountToDeduct,
-        description: hasExcess ? 
-          `${description} (Note: Only ₹${amountToDeduct} applied to balance. Customer had credit of ₹${amt - amountToDeduct})` : 
-          description,
-           paymentMethod,
+        description,
         referenceNumber,
+        paymentMethod,
         company: companyDoc._id,
         client: req.auth.clientId,
         createdByUser: req.auth.userId,
         type: "receipt",
       });
+
+      console.log('Fallback successful. New balance:', updatedParty.balance);
     } finally {
       if (session) {
         try { session.endSession(); } catch (e) {}
       }
     }
 
-    // Invalidate cache
+    // After successful receipt creation, add:
     await deleteReceiptEntryCache(req.auth.clientId, companyId);
-
-    // Return appropriate message based on what happened
-    let message = "Receipt entry created";
-    if (hasExcess) {
-      message = `Receipt created. Only ₹${amountToDeduct} applied to balance. Customer has credit of ₹${amt - amountToDeduct}`;
-    } else if (willClearBalance) {
-      message = "Receipt created. Customer balance is now zero.";
-    }
-
+    // Send response
     return res.status(201).json({
-      message,
+      message: "Receipt entry created",
       receipt,
       updatedBalance: updatedParty.balance,
-      amountRequested: amt,
-      amountApplied: amountToDeduct,
-      creditAmount: hasExcess ? amt - amountToDeduct : 0
+      balanceContext: updatedParty.balance < 0 
+    ? `Customer has credit of ₹${Math.abs(updatedParty.balance)}`
+    : `Customer owes ₹${updatedParty.balance}`
     });
 
   } catch (err) {
@@ -396,6 +267,146 @@ exports.createReceipt = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
+// exports.createReceipt = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req);
+
+//     const { party, date, amount, description, paymentMethod, referenceNumber, company: companyId } = req.body;
+
+//     if (!party || !companyId) {
+//       return res.status(400).json({ message: "party and company are required" });
+//     }
+    
+//     const amt = Number(amount || 0);
+//     if (!(amt > 0)) {
+//       return res.status(400).json({ message: "Amount must be > 0" });
+//     }
+    
+//     if (!companyAllowedForUser(req, companyId)) {
+//       return res.status(400).json({ message: "You are not allowed to use this company" });
+//     }
+
+//     // Ensure company & party belong to this tenant
+//     const [companyDoc, partyDoc] = await Promise.all([
+//       Company.findOne({ _id: companyId, client: req.auth.clientId }),
+//       Party.findOne({ _id: party, createdByClient: req.auth.clientId }).select({ balance: 1, name: 1 }),
+//     ]);
+    
+//     if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
+//     if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
+
+//     // ✅ SMART FIX: Calculate actual amount to deduct (cap at current balance)
+//     const amountToDeduct = Math.min(amt, partyDoc.balance);
+//     const willClearBalance = amountToDeduct === partyDoc.balance;
+//     const hasExcess = amt > partyDoc.balance;
+
+//     let session;
+//     let receipt;
+//     let updatedParty;
+
+//     try {
+//       // Try transaction approach first
+//       session = await mongoose.startSession();
+//       session.startTransaction();
+
+//       // 1) Deduct amount from party balance (capped at current balance)
+//       updatedParty = await Party.findOneAndUpdate(
+//         { _id: party, createdByClient: req.auth.clientId },
+//         { $inc: { balance: -amountToDeduct } },
+//         { new: true, session }
+//       );
+
+//       if (!updatedParty) {
+//         throw new Error("Failed to update party balance");
+//       }
+
+//       // 2) Create receipt for the FULL amount (even if we deducted less)
+//       [receipt] = await ReceiptEntry.create([{
+//         party: partyDoc._id,
+//         date,
+//         amount: amt, // Store the original amount requested
+//         actualAmountApplied: amountToDeduct, // Store how much was actually applied
+//         description: hasExcess ? 
+//           `${description} (Note: Only ₹${amountToDeduct} applied to balance. Customer had credit of ₹${amt - amountToDeduct})` : 
+//           description,
+//            paymentMethod,
+//         referenceNumber,
+//         company: companyDoc._id,
+//         client: req.auth.clientId,
+//         createdByUser: req.auth.userId,
+//         type: "receipt",
+//       }], { session });
+
+//       await session.commitTransaction();
+      
+//       console.log('Receipt processed. Amount requested:', amt, 'Amount applied:', amountToDeduct, 'New balance:', updatedParty.balance);
+
+//     } catch (txErr) {
+//       console.error('Transaction failed, trying fallback:', txErr);
+      
+//       if (session) {
+//         try { await session.abortTransaction(); } catch (abortErr) {}
+//         try { session.endSession(); } catch (endErr) {}
+//       }
+
+//       // Fallback: Non-transaction approach
+//       updatedParty = await Party.findOneAndUpdate(
+//         { _id: party, createdByClient: req.auth.clientId },
+//         { $inc: { balance: -amountToDeduct } },
+//         { new: true }
+//       );
+
+//       if (!updatedParty) {
+//         return res.status(400).json({ message: "Failed to update party balance" });
+//       }
+
+//       receipt = await ReceiptEntry.create({
+//         party: partyDoc._id,
+//         date,
+//         amount: amt,
+//         actualAmountApplied: amountToDeduct,
+//         description: hasExcess ? 
+//           `${description} (Note: Only ₹${amountToDeduct} applied to balance. Customer had credit of ₹${amt - amountToDeduct})` : 
+//           description,
+//            paymentMethod,
+//         referenceNumber,
+//         company: companyDoc._id,
+//         client: req.auth.clientId,
+//         createdByUser: req.auth.userId,
+//         type: "receipt",
+//       });
+//     } finally {
+//       if (session) {
+//         try { session.endSession(); } catch (e) {}
+//       }
+//     }
+
+//     // Invalidate cache
+//     await deleteReceiptEntryCache(req.auth.clientId, companyId);
+
+//     // Return appropriate message based on what happened
+//     let message = "Receipt entry created";
+//     if (hasExcess) {
+//       message = `Receipt created. Only ₹${amountToDeduct} applied to balance. Customer has credit of ₹${amt - amountToDeduct}`;
+//     } else if (willClearBalance) {
+//       message = "Receipt created. Customer balance is now zero.";
+//     }
+
+//     return res.status(201).json({
+//       message,
+//       receipt,
+//       updatedBalance: updatedParty.balance,
+//       amountRequested: amt,
+//       amountApplied: amountToDeduct,
+//       creditAmount: hasExcess ? amt - amountToDeduct : 0
+//     });
+
+//   } catch (err) {
+//     console.error("createReceipt error:", err);
+//     res.status(500).json({ message: "Server error", error: err.message });
+//   }
+// };
 
 /** LIST (tenant filtered, supports company filter, q, date range, pagination) */
 exports.getReceipts = async (req, res) => {
@@ -614,6 +625,147 @@ exports.getReceipts = async (req, res) => {
 //     res.status(500).json({ message: "Server error", error: err.message });
 //   }
 // };
+
+// exports.updateReceipt = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req);
+
+//     const receipt = await ReceiptEntry.findById(req.params.id);
+//     if (!receipt) return res.status(404).json({ message: "Receipt not found" });
+
+//     if (!userIsPriv(req) && !sameTenant(receipt.client, req.auth.clientId)) {
+//       return res.status(403).json({ message: "Not authorized" });
+//     }
+
+//     const { party, company: newCompanyId, amount, date, description, paymentMethod, referenceNumber } = req.body;
+//     const newAmount = amount != null ? Number(amount) : undefined;
+//     if (newAmount != null && !(newAmount > 0)) {
+//       return res.status(400).json({ message: "Amount must be > 0" });
+//     }
+
+//     // Validate paymentMethod if provided
+//     if (paymentMethod && !["Cash", "UPI", "Bank Transfer", "Cheque"].includes(paymentMethod)) {
+//       return res.status(400).json({ message: "Invalid payment method" });
+//     }
+
+//     // Validate company move
+//     if (newCompanyId) {
+//       if (!companyAllowedForUser(req, newCompanyId)) {
+//         return res.status(403).json({ message: "You are not allowed to use this company" });
+//       }
+//       const companyDoc = await Company.findOne({ _id: newCompanyId, client: req.auth.clientId });
+//       if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
+//       receipt.company = companyDoc._id;
+//     }
+
+//     // Validate party move and get party info for notification
+//     let partyDoc;
+//     if (party) {
+//       partyDoc = await Party.findOne({ _id: party, createdByClient: req.auth.clientId });
+//       if (!partyDoc) return res.status(400).json({ message: "Customer not found or unauthorized" });
+//       receipt.party = partyDoc._id;
+//     } else {
+//       // Get party info for notification if not changing
+//       partyDoc = await Party.findById(receipt.party);
+//     }
+
+//     // Compute delta
+//     const oldAmount = Number(receipt.amount || 0);
+//     const finalAmount = newAmount != null ? newAmount : oldAmount;
+//     const delta = finalAmount - oldAmount; // >0 means more deduction, <0 means refund
+
+//     // ✅ SMART FIX: Calculate actual amount to deduct (cap at current balance)
+//     let actualDelta = delta;
+//     let hasExcess = false;
+//     let amountApplied = 0;
+
+//     if (delta > 0) { // Increasing receipt amount
+//       const currentParty = await Party.findById(receipt.party);
+//       const maxDeductible = currentParty.balance;
+      
+//       if (delta > maxDeductible) {
+//         // Cap the deduction to available balance
+//         actualDelta = maxDeductible;
+//         hasExcess = true;
+//         amountApplied = maxDeductible;
+//       }
+//     }
+
+//     let session;
+//     try {
+//       session = await mongoose.startSession();
+//       session.startTransaction();
+
+//       // Apply actualDelta to current receipt.party
+//       if (actualDelta !== 0) {
+//         const updatedParty = await adjustBalanceGuarded({
+//           partyId: receipt.party,
+//           clientId: req.auth.clientId,
+//           delta: -actualDelta, // Use the capped delta
+//           session,
+//         });
+//         if (!updatedParty) {
+//           throw new Error("Failed to update party balance");
+//         }
+//       }
+
+//       // Persist receipt with the FULL requested amount (even if we applied less)
+//       if (newAmount != null) receipt.amount = finalAmount;
+//       if (date != null) receipt.date = new Date(date);
+      
+//       // Update description to note the excess if applicable
+//       if (hasExcess) {
+//         receipt.description = `${description || receipt.description} (Note: Only ₹${actualDelta} applied to balance increase. Customer had credit of ₹${delta - actualDelta})`;
+//       } else if (description !== undefined) {
+//         receipt.description = description;
+//       }
+//       if (paymentMethod !== undefined) receipt.paymentMethod = paymentMethod;
+//       if (referenceNumber !== undefined) receipt.referenceNumber = referenceNumber;
+
+//       await receipt.save({ session });
+
+//       await notifyAdminOnReceiptAction({
+//         req,
+//         action: "update",
+//         customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
+//         entryId: receipt._id,
+//         companyId: receipt.company.toString(),
+//         oldAmount: oldAmount,
+//         newAmount: finalAmount,
+//       });
+
+//       await session.commitTransaction();
+//       session.endSession();
+
+//       const companyId = receipt.company.toString();
+//       await deleteReceiptEntryCache(req.auth.clientId, companyId);
+
+//       // Return appropriate response
+//       let message = "Receipt updated";
+//       if (hasExcess) {
+//         message = `Receipt updated. Only ₹${actualDelta} applied to balance increase. Customer has credit of ₹${delta - actualDelta}`;
+//       }
+
+//       return res.json({ 
+//         message, 
+//         receipt,
+//         amountRequested: delta,
+//         amountApplied: actualDelta,
+//         creditAmount: hasExcess ? delta - actualDelta : 0
+//       });
+
+//     } catch (txErr) {
+//       if (session) { 
+//         try { await session.abortTransaction(); session.endSession(); } catch (_) { } 
+//       }
+//       return res.status(400).json({ message: txErr.message || "Failed to update receipt" });
+//     }
+//   } catch (err) {
+//     console.error("updateReceipt error:", err);
+//     res.status(500).json({ message: "Server error", error: err.message });
+//   }
+// };
+
 exports.updateReceipt = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -657,39 +809,22 @@ exports.updateReceipt = async (req, res) => {
       partyDoc = await Party.findById(receipt.party);
     }
 
-    // Compute delta
+    // Compute delta - SIMPLIFIED: Apply full delta like create controller
     const oldAmount = Number(receipt.amount || 0);
     const finalAmount = newAmount != null ? newAmount : oldAmount;
     const delta = finalAmount - oldAmount; // >0 means more deduction, <0 means refund
-
-    // ✅ SMART FIX: Calculate actual amount to deduct (cap at current balance)
-    let actualDelta = delta;
-    let hasExcess = false;
-    let amountApplied = 0;
-
-    if (delta > 0) { // Increasing receipt amount
-      const currentParty = await Party.findById(receipt.party);
-      const maxDeductible = currentParty.balance;
-      
-      if (delta > maxDeductible) {
-        // Cap the deduction to available balance
-        actualDelta = maxDeductible;
-        hasExcess = true;
-        amountApplied = maxDeductible;
-      }
-    }
 
     let session;
     try {
       session = await mongoose.startSession();
       session.startTransaction();
 
-      // Apply actualDelta to current receipt.party
-      if (actualDelta !== 0) {
+      // Apply full delta to maintain consistency with create logic
+      if (delta !== 0) {
         const updatedParty = await adjustBalanceGuarded({
           partyId: receipt.party,
           clientId: req.auth.clientId,
-          delta: -actualDelta, // Use the capped delta
+          delta: -delta, // Apply full delta (negative for receipts)
           session,
         });
         if (!updatedParty) {
@@ -697,16 +832,10 @@ exports.updateReceipt = async (req, res) => {
         }
       }
 
-      // Persist receipt with the FULL requested amount (even if we applied less)
+      // Update receipt with new values
       if (newAmount != null) receipt.amount = finalAmount;
       if (date != null) receipt.date = new Date(date);
-      
-      // Update description to note the excess if applicable
-      if (hasExcess) {
-        receipt.description = `${description || receipt.description} (Note: Only ₹${actualDelta} applied to balance increase. Customer had credit of ₹${delta - actualDelta})`;
-      } else if (description !== undefined) {
-        receipt.description = description;
-      }
+      if (description !== undefined) receipt.description = description;
       if (paymentMethod !== undefined) receipt.paymentMethod = paymentMethod;
       if (referenceNumber !== undefined) receipt.referenceNumber = referenceNumber;
 
@@ -728,18 +857,19 @@ exports.updateReceipt = async (req, res) => {
       const companyId = receipt.company.toString();
       await deleteReceiptEntryCache(req.auth.clientId, companyId);
 
-      // Return appropriate response
-      let message = "Receipt updated";
-      if (hasExcess) {
-        message = `Receipt updated. Only ₹${actualDelta} applied to balance increase. Customer has credit of ₹${delta - actualDelta}`;
-      }
-
+      // Get updated party balance for response
+      const currentParty = await Party.findById(receipt.party);
+      
       return res.json({ 
-        message, 
+        message: "Receipt updated successfully", 
         receipt,
-        amountRequested: delta,
-        amountApplied: actualDelta,
-        creditAmount: hasExcess ? delta - actualDelta : 0
+        oldAmount,
+        newAmount: finalAmount,
+        balanceChange: -delta,
+        updatedBalance: currentParty.balance,
+        balanceContext: currentParty.balance < 0 
+          ? `Customer has credit of ₹${Math.abs(currentParty.balance)}`
+          : `Customer owes ₹${currentParty.balance}`
       });
 
     } catch (txErr) {
@@ -753,7 +883,6 @@ exports.updateReceipt = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-
 
 /** DELETE */
 exports.deleteReceipt = async (req, res) => {
