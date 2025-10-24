@@ -25,8 +25,8 @@ const partySchema = new mongoose.Schema(
     isTDSApplicable: { type: Boolean, default: false },
     tdsRate: { type: Number },
     tdsSection: { type: String, trim: true },
-    contactNumber: { type: String, trim: true },
-    email: { type: String, lowercase: true, trim: true , required: true },
+    contactNumber: { type: Number, trim: true },
+    email: { type: String, lowercase: true, trim: true },
     createdByClient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Client",
@@ -42,6 +42,6 @@ const partySchema = new mongoose.Schema(
 partySchema.index({ contactNumber: 1, createdByClient: 1 }, { unique: true });
 
 // Ensure email + client combo is unique
-partySchema.index({ email: 1, createdByClient: 1 }, { unique: true });
+partySchema.index({ email: 1, createdByClient: 1 });
 
 module.exports = mongoose.model("Party", partySchema);
