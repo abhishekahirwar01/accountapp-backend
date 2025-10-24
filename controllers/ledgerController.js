@@ -2,6 +2,7 @@
 const PurchaseEntry = require("../models/PurchaseEntry");
 const PaymentEntry = require("../models/PaymentEntry");
 const Vendor = require("../models/Vendor");
+const PaymentExpense = require("../models/PaymentExpense");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -161,6 +162,64 @@ exports.getVendorPayablesLedger = async (req, res) => {
 
   } catch (error) {
     console.error("Error fetching vendor payables ledger:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
+
+// Get expense-specific payables ledger data
+exports.getExpensePayablesLedger = async (req, res) => {
+  try {
+    const clientId = req.auth.clientId;
+    const { expenseId } = req.query;
+
+    if (!expenseId) {
+      return res.status(400).json({ message: "Expense ID is required" });
+    }
+
+    // Get all payment entries for the expense (these are the "payments" - credit side)
+    const expensePaymentEntries = await PaymentEntry.find({
+      client: clientId,
+      expense: expenseId,
+      isExpense: true
+    })
+    .populate("expense", "name")
+    .populate("company", "companyName")
+    .sort({ date: 1 })
+    .lean();
+
+    // For expenses, debit side is typically empty (no outstanding amounts to pay)
+    const debitEntries = [];
+
+    // Format credit entries (expense payments - these are the actual payments made)
+    const creditEntries = expensePaymentEntries.map(entry => ({
+      id: entry._id,
+      date: entry.date,
+      type: "Expense Payment",
+      description: entry.description || `Expense payment for ${entry.expense?.name || "Unknown Expense"}`,
+      vendorName: entry.expense?.name || "Unknown Expense",
+      paymentMethod: entry.paymentMethod,
+      amount: entry.amount,
+      company: entry.company?.companyName || "Unknown Company",
+      referenceNumber: entry.referenceNumber
+    }));
+
+    // Calculate totals
+    const totalDebit = debitEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+    const totalCredit = creditEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+    const balance = totalDebit - totalCredit;
+
+    res.json({
+      debit: debitEntries,
+      credit: creditEntries,
+      totals: {
+        debit: totalDebit,
+        credit: totalCredit,
+        balance: balance
+      }
+    });
+
+  } catch (error) {
+    console.error("Error fetching expense payables ledger:", error);
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
