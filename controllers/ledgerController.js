@@ -91,28 +91,55 @@ exports.getPayablesLedger = async (req, res) => {
 exports.getVendorPayablesLedger = async (req, res) => {
   try {
     const clientId = req.auth.clientId;
-    const { vendorId } = req.query;
+    const { vendorId, fromDate, toDate } = req.query;
 
     if (!vendorId) {
       return res.status(400).json({ message: "Vendor ID is required" });
     }
 
+    // Build date filter
+    const dateFilter = {};
+    if (fromDate) {
+      // Set to start of day
+      const fromDateObj = new Date(fromDate);
+      fromDateObj.setHours(0, 0, 0, 0);
+      dateFilter.$gte = fromDateObj;
+    }
+    if (toDate) {
+      // Set to end of day
+      const toDateObj = new Date(toDate);
+      toDateObj.setHours(23, 59, 59, 999);
+      dateFilter.$lte = toDateObj;
+    }
+
     // Get all purchase entries for the vendor (debit side - all purchases)
-    const purchaseEntries = await PurchaseEntry.find({
+    const purchaseQuery = {
       client: clientId,
       vendor: vendorId
-    })
+    };
+
+    if (Object.keys(dateFilter).length > 0) {
+      purchaseQuery.date = dateFilter;
+    }
+
+    const purchaseEntries = await PurchaseEntry.find(purchaseQuery)
     .populate("vendor", "vendorName")
     .populate("company", "companyName")
     .sort({ date: 1 })
     .lean();
 
     // Get all payment entries for the vendor (credit side - payments except credit payments)
-    const paymentEntries = await PaymentEntry.find({
+    const paymentQuery = {
       client: clientId,
       vendor: vendorId,
       paymentMethod: { $ne: "Credit" } // Exclude credit payments
-    })
+    };
+
+    if (Object.keys(dateFilter).length > 0) {
+      paymentQuery.date = dateFilter;
+    }
+
+    const paymentEntries = await PaymentEntry.find(paymentQuery)
     .populate("vendor", "vendorName")
     .populate("company", "companyName")
     .sort({ date: 1 })
@@ -170,18 +197,39 @@ exports.getVendorPayablesLedger = async (req, res) => {
 exports.getExpensePayablesLedger = async (req, res) => {
   try {
     const clientId = req.auth.clientId;
-    const { expenseId } = req.query;
+    const { expenseId, fromDate, toDate } = req.query;
 
     if (!expenseId) {
       return res.status(400).json({ message: "Expense ID is required" });
     }
 
+    // Build date filter
+    const dateFilter = {};
+    if (fromDate) {
+      // Set to start of day
+      const fromDateObj = new Date(fromDate);
+      fromDateObj.setHours(0, 0, 0, 0);
+      dateFilter.$gte = fromDateObj;
+    }
+    if (toDate) {
+      // Set to end of day
+      const toDateObj = new Date(toDate);
+      toDateObj.setHours(23, 59, 59, 999);
+      dateFilter.$lte = toDateObj;
+    }
+
     // Get all payment entries for the expense (these are the "payments" - credit side)
-    const expensePaymentEntries = await PaymentEntry.find({
+    const expenseQuery = {
       client: clientId,
       expense: expenseId,
       isExpense: true
-    })
+    };
+
+    if (Object.keys(dateFilter).length > 0) {
+      expenseQuery.date = dateFilter;
+    }
+
+    const expensePaymentEntries = await PaymentEntry.find(expenseQuery)
     .populate("expense", "name")
     .populate("company", "companyName")
     .sort({ date: 1 })
