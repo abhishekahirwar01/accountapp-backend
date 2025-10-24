@@ -18,6 +18,7 @@ const vendorRoutes = require("./routes/vendorRoute");
 const userRoutes = require("./routes/userRoutes");
 const receiptRoutes = require("./routes/receiptRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
+const paymentExpenseRoutes = require("./routes/paymentExpenseRoutes");
 const journalRoutes = require("./routes/journalRoutes");
 const permissionRoutes = require('./routes/permission.routes')
 const serviceRoutes = require('./routes/serviceRoutes')
@@ -145,6 +146,7 @@ app.use("/api/proforma", proformaRoutes);
 app.use("/api/purchase", purchaseRoutes);
 app.use("/api/receipts", receiptRoutes);
 app.use("/api/payments", paymentRoutes);
+app.use("/api/payment-expenses", paymentExpenseRoutes);
 app.use("/api/journals", journalRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/services", serviceRoutes);

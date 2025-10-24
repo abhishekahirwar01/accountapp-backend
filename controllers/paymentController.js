@@ -2,6 +2,7 @@
 const PaymentEntry = require("../models/PaymentEntry");
 const Company = require("../models/Company");
 const Vendor = require("../models/Vendor");
+const PaymentExpense = require("../models/PaymentExpense");
 const User = require("../models/User");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { getFromCache, setToCache } = require('../RedisCache');
@@ -122,7 +123,7 @@ exports.createPayment = async (req, res) => {
       return res.status(403).json({ message: "Not allowed to create payment entries" });
     }
 
-    const { vendor, date, amount, description, paymentMethod, referenceNumber, company: companyId } = req.body;
+    const { vendor, expense, isExpense, date, amount, description, paymentMethod, referenceNumber, company: companyId } = req.body;
 
     if (!companyAllowedForUser(req, companyId)) {
       return res.status(403).json({ message: "You are not allowed to use this company" });
@@ -132,16 +133,36 @@ exports.createPayment = async (req, res) => {
       return res.status(400).json({ message: "Invalid payment method" });
     }
 
+    // Validate expense vs vendor logic
+    if (isExpense && !expense) {
+      return res.status(400).json({ message: "Expense is required when isExpense is true" });
+    }
+    if (!isExpense && !vendor) {
+      return res.status(400).json({ message: "Vendor is required when not an expense" });
+    }
+    if (isExpense && vendor) {
+      return res.status(400).json({ message: "Cannot specify both expense and vendor" });
+    }
+
     // Tenant ownership checks
-    const [companyDoc, vendorDoc] = await Promise.all([
-      Company.findOne({ _id: companyId, client: req.auth.clientId }),
-      Vendor.findOne({ _id: vendor, createdByClient: req.auth.clientId }),
-    ]);
+    const companyDoc = await Company.findOne({ _id: companyId, client: req.auth.clientId });
     if (!companyDoc) return res.status(400).json({ message: "Invalid company selected" });
-    if (!vendorDoc) return res.status(400).json({ message: "Vendor not found or unauthorized" });
+
+    let vendorDoc = null;
+    let expenseDoc = null;
+
+    if (!isExpense) {
+      vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.auth.clientId });
+      if (!vendorDoc) return res.status(400).json({ message: "Vendor not found or unauthorized" });
+    } else {
+      expenseDoc = await PaymentExpense.findOne({ _id: expense, client: req.auth.clientId });
+      if (!expenseDoc) return res.status(400).json({ message: "Expense not found or unauthorized" });
+    }
 
     const payment = await PaymentEntry.create({
-      vendor: vendorDoc._id,
+      vendor: vendorDoc?._id,
+      expense: expenseDoc?._id,
+      isExpense: isExpense || false,
       date,
       amount,
       description,
@@ -153,15 +174,21 @@ exports.createPayment = async (req, res) => {
     });
 
     // Handle vendor balance for payments (reduce what we owe - make balance less negative)
-    vendorDoc.balance += Number(amount);
-    await vendorDoc.save();
+    // Only update vendor balance if this is not an expense payment
+    if (vendorDoc) {
+      vendorDoc.balance += Number(amount);
+      await vendorDoc.save();
+    }
 
     // Notify admin AFTER creation succeeds
-    const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
+    const entityName = isExpense
+      ? (expenseDoc?.name || "Unknown Expense")
+      : (vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor");
+
     await notifyAdminOnPaymentAction({
       req,
       action: "create",
-      vendorName,
+      vendorName: entityName,
       entryId: payment._id,
       companyId: companyDoc?._id?.toString(),
       amount,
@@ -242,6 +269,7 @@ exports.getPayments = async (req, res) => {
       .skip(skip)
       .limit(perPage)
       .populate({ path: "vendor", select: "vendorName" })
+      .populate({ path: "expense", select: "name" })
       .populate({ path: "company", select: "businessName" });
 
     const [entries, total] = await Promise.all([
@@ -312,6 +340,7 @@ exports.getPaymentsByClient = async (req, res) => {
         .skip(skip)
         .limit(perPage)
         .populate({ path: "vendor", select: "vendorName" })
+        .populate({ path: "expense", select: "name" })
         .populate({ path: "company", select: "businessName" })
         .lean(),
       PaymentEntry.countDocuments(where),
@@ -341,7 +370,7 @@ exports.updatePayment = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const { vendor, company: newCompanyId, paymentMethod, ...rest } = req.body;
+    const { vendor, expense, isExpense, company: newCompanyId, paymentMethod, ...rest } = req.body;
 
     if (paymentMethod && !["Cash", "UPI", "Bank Transfer", "Cheque"].includes(paymentMethod)) {
       return res.status(400).json({ message: "Invalid payment method" });
@@ -357,15 +386,33 @@ exports.updatePayment = async (req, res) => {
       payment.company = companyDoc._id;
     }
 
-    // Vendor move check
+    // Vendor/Expense move check
     let vendorDoc;
-    if (vendor) {
-      vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.auth.clientId });
-      if (!vendorDoc) return res.status(400).json({ message: "Vendor not found or unauthorized" });
-      payment.vendor = vendorDoc._id;
+    let expenseDoc;
+    if (isExpense !== undefined) {
+      payment.isExpense = isExpense;
+    }
+
+    if (isExpense) {
+      if (expense) {
+        expenseDoc = await PaymentExpense.findOne({ _id: expense, client: req.auth.clientId });
+        if (!expenseDoc) return res.status(400).json({ message: "Expense not found or unauthorized" });
+        payment.expense = expenseDoc._id;
+        payment.vendor = undefined; // Clear vendor when it's an expense
+      } else {
+        // Get expense info for notification if not changing
+        expenseDoc = await PaymentExpense.findById(payment.expense);
+      }
     } else {
-      // Get vendor info for notification if not changing
-      vendorDoc = await Vendor.findById(payment.vendor);
+      if (vendor) {
+        vendorDoc = await Vendor.findOne({ _id: vendor, createdByClient: req.auth.clientId });
+        if (!vendorDoc) return res.status(400).json({ message: "Vendor not found or unauthorized" });
+        payment.vendor = vendorDoc._id;
+        payment.expense = undefined; // Clear expense when it's a vendor payment
+      } else {
+        // Get vendor info for notification if not changing
+        vendorDoc = await Vendor.findById(payment.vendor);
+      }
     }
 
     // Update payment method if provided
@@ -380,23 +427,27 @@ exports.updatePayment = async (req, res) => {
     Object.assign(payment, rest);
     await payment.save();
 
-    // Handle vendor balance adjustment for amount changes
-    const amountDifference = newAmount - originalAmount;
-    if (amountDifference !== 0) {
-      const currentVendorDoc = await Vendor.findById(payment.vendor);
-      if (currentVendorDoc) {
-        currentVendorDoc.balance += Number(amountDifference); // Add the difference (if amount increased, balance increases more)
-        await currentVendorDoc.save();
+    // Handle vendor balance adjustment for amount changes (only for vendor payments)
+    if (!payment.isExpense) {
+      const amountDifference = newAmount - originalAmount;
+      if (amountDifference !== 0) {
+        const currentVendorDoc = await Vendor.findById(payment.vendor);
+        if (currentVendorDoc) {
+          currentVendorDoc.balance += Number(amountDifference); // Add the difference (if amount increased, balance increases more)
+          await currentVendorDoc.save();
+        }
       }
     }
 
     const companyId = payment.company.toString();
-    const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
+    const entityName = payment.isExpense
+      ? (expenseDoc?.name || "Unknown Expense")
+      : (vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor");
 
     await notifyAdminOnPaymentAction({
       req,
       action: "update",
-      vendorName,
+      vendorName: entityName,
       entryId: payment._id,
       companyId,
     });
@@ -423,23 +474,30 @@ exports.deletePayment = async (req, res) => {
     if (!userIsPriv(req) && !sameTenant(payment.client, req.auth.clientId)) {
       return res.status(403).json({ message: "Not authorized" });
     }
-    // NEW: Get vendor info before deletion for notification
-    const vendorDoc = await Vendor.findById(payment.vendor);
+    // Get entity info before deletion for notification
+    let entityDoc;
+    if (payment.isExpense) {
+      entityDoc = await PaymentExpense.findById(payment.expense);
+    } else {
+      entityDoc = await Vendor.findById(payment.vendor);
+    }
 
-    // Handle vendor balance reversal for payment deletion
-    if (vendorDoc) {
-      vendorDoc.balance -= Number(payment.amount); // Subtract the payment amount from vendor balance
-      await vendorDoc.save();
+    // Handle vendor balance reversal for payment deletion (only for vendor payments)
+    if (!payment.isExpense && entityDoc) {
+      entityDoc.balance -= Number(payment.amount); // Subtract the payment amount from vendor balance
+      await entityDoc.save();
     }
 
     await payment.deleteOne();
 
-    const vendorName = vendorDoc?.name || vendorDoc?.vendorName || vendorDoc?.title || "Unknown Vendor";
+    const entityName = payment.isExpense
+      ? (entityDoc?.name || "Unknown Expense")
+      : (entityDoc?.name || entityDoc?.vendorName || entityDoc?.title || "Unknown Vendor");
 
     await notifyAdminOnPaymentAction({
       req,
       action: "delete",
-      vendorName,
+      vendorName: entityName,
       entryId: payment._id,                 // ok to reference deleted id
       companyId: payment.company.toString(),
     });
