@@ -2,6 +2,8 @@ const mongoose = require("mongoose");
 
 const paymentSchema = new mongoose.Schema({
   vendor: { type: mongoose.Schema.Types.ObjectId, ref: "Vendor", required: false },
+  expense: { type: mongoose.Schema.Types.ObjectId, ref: "PaymentExpense", required: false },
+  isExpense: { type: Boolean, default: false },
   date: { type: Date, required: false },
   amount: { type: Number, required: false },
 //   mode: { type: String, enum: ["Cash", "Bank", "UPI", "Cheque"], required: false },
