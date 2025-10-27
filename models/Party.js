@@ -26,7 +26,7 @@ const partySchema = new mongoose.Schema(
     tdsRate: { type: Number },
     tdsSection: { type: String, trim: true },
     contactNumber: { type: String, trim: true },
-    email: { type: String, lowercase: true, trim: true , required: true },
+    email: { type: String, lowercase: true, trim: true },
     createdByClient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Client",
