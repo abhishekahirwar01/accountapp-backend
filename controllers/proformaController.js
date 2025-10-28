@@ -138,25 +138,103 @@ async function notifyAdminOnProformaAction({
 }
 
 // In your getProformaEntries controller
+// exports.getProformaEntries = async (req, res) => {
+//   try {
+//     const filter = {};
+
+//     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+//     if (req.user.role === "client") {
+//       filter.client = req.user.id;
+//     }
+//     if (req.query.companyId) {
+//       filter.company = req.query.companyId;
+//     }
+
+//     // Construct a cache key based on the filter
+//     const cacheKey = `proformaEntries:${JSON.stringify(filter)}`;
+
+//     // Check if the data is cached in Redis
+//     // const cachedEntries = await getFromCache(cacheKey);
+//     // if (cachedEntries) {
+//     //   // If cached, return the data directly
+//     //   return res.status(200).json({
+//     //     success: true,
+//     //     count: cachedEntries.length,
+//     //     data: cachedEntries,
+//     //   });
+//     // }
+
+//     // If not cached, fetch the data from the database
+//     const entries = await ProformaEntry.find(filter)
+//       .populate("party", "name")
+//       .populate("products.product", "name")
+//       .populate({
+//         path: "services.service",
+//         select: "serviceName",
+//         strictPopulate: false,
+//       }) // ✅
+//       .populate("company", "businessName")
+//       .populate("shippingAddress")
+//       .populate("bank")
+//       .sort({ date: -1 });
+//     // Return consistent format
+
+//     // Cache the fetched data in Redis for future requests
+//     // await setToCache(cacheKey, entries);
+
+//     res.status(200).json({
+//       success: true,
+//       count: entries.length,
+//       data: entries, // Use consistent key
+//     });
+//   } catch (err) {
+//     console.error("Error fetching proforma entries:", err.message);
+//     res.status(500).json({
+//       success: false,
+//       error: err.message,
+//     });
+//   }
+// };
+
 exports.getProformaEntries = async (req, res) => {
   try {
+    await ensureAuthCaps(req); // Ensure auth context is loaded
+    
     const filter = {};
 
-    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
-    if (req.user.role === "client") {
-      filter.client = req.user.id;
+    if (!req.auth) return res.status(401).json({ message: "Unauthorized" });
+    
+    // For client users, restrict to their client ID AND allowed companies
+    if (req.auth.role === "client") {
+      filter.client = req.auth.clientId;
     }
+    
+    // If companyId is provided, validate the user has access to it
     if (req.query.companyId) {
-      filter.company = req.query.companyId;
+      const companyId = req.query.companyId;
+      
+      // Check if user is allowed to access this company
+      if (!companyAllowedForUser(req, companyId)) {
+        return res.status(403).json({ 
+          success: false, 
+          message: "Access denied to this company" 
+        });
+      }
+      
+      filter.company = companyId;
+    } else {
+      // If no companyId specified, show only companies the user is allowed to access
+      if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
+        filter.company = { $in: req.auth.allowedCompanies };
+      }
     }
 
-    // Construct a cache key based on the filter
-    const cacheKey = `proformaEntries:${JSON.stringify(filter)}`;
+    // Construct a SECURE cache key based on user context
+    const cacheKey = `proformaEntries:${req.auth.userId}:${JSON.stringify(filter)}`;
 
     // Check if the data is cached in Redis
     // const cachedEntries = await getFromCache(cacheKey);
     // if (cachedEntries) {
-    //   // If cached, return the data directly
     //   return res.status(200).json({
     //     success: true,
     //     count: cachedEntries.length,
@@ -172,12 +250,11 @@ exports.getProformaEntries = async (req, res) => {
         path: "services.service",
         select: "serviceName",
         strictPopulate: false,
-      }) // ✅
+      })
       .populate("company", "businessName")
       .populate("shippingAddress")
       .populate("bank")
       .sort({ date: -1 });
-    // Return consistent format
 
     // Cache the fetched data in Redis for future requests
     // await setToCache(cacheKey, entries);
@@ -185,7 +262,7 @@ exports.getProformaEntries = async (req, res) => {
     res.status(200).json({
       success: true,
       count: entries.length,
-      data: entries, // Use consistent key
+      data: entries,
     });
   } catch (err) {
     console.error("Error fetching proforma entries:", err.message);
@@ -195,6 +272,7 @@ exports.getProformaEntries = async (req, res) => {
     });
   }
 };
+
 
 // GET Proforma Entries by clientId (for master admin)
 exports.getProformaEntriesByClient = async (req, res) => {
@@ -240,6 +318,9 @@ exports.getProformaEntriesByClient = async (req, res) => {
       .json({ message: "Failed to fetch entries", error: err.message });
   }
 };
+
+
+
 
 exports.createProformaEntry = async (req, res) => {
   const session = await mongoose.startSession();
@@ -598,54 +679,123 @@ exports.updateProformaEntry = async (req, res) => {
   }
 };
 
+// exports.deleteProformaEntry = async (req, res) => {
+//   const session = await mongoose.startSession();
+
+//   try {
+//     await ensureAuthCaps(req);
+//     // Find the proforma entry by ID
+//     const entry = await ProformaEntry.findById(req.params.id);
+
+//     if (!entry) {
+//       return res.status(404).json({ message: "Proforma entry not found" });
+//     }
+
+//     // Only allow clients to delete their own entries
+//     if (req.user.role === "client" && entry.client.toString() !== req.user.id) {
+//       return res.status(403).json({ message: "Unauthorized" });
+//     }
+
+//     // Fetch the party document
+//     const partyDoc = await Party.findById(entry.party);
+//     if (!partyDoc) {
+//       console.error("Party not found");
+//       return res.status(400).json({ message: "Party not found" });
+//     }
+
+//     // Start the transaction
+//     await session.withTransaction(async () => {
+//       // Delete the proforma entry
+//       await entry.deleteOne();
+
+//       // Retrieve companyId and clientId from the proforma entry to delete related cache
+//       const companyId = entry.company.toString();
+//       const clientId = entry.client.toString(); // Retrieve clientId from the entry
+
+//       await notifyAdminOnProformaAction({
+//         req,
+//         action: "delete",
+//         partyName: partyDoc?.name,
+//         entryId: entry._id,
+//         companyId,
+//       });
+//       // Invalidate cache next
+//       await deleteSalesEntryCache(clientId, companyId);
+//       // Respond
+//       res.status(200).json({ message: "Proforma entry deleted successfully" });
+//     });
+//   } catch (err) {
+//     console.error("Error deleting proforma entry:", err);
+//     res.status(500).json({ error: err.message });
+//   } finally {
+//     session.endSession();
+//   }
+// };
+
 exports.deleteProformaEntry = async (req, res) => {
   const session = await mongoose.startSession();
 
   try {
     await ensureAuthCaps(req);
+    
     // Find the proforma entry by ID
     const entry = await ProformaEntry.findById(req.params.id);
-
     if (!entry) {
-      return res.status(404).json({ message: "Proforma entry not found" });
+      return res.status(404).json({ 
+        success: false,
+        message: "Proforma entry not found" 
+      });
     }
 
-    // Only allow clients to delete their own entries
-    if (req.user.role === "client" && entry.client.toString() !== req.user.id) {
-      return res.status(403).json({ message: "Unauthorized" });
+    // Enhanced authorization check using auth context
+    if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
+      return res.status(403).json({ 
+        success: false,
+        message: "Unauthorized" 
+      });
     }
 
-    // Fetch the party document
+    // Fetch the party document for notification
     const partyDoc = await Party.findById(entry.party);
     if (!partyDoc) {
       console.error("Party not found");
-      return res.status(400).json({ message: "Party not found" });
+      return res.status(400).json({ 
+        success: false,
+        message: "Party not found" 
+      });
     }
 
     // Start the transaction
     await session.withTransaction(async () => {
       // Delete the proforma entry
-      await entry.deleteOne();
+      await ProformaEntry.deleteOne({ _id: entry._id }).session(session);
 
-      // Retrieve companyId and clientId from the proforma entry to delete related cache
-      const companyId = entry.company.toString();
-      const clientId = entry.client.toString(); // Retrieve clientId from the entry
-
+      // Notify admin
       await notifyAdminOnProformaAction({
         req,
         action: "delete",
         partyName: partyDoc?.name,
         entryId: entry._id,
-        companyId,
+        companyId: entry.company?.toString(),
       });
-      // Invalidate cache next
+
+      // Invalidate cache
+      const companyId = entry.company.toString();
+      const clientId = entry.client.toString();
       await deleteSalesEntryCache(clientId, companyId);
+
       // Respond
-      res.status(200).json({ message: "Proforma entry deleted successfully" });
+      res.status(200).json({ 
+        success: true,
+        message: "Proforma entry deleted successfully" 
+      });
     });
   } catch (err) {
     console.error("Error deleting proforma entry:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ 
+      success: false,
+      error: err.message 
+    });
   } finally {
     session.endSession();
   }

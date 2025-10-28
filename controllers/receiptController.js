@@ -409,21 +409,118 @@ exports.createReceipt = async (req, res) => {
 // };
 
 /** LIST (tenant filtered, supports company filter, q, date range, pagination) */
+// exports.getReceipts = async (req, res) => {
+//   try {
+//     const filter = {}; // Initialize filter object
+
+//     // Ensure the user is authorized
+//     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+
+//     // Set the client filter based on the authenticated user
+//     if (req.user.role === "client") {
+//       filter.client = req.user.id;
+//     }
+
+//     // Add company filter if provided
+//     if (req.query.companyId) {
+//       filter.company = req.query.companyId;
+//     }
+
+//     // Add date range filter if provided
+//     if (req.query.dateFrom || req.query.dateTo) {
+//       filter.date = {};
+//       if (req.query.dateFrom) filter.date.$gte = new Date(req.query.dateFrom);
+//       if (req.query.dateTo) filter.date.$lte = new Date(req.query.dateTo);
+//     }
+
+//     // Add search query filter if provided
+//     if (req.query.q) {
+//       filter.$or = [
+//         { description: { $regex: String(req.query.q), $options: "i" } },
+//         { referenceNumber: { $regex: String(req.query.q), $options: "i" } },
+//       ];
+//     }
+
+//     const perPage = Math.min(Number(req.query.limit) || 100, 500);
+//     const skip = (Number(req.query.page) - 1) * perPage;
+
+//     // Construct a cache key based on the filter
+//     const cacheKey = `receiptEntries:${JSON.stringify(filter)}`;
+
+//     // Check if the data is cached in Redis
+//     const cachedEntries = await getFromCache(cacheKey);
+//     if (cachedEntries) {
+//       // If cached, return the data directly
+//       return res.status(200).json({
+//         success: true,
+//         count: cachedEntries.length,
+//         data: cachedEntries,
+//       });
+//     }
+
+//     // If not cached, fetch the data from the database
+//     const query = ReceiptEntry.find(filter)
+//       .sort({ date: -1 })
+//       .skip(skip)
+//       .limit(perPage)
+//       .populate({ path: "party", select: "name" })
+//       .populate({ path: "company", select: "businessName" });
+
+//     // Fetch data and total count simultaneously
+//     const [data, total] = await Promise.all([query.lean(), ReceiptEntry.countDocuments(filter)]);
+
+//     // Cache the fetched data in Redis for future requests
+//     await setToCache(cacheKey, data);
+
+//     // Return the data in a consistent format
+//     res.status(200).json({
+//       success: true,
+//       total,
+//       page: Number(req.query.page),
+//       limit: perPage,
+//       data,
+//     });
+//   } catch (err) {
+//     console.error("getReceipts error:", err.message);
+//     res.status(500).json({
+//       success: false,
+//       error: err.message,
+//     });
+//   }
+// };
+
+/** LIST (tenant filtered, supports company filter, q, date range, pagination) */
 exports.getReceipts = async (req, res) => {
   try {
-    const filter = {}; // Initialize filter object
+    await ensureAuthCaps(req); // Ensure auth context is loaded
+    
+    const filter = {};
 
-    // Ensure the user is authorized
-    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+    if (!req.auth) return res.status(401).json({ message: "Unauthorized" });
 
     // Set the client filter based on the authenticated user
-    if (req.user.role === "client") {
-      filter.client = req.user.id;
+    if (req.auth.role === "client") {
+      filter.client = req.auth.clientId;
     }
 
-    // Add company filter if provided
+    // Add company filter if provided - WITH VALIDATION
     if (req.query.companyId) {
-      filter.company = req.query.companyId;
+      const companyId = req.query.companyId;
+      
+      // Check if user is allowed to access this company
+      if (!companyAllowedForUser(req, companyId)) {
+        return res.status(403).json({ 
+          success: false, 
+          message: "Access denied to this company" 
+        });
+      }
+      
+      filter.company = companyId;
+    } else {
+      // If no companyId specified, show only companies the user is allowed to access
+      if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
+        filter.company = { $in: req.auth.allowedCompanies };
+      }
     }
 
     // Add date range filter if provided
@@ -444,13 +541,12 @@ exports.getReceipts = async (req, res) => {
     const perPage = Math.min(Number(req.query.limit) || 100, 500);
     const skip = (Number(req.query.page) - 1) * perPage;
 
-    // Construct a cache key based on the filter
-    const cacheKey = `receiptEntries:${JSON.stringify(filter)}`;
+    // Construct a SECURE cache key based on the filter AND user context
+    const cacheKey = `receiptEntries:${req.auth.userId}:${JSON.stringify(filter)}`;
 
     // Check if the data is cached in Redis
     const cachedEntries = await getFromCache(cacheKey);
     if (cachedEntries) {
-      // If cached, return the data directly
       return res.status(200).json({
         success: true,
         count: cachedEntries.length,
@@ -1036,3 +1132,4 @@ exports.getReceiptsByClient = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
