@@ -17,32 +17,24 @@ async function notifyUpdate() {
   }
 
   const updateData = {
-    title: `Version ${version} Deployed`,
+    title: `Version ${version} Released`,
     description: "New financial management features and improvements are now available",
     version: version,
     features: [
       {
         name: "Receivable Sheet",
-        sectionUrl: "/app/receivables",
-        gifUrl: "https://example.com/receivables-demo.gif",
         description: "Track all money owed to your business with detailed customer receivable reports"
       },
       {
-        name: "Payables Sheet",
-        sectionUrl: "/app/payables",
-        gifUrl: "https://example.com/payables-demo.gif",
+        name: "Payables Sheet", 
         description: "Manage all your outstanding payments to vendors and suppliers efficiently"
       },
       {
         name: "Enhanced Dashboard",
-        sectionUrl: "/admin/dashboard",
-        gifUrl: "https://example.com/dashboard-demo.gif",
         description: "Improved analytics and new KPI cards for better financial insights"
       },
       {
         name: "Advanced Reporting",
-        sectionUrl: "/app/reports",
-        gifUrl: "https://example.com/reports-demo.gif",
         description: "Generate detailed financial reports with custom filters and export options"
       }
     ]
@@ -53,7 +45,11 @@ async function notifyUpdate() {
     console.log('📊 Version:', version);
     console.log('🌐 API URL:', `${baseURL}/api/update-notifications`);
     console.log('🔑 Using token:', masterToken ? '***provided***' : '***missing***');
-    console.log('🆕 New Features: Receivable Sheet, Payables Sheet');
+    
+    console.log('\n🆕 New Features Being Notified:');
+    updateData.features.forEach(feature => {
+      console.log(`   • ${feature.name} - ${feature.description}`);
+    });
 
     const response = await axios.post(`${baseURL}/api/update-notifications`, updateData, {
       headers: {
@@ -63,19 +59,19 @@ async function notifyUpdate() {
       timeout: 30000 // 30 second timeout
     });
 
-    console.log('✅ Update notification created successfully!');
-    console.log('📊 Response:', JSON.stringify(response.data, null, 2));
-
+    console.log('\n✅ Update notification created successfully!');
+    
     // Verify the response structure
     if (response.data && response.data.notifications && Array.isArray(response.data.notifications)) {
       console.log(`📢 Notifications created for ${response.data.notifications.length} master admin(s)`);
     }
 
-    // Additional success message highlighting new features
-    console.log('\n🎉 New Financial Features Available:');
-    console.log('   📈 Receivable Sheet - Track customer payments');
-    console.log('   📉 Payables Sheet - Manage vendor payments');
-    console.log('   📊 Enhanced financial reporting and analytics');
+    // Success summary
+    console.log('\n🎉 Deployment Complete - New Financial Features Available:');
+    console.log('   📈 Receivable Sheet - Track customer payments and money owed to your business');
+    console.log('   📉 Payables Sheet - Manage vendor payments and outstanding obligations');
+    console.log('   📊 Enhanced Dashboard - Improved analytics and financial KPIs');
+    console.log('   📋 Advanced Reporting - Detailed financial reports with export capabilities');
 
   } catch (error) {
     console.error('❌ Failed to create update notification:');
@@ -92,8 +88,12 @@ async function notifyUpdate() {
 
     // Don't exit with error in CI/CD to prevent deployment failure
     if (process.env.CI || process.env.GITHUB_ACTIONS) {
-      console.log('⚠️  Continuing deployment despite notification failure...');
-      console.log('🆕 New features will still be available: Receivable Sheet, Payables Sheet');
+      console.log('\n⚠️  Continuing deployment despite notification failure...');
+      console.log('🆕 New features are still deployed and available:');
+      console.log('   • Receivable Sheet - Track customer payments');
+      console.log('   • Payables Sheet - Manage vendor payments'); 
+      console.log('   • Enhanced Dashboard - Better financial insights');
+      console.log('   • Advanced Reporting - Detailed financial reports');
       process.exit(0);
     } else {
       process.exit(1);
@@ -105,6 +105,5 @@ async function notifyUpdate() {
 if (require.main === module) {
   notifyUpdate();
 }
-
 
 notifyUpdate();
