@@ -18,22 +18,33 @@ async function notifyUpdate() {
 
   const updateData = {
     title: `Version ${version} Deployed`,
-    description: "New features and improvements are now available",
+    description: "New financial management features and improvements are now available",
     version: version,
     features: [
+      {
+        name: "Receivable Sheet",
+        sectionUrl: "/app/receivables",
+        gifUrl: "https://example.com/receivables-demo.gif",
+        description: "Track all money owed to your business with detailed customer receivable reports"
+      },
+      {
+        name: "Payables Sheet",
+        sectionUrl: "/app/payables",
+        gifUrl: "https://example.com/payables-demo.gif",
+        description: "Manage all your outstanding payments to vendors and suppliers efficiently"
+      },
       {
         name: "Enhanced Dashboard",
         sectionUrl: "/admin/dashboard",
         gifUrl: "https://example.com/dashboard-demo.gif",
-        description: "Improved analytics and new KPI cards"
+        description: "Improved analytics and new KPI cards for better financial insights"
       },
       {
         name: "Advanced Reporting",
         sectionUrl: "/app/reports",
         gifUrl: "https://example.com/reports-demo.gif",
-        description: "Generate detailed reports with custom filters"
+        description: "Generate detailed financial reports with custom filters and export options"
       }
-      // Add more features as needed for each deployment
     ]
   };
 
@@ -42,6 +53,7 @@ async function notifyUpdate() {
     console.log('📊 Version:', version);
     console.log('🌐 API URL:', `${baseURL}/api/update-notifications`);
     console.log('🔑 Using token:', masterToken ? '***provided***' : '***missing***');
+    console.log('🆕 New Features: Receivable Sheet, Payables Sheet');
 
     const response = await axios.post(`${baseURL}/api/update-notifications`, updateData, {
       headers: {
@@ -59,6 +71,12 @@ async function notifyUpdate() {
       console.log(`📢 Notifications created for ${response.data.notifications.length} master admin(s)`);
     }
 
+    // Additional success message highlighting new features
+    console.log('\n🎉 New Financial Features Available:');
+    console.log('   📈 Receivable Sheet - Track customer payments');
+    console.log('   📉 Payables Sheet - Manage vendor payments');
+    console.log('   📊 Enhanced financial reporting and analytics');
+
   } catch (error) {
     console.error('❌ Failed to create update notification:');
     if (error.response) {
@@ -75,11 +93,18 @@ async function notifyUpdate() {
     // Don't exit with error in CI/CD to prevent deployment failure
     if (process.env.CI || process.env.GITHUB_ACTIONS) {
       console.log('⚠️  Continuing deployment despite notification failure...');
+      console.log('🆕 New features will still be available: Receivable Sheet, Payables Sheet');
       process.exit(0);
     } else {
       process.exit(1);
     }
   }
 }
+
+// If this is the main module, run the function
+if (require.main === module) {
+  notifyUpdate();
+}
+
 
 notifyUpdate();
