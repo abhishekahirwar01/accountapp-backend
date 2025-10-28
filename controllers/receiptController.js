@@ -251,7 +251,7 @@ exports.createReceipt = async (req, res) => {
     }
 
     // After successful receipt creation, add:
-    await deleteReceiptEntryCache(req.auth.clientId, companyId);
+    // await deleteReceiptEntryCache(req.auth.clientId, companyId);
     // Send response
     return res.status(201).json({
       message: "Receipt entry created",
@@ -541,18 +541,18 @@ exports.getReceipts = async (req, res) => {
     const perPage = Math.min(Number(req.query.limit) || 100, 500);
     const skip = (Number(req.query.page) - 1) * perPage;
 
-    // Construct a SECURE cache key based on the filter AND user context
-    const cacheKey = `receiptEntries:${req.auth.userId}:${JSON.stringify(filter)}`;
+    // // Construct a SECURE cache key based on the filter AND user context
+    // const cacheKey = `receiptEntries:${req.auth.userId}:${JSON.stringify(filter)}`;
 
-    // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
+    // // Check if the data is cached in Redis
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
 
     // If not cached, fetch the data from the database
     const query = ReceiptEntry.find(filter)
@@ -566,7 +566,7 @@ exports.getReceipts = async (req, res) => {
     const [data, total] = await Promise.all([query.lean(), ReceiptEntry.countDocuments(filter)]);
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, data);
+    // await setToCache(cacheKey, data);
 
     // Return the data in a consistent format
     res.status(200).json({
@@ -951,7 +951,7 @@ exports.updateReceipt = async (req, res) => {
       session.endSession();
 
       const companyId = receipt.company.toString();
-      await deleteReceiptEntryCache(req.auth.clientId, companyId);
+      // await deleteReceiptEntryCache(req.auth.clientId, companyId);
 
       // Get updated party balance for response
       const currentParty = await Party.findById(receipt.party);
@@ -1029,7 +1029,7 @@ exports.deleteReceipt = async (req, res) => {
       const companyId = receipt.company.toString();
 
       // Call the cache deletion function
-      await deleteReceiptEntryCache(req.auth.clientId, companyId);
+      // await deleteReceiptEntryCache(req.auth.clientId, companyId);
 
       return res.json({
         message: "Receipt deleted",
@@ -1091,19 +1091,19 @@ exports.getReceiptsByClient = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a cache key based on the filter
-    const cacheKey = `receiptEntriesByClient:${JSON.stringify({ clientId, companyId })}`;
+    // // Construct a cache key based on the filter
+    // const cacheKey = `receiptEntriesByClient:${JSON.stringify({ clientId, companyId })}`;
 
-    // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
+    // // Check if the data is cached in Redis
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   // If cached, return the data directly
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
 
     // Fetch the data from the database if not cached
     const query = ReceiptEntry.find(filter)
@@ -1117,7 +1117,7 @@ exports.getReceiptsByClient = async (req, res) => {
     const [data, total] = await Promise.all([query.lean(), ReceiptEntry.countDocuments(filter)]);
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, data);
+    // await setToCache(cacheKey, data);
 
     // Return the data in a consistent format
     res.status(200).json({
