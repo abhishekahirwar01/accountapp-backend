@@ -6,11 +6,11 @@ const {
   createCompanyByClient,
   getClientCompanies,
   getAllCompanies,
-    updateCompany,
-    deleteCompany,
-    getCompaniesByClientId,
-    getMyCompanies,
-    getCompany
+  updateCompany,
+  deleteCompany,
+  getCompaniesByClientId,
+  getMyCompanies,
+  getCompany
 } = require("../controllers/companyController");
 
 const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
@@ -74,5 +74,33 @@ router.delete("/:id", verifyClientOrAdmin, deleteCompany);
 router.get("/:id", verifyClientOrAdmin, getCompany);
 
 
+router.get('/accessible', verifyClientOrAdmin, async (req, res) => {
+  try {
+    const userId = req.user._id;
+    
+    console.log("Fetching accessible companies for user:", userId);
+    
+    // Find ALL companies the user has access to (owned + shared)
+    const accessibleCompanies = await Company.find({
+      $or: [
+        { owner: userId }, // Companies they own
+        { 'users.user': userId }, // Companies shared with them
+      ]
+    }).select('businessName legalName type industry address phone email gstin pan website logo createdAt updatedAt');
+    
+    console.log(`Found ${accessibleCompanies.length} accessible companies for user ${userId}`);
+    
+    res.json({ 
+      success: true, 
+      data: accessibleCompanies 
+    });
+  } catch (error) {
+    console.error('Error fetching accessible companies:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: error.message 
+    });
+  }
+});
 
 module.exports = router;
