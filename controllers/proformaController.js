@@ -198,6 +198,7 @@ async function notifyAdminOnProformaAction({
 
 exports.getProformaEntries = async (req, res) => {
   try {
+
     await ensureAuthCaps(req); // Ensure auth context is loaded
     
     const filter = {};
@@ -226,6 +227,7 @@ exports.getProformaEntries = async (req, res) => {
       // If no companyId specified, show only companies the user is allowed to access
       if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
         filter.company = { $in: req.auth.allowedCompanies };
+
       }
     }
 
@@ -747,12 +749,14 @@ exports.deleteProformaEntry = async (req, res) => {
       });
     }
 
+
     // Enhanced authorization check using auth context
     if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
       return res.status(403).json({ 
         success: false,
         message: "Unauthorized" 
       });
+
     }
 
     // Fetch the party document for notification

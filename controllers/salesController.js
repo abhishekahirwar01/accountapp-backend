@@ -138,34 +138,51 @@ async function notifyAdminOnSalesAction({
   );
 }
 
-// In your getSalesEntries controller
+// In controllers/salesController.js - Update getSalesEntries function
 exports.getSalesEntries = async (req, res) => {
   try {
+    // Ensure authentication and permissions
+    await ensureAuthCaps(req);
+    
     const filter = {};
 
-    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+    // If user is not privileged (master/client/admin), restrict to their accessible companies
+    if (!userIsPriv(req)) {
+      // Use the accessible companies from the auth context
+      if (req.auth.allowedCompanies && req.auth.allowedCompanies.length > 0) {
+        filter.company = { $in: req.auth.allowedCompanies };
+      } else {
+        // If no accessible companies, return empty array
+        return res.status(200).json({
+          success: true,
+          count: 0,
+          data: [],
+        });
+      }
+    }
+
+    // Client-specific filtering (existing logic)
     if (req.user.role === "client") {
       filter.client = req.user.id;
     }
+
+    // Company-specific filtering from query params
     if (req.query.companyId) {
+      // Ensure the requested company is accessible
+      if (!companyAllowedForUser(req, req.query.companyId)) {
+        return res.status(403).json({ 
+          success: false, 
+          message: "Access denied to this company" 
+        });
+      }
       filter.company = req.query.companyId;
     }
 
-    // Construct a cache key based on the filter
-    const cacheKey = `salesEntries:${JSON.stringify(filter)}`;
+    console.log("Sales query filter:", filter);
+    console.log("User accessible companies:", req.auth.allowedCompanies);
+    console.log("User role:", req.user.role);
 
-    // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
-
-    // If not cached, fetch the data from the database
+    // Fetch data from database
     const entries = await SalesEntry.find(filter)
       .populate("party", "name")
       .populate("products.product", "name")
@@ -173,20 +190,18 @@ exports.getSalesEntries = async (req, res) => {
         path: "services.service",
         select: "serviceName",
         strictPopulate: false,
-      }) // ✅
+      })
       .populate("company", "businessName")
       .populate("shippingAddress")
       .populate("bank")
       .sort({ date: -1 });
-    // Return consistent format
 
-    // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, entries);
+    console.log("Found sales entries:", entries.length);
 
     res.status(200).json({
       success: true,
       count: entries.length,
-      data: entries, // Use consistent key
+      data: entries,
     });
   } catch (err) {
     console.error("Error fetching sales entries:", err.message);
@@ -202,19 +217,19 @@ exports.getSalesEntriesByClient = async (req, res) => {
   try {
     const { clientId } = req.params;
 
-    // Construct a cache key based on clientId
-    const cacheKey = `salesEntriesByClient:${clientId}`;
+    // // Construct a cache key based on clientId
+    // const cacheKey = `salesEntriesByClient:${clientId}`;
 
-    // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
+    // // Check if the data is cached in Redis
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   // If cached, return the data directly
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
 
     // Fetch data from database if not cached
     const entries = await SalesEntry.find({ client: clientId })
@@ -231,7 +246,7 @@ exports.getSalesEntriesByClient = async (req, res) => {
       .sort({ date: -1 });
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, entries);
+    // await setToCache(cacheKey, entries);
 
     // Return the fetched data
     res.status(200).json({ entries });
@@ -455,7 +470,7 @@ exports.createSalesEntry = async (req, res) => {
     const clientId = entry.client.toString(); // Retrieve clientId from the entry
 
     // Call the reusable cache deletion function
-    await deleteSalesEntryCache(clientId, companyId);
+    // await deleteSalesEntryCache(clientId, companyId);
   } catch (err) {
     console.error("createSalesEntry error:", err);
     return res
@@ -674,7 +689,7 @@ exports.updateSalesEntry = async (req, res) => {
     const clientId = entry.client.toString();
 
     // Call the reusable cache deletion function
-    await deleteSalesEntryCache(clientId, companyId);
+    // await deleteSalesEntryCache(clientId, companyId);
 
     res.json({ message: "Sales entry updated successfully", entry });
   } catch (err) {
@@ -728,7 +743,7 @@ exports.deleteSalesEntry = async (req, res) => {
         companyId,
       });
       // Invalidate cache next
-      await deleteSalesEntryCache(clientId, companyId);
+      // await deleteSalesEntryCache(clientId, companyId);
       // Respond
       res.status(200).json({ message: "Sales entry deleted successfully" });
     });
