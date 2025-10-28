@@ -100,16 +100,21 @@ exports.createVendor = async (req, res) => {
       isTDSApplicable,
     } = req.body;
 
-    // Validation
-    if (!vendorName || vendorName.trim().length < 2) {
-      return res.status(400).json({ message: "Vendor name is required and must be at least 2 characters." });
-    }
-    if (!contactNumber || !/^[6-9]\d{9}$/.test(contactNumber)) {
-      return res.status(400).json({ message: "Invalid mobile number. Must be 10 digits starting with 6-9." });
-    }
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return res.status(400).json({ message: "Email is required and must be valid." });
-    }
+    // Validation - ONLY vendorName is required
+if (!vendorName || vendorName.trim().length < 2) {
+  return res.status(400).json({ message: "Vendor name is required and must be at least 2 characters." });
+}
+
+// Optional validations - only check if value is provided
+if (contactNumber && !/^[6-9]\d{9}$/.test(contactNumber)) {
+  return res.status(400).json({ message: "Invalid mobile number. Must be 10 digits starting with 6-9." });
+}
+
+if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  return res.status(400).json({ message: "Invalid email format." });
+}
+
+
 
     const vendor = await Vendor.create({
       vendorName,
