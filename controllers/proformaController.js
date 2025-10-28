@@ -140,14 +140,27 @@ async function notifyAdminOnProformaAction({
 // In your getProformaEntries controller
 exports.getProformaEntries = async (req, res) => {
   try {
+    await ensureAuthCaps(req);
+
     const filter = {};
 
-    if (!req.user) return res.status(401).json({ message: "Unauthorized" });
-    if (req.user.role === "client") {
-      filter.client = req.user.id;
-    }
-    if (req.query.companyId) {
-      filter.company = req.query.companyId;
+    // For client role, only show their own entries
+    if (req.auth.role === "client") {
+      filter.client = req.auth.clientId;
+    } else {
+      // For privileged roles, filter by client and allowed companies if specified
+      filter.client = req.auth.clientId;
+      if (req.query.companyId) {
+        if (!companyAllowedForUser(req, req.query.companyId)) {
+          return res.status(403).json({ message: "You are not allowed to access this company's data" });
+        }
+        filter.company = req.query.companyId;
+      } else {
+        // If no company specified, filter by allowed companies
+        if (Array.isArray(req.auth.allowedCompanies) && req.auth.allowedCompanies.length > 0) {
+          filter.company = { $in: req.auth.allowedCompanies };
+        }
+      }
     }
 
     // Construct a cache key based on the filter
@@ -610,8 +623,8 @@ exports.deleteProformaEntry = async (req, res) => {
       return res.status(404).json({ message: "Proforma entry not found" });
     }
 
-    // Only allow clients to delete their own entries
-    if (req.user.role === "client" && entry.client.toString() !== req.user.id) {
+    // Tenant auth: allow privileged roles or same tenant only
+    if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
       return res.status(403).json({ message: "Unauthorized" });
     }
 
