@@ -14,8 +14,8 @@ const vendorSchema = new mongoose.Schema(
     },
     pan: { type: String, uppercase: true, trim: true },
     isTDSApplicable: { type: Boolean, default: false },
-    contactNumber: { type: String, trim: true },
-    email: { type: String, lowercase: true, trim: true },
+    contactNumber: { type: String, trim: true,  sparse: true },
+    email: { type: String, lowercase: true, trim: true, sparse: true},
     createdByClient: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Client",
@@ -27,10 +27,13 @@ const vendorSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Ensure contactNumber + client combo is unique
-vendorSchema.index({ contactNumber: 1, createdByClient: 1 }, { unique: true });
-
-// Ensure email + client combo is unique
-vendorSchema.index({ email: 1, createdByClient: 1 }, { unique: true });
+vendorSchema.index(
+  { contactNumber: 1, createdByClient: 1 },
+  { unique: true, sparse: true }
+);
+vendorSchema.index(
+  { email: 1, createdByClient: 1 },
+  { unique: true, sparse: true }
+);
 
 module.exports = mongoose.model("Vendor", vendorSchema);
