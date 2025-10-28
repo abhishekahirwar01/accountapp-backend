@@ -237,7 +237,7 @@ exports.createPurchaseEntry = async (req, res) => {
         });
 
         // Invalidate cache
-        await deletePurchaseEntryCache(clientId, companyIdStr);
+        // await deletePurchaseEntryCache(clientId, companyIdStr);
 
         return res.status(201).json({ message: "Purchase entry created successfully", entry });
 
@@ -302,15 +302,15 @@ exports.getPurchaseEntries = async (req, res) => {
     const cacheKey = `purchaseEntries:${JSON.stringify({ clientId, companyId })}`;
 
     // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   // If cached, return the data directly
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
 
     // If not cached, fetch the data from the database
     const query = PurchaseEntry.find(where)
@@ -329,7 +329,7 @@ exports.getPurchaseEntries = async (req, res) => {
     ]);
 
     // Cache the fetched data in Redis for future requests
-    await setToCache(cacheKey, entries);
+    // await setToCache(cacheKey, entries);
 
     res.status(200).json({
       success: true,
@@ -371,15 +371,15 @@ exports.getPurchaseEntriesByClient = async (req, res) => {
     const cacheKey = `purchaseEntriesByClient:${JSON.stringify({ client: clientId, company: companyId })}`;
 
     // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   // If cached, return the data directly
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
 
     const [entries, total] = await Promise.all([
       PurchaseEntry.find(where)
@@ -395,7 +395,7 @@ exports.getPurchaseEntriesByClient = async (req, res) => {
       PurchaseEntry.countDocuments(where),
     ]);
 
-    await setToCache(cacheKey, entries);
+    // await setToCache(cacheKey, entries);
 
     res.status(200).json({ entries, total, page: Number(page), limit: perPage });
   } catch (err) {
@@ -519,7 +519,7 @@ exports.updatePurchaseEntry = async (req, res) => {
     });
 
     // clear cache
-    await deletePurchaseEntryCache(clientId, companyId);
+    // await deletePurchaseEntryCache(clientId, companyId);
     return res.json({ message: "Purchase entry updated successfully", entry });
 
   } catch (err) {
@@ -582,7 +582,7 @@ exports.deletePurchaseEntry = async (req, res) => {
     });
 
     // Invalidate cache
-    await deletePurchaseEntryCache(clientId, companyId);
+    // await deletePurchaseEntryCache(clientId, companyId);
 
     return res.json({ message: "Purchase deleted" });
 
