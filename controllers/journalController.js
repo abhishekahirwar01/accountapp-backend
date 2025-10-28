@@ -3,8 +3,8 @@ const JournalEntry = require("../models/JournalEntry");
 const Company = require("../models/Company");
 const User = require("../models/User");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
-const { getFromCache, setToCache } = require('../RedisCache');
-const { deleteJournalEntryCache, deleteJournalEntryCacheByUser } = require("../utils/cacheHelpers");
+// const { getFromCache, setToCache } = require('../RedisCache');
+// const { deleteJournalEntryCache, deleteJournalEntryCacheByUser } = require("../utils/cacheHelpers");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 
@@ -182,7 +182,7 @@ exports.createJournal = async (req, res) => {
     const clientId = journal.client.toString();
 
     // Call the cache deletion function
-    await deleteJournalEntryCache(clientId, companyId);
+    // await deleteJournalEntryCache(clientId, companyId);
     // await deleteJournalEntryCacheByUser(clientId, companyId);
 
     res.status(201).json({ message: "Journal entry created", journal });
@@ -230,23 +230,23 @@ exports.getJournals = async (req, res) => {
       ];
     }
 
-    // ✅ Standardize key fields (use "client" not "clientId") and include all filters
-    const cacheKey = `journalEntries:${JSON.stringify({
-      clientId: req.auth.clientId,
-      companyId: companyId || null
-    })}`;
+    // // ✅ Standardize key fields (use "client" not "clientId") and include all filters
+    // const cacheKey = `journalEntries:${JSON.stringify({
+    //   clientId: req.auth.clientId,
+    //   companyId: companyId || null
+    // })}`;
 
-    // Try cache
-    const cached = await getFromCache(cacheKey);
-    if (cached) {
-      return res.status(200).json({
-        success: true,
-        total: cached.total,
-        page,
-        limit: perPage,
-        data: cached.data,
-      });
-    }
+    // // Try cache
+    // const cached = await getFromCache(cacheKey);
+    // if (cached) {
+    //   return res.status(200).json({
+    //     success: true,
+    //     total: cached.total,
+    //     page,
+    //     limit: perPage,
+    //     data: cached.data,
+    //   });
+    // }
 
     const query = JournalEntry.find(where)
       .sort({ date: -1, _id: -1 })
@@ -261,7 +261,7 @@ exports.getJournals = async (req, res) => {
     ]);
 
     // ✅ cache the right variable and keep shape consistent
-    await setToCache(cacheKey, { data, total });
+    // await setToCache(cacheKey, { data, total });
 
     return res.status(200).json({
       success: true,
@@ -326,7 +326,7 @@ exports.updateJournal = async (req, res) => {
 
 
     // Call the cache deletion function
-    await deleteJournalEntryCache(clientId, companyId);
+    // await deleteJournalEntryCache(clientId, companyId);
     // await deleteJournalEntryCacheByUser(clientId, companyId);
 
     res.json({ message: "Journal updated", journal });
@@ -371,7 +371,7 @@ exports.deleteJournal = async (req, res) => {
     const clientId = journal.client.toString();
 
     // Call the cache deletion function
-    await deleteJournalEntryCache(clientId, companyId);
+    // await deleteJournalEntryCache(clientId, companyId);
     // await deleteJournalEntryCacheByUser(clientId, companyId);
 
     res.json({ message: "Journal deleted" });
@@ -402,19 +402,19 @@ exports.getJournalsByClient = async (req, res) => {
     const perPage = Math.min(Number(limit) || 100, 500);
     const skip = (Number(page) - 1) * perPage;
 
-    // Construct a cache key based on clientId and query parameters
-    const cacheKey = `journalEntriesByClient:${JSON.stringify({ clientId, companyId })}`;
+    // // Construct a cache key based on clientId and query parameters
+    // const cacheKey = `journalEntriesByClient:${JSON.stringify({ clientId, companyId })}`;
 
-    // Check if the data is cached in Redis
-    const cachedEntries = await getFromCache(cacheKey);
-    if (cachedEntries) {
-      // If cached, return the data directly
-      return res.status(200).json({
-        success: true,
-        count: cachedEntries.length,
-        data: cachedEntries,
-      });
-    }
+    // // Check if the data is cached in Redis
+    // const cachedEntries = await getFromCache(cacheKey);
+    // if (cachedEntries) {
+    //   // If cached, return the data directly
+    //   return res.status(200).json({
+    //     success: true,
+    //     count: cachedEntries.length,
+    //     data: cachedEntries,
+    //   });
+    // }
 
     // Fetch journal entries from the database
     const [data, total] = await Promise.all([
@@ -428,7 +428,7 @@ exports.getJournalsByClient = async (req, res) => {
     ]);
 
     // Cache the fetched data for future use
-    await setToCache(cacheKey, data);
+    // await setToCache(cacheKey, data);
 
     // Respond with the data, including pagination information
     res.status(200).json({
