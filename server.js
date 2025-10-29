@@ -148,6 +148,11 @@ app.use("/api/support", supportRoutes)
 // app.use('/api/whatsapp', whatsappConnectionRoutes);
 app.use('/api/whatsapp', whatsappRoutes)
 
+// 💤 Ping route to keep Render backend awake
+app.get("/ping", (req, res) => {
+  res.status(200).send("Server is awake 🚀");
+});
+
 app.get('/', (req, res) => {
   res.send("Testing....");
 });
