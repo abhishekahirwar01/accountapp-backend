@@ -14,6 +14,17 @@ const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 // privileged roles that can skip allowedCompanies checks
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
+function userIsPrivForCompanyAccess(req) {
+  // Only master and client should bypass company restrictions
+  return req.auth?.role === "master" || req.auth?.role === "client";
+}
+
+// NEW: Function for client data access
+function userCanAccessAllClientData(req) {
+  // Only master should access all clients' data
+  return req.auth?.role === "master";
+}
+
 async function adjustBalanceGuarded({ partyId, clientId, delta, session }) {
   if (delta < 0) {
     // deducting → require enough balance
@@ -490,6 +501,100 @@ exports.createReceipt = async (req, res) => {
 // };
 
 /** LIST (tenant filtered, supports company filter, q, date range, pagination) */
+// exports.getReceipts = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req); // Ensure auth context is loaded
+    
+//     const filter = {};
+
+//     if (!req.auth) return res.status(401).json({ message: "Unauthorized" });
+
+//     // Set the client filter based on the authenticated user
+//     if (req.auth.role === "client") {
+//       filter.client = req.auth.clientId;
+//     }
+
+//     // Add company filter if provided - WITH VALIDATION
+//     if (req.query.companyId) {
+//       const companyId = req.query.companyId;
+      
+//       // Check if user is allowed to access this company
+//       if (!companyAllowedForUser(req, companyId)) {
+//         return res.status(403).json({ 
+//           success: false, 
+//           message: "Access denied to this company" 
+//         });
+//       }
+      
+//       filter.company = companyId;
+//     } else {
+//       // If no companyId specified, show only companies the user is allowed to access
+//       if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
+//         filter.company = { $in: req.auth.allowedCompanies };
+//       }
+//     }
+
+//     // Add date range filter if provided
+//     if (req.query.dateFrom || req.query.dateTo) {
+//       filter.date = {};
+//       if (req.query.dateFrom) filter.date.$gte = new Date(req.query.dateFrom);
+//       if (req.query.dateTo) filter.date.$lte = new Date(req.query.dateTo);
+//     }
+
+//     // Add search query filter if provided
+//     if (req.query.q) {
+//       filter.$or = [
+//         { description: { $regex: String(req.query.q), $options: "i" } },
+//         { referenceNumber: { $regex: String(req.query.q), $options: "i" } },
+//       ];
+//     }
+
+//     const perPage = Math.min(Number(req.query.limit) || 100, 500);
+//     const skip = (Number(req.query.page) - 1) * perPage;
+
+//     // // Construct a SECURE cache key based on the filter AND user context
+//     // const cacheKey = `receiptEntries:${req.auth.userId}:${JSON.stringify(filter)}`;
+
+//     // // Check if the data is cached in Redis
+//     // const cachedEntries = await getFromCache(cacheKey);
+//     // if (cachedEntries) {
+//     //   return res.status(200).json({
+//     //     success: true,
+//     //     count: cachedEntries.length,
+//     //     data: cachedEntries,
+//     //   });
+//     // }
+
+//     // If not cached, fetch the data from the database
+//     const query = ReceiptEntry.find(filter)
+//       .sort({ date: -1 })
+//       .skip(skip)
+//       .limit(perPage)
+//       .populate({ path: "party", select: "name" })
+//       .populate({ path: "company", select: "businessName" });
+
+//     // Fetch data and total count simultaneously
+//     const [data, total] = await Promise.all([query.lean(), ReceiptEntry.countDocuments(filter)]);
+
+//     // Cache the fetched data in Redis for future requests
+//     // await setToCache(cacheKey, data);
+
+//     // Return the data in a consistent format
+//     res.status(200).json({
+//       success: true,
+//       total,
+//       page: Number(req.query.page),
+//       limit: perPage,
+//       data,
+//     });
+//   } catch (err) {
+//     console.error("getReceipts error:", err.message);
+//     res.status(500).json({
+//       success: false,
+//       error: err.message,
+//     });
+//   }
+// };
 exports.getReceipts = async (req, res) => {
   try {
     await ensureAuthCaps(req); // Ensure auth context is loaded
@@ -518,43 +623,16 @@ exports.getReceipts = async (req, res) => {
       filter.company = companyId;
     } else {
       // If no companyId specified, show only companies the user is allowed to access
-      if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
+      // Use the NEW function that excludes admin from company privilege
+      if (!userIsPrivForCompanyAccess(req) && Array.isArray(req.auth.allowedCompanies)) {
         filter.company = { $in: req.auth.allowedCompanies };
       }
     }
 
-    // Add date range filter if provided
-    if (req.query.dateFrom || req.query.dateTo) {
-      filter.date = {};
-      if (req.query.dateFrom) filter.date.$gte = new Date(req.query.dateFrom);
-      if (req.query.dateTo) filter.date.$lte = new Date(req.query.dateTo);
-    }
-
-    // Add search query filter if provided
-    if (req.query.q) {
-      filter.$or = [
-        { description: { $regex: String(req.query.q), $options: "i" } },
-        { referenceNumber: { $regex: String(req.query.q), $options: "i" } },
-      ];
-    }
-
+    // ... rest of your function remains the same
     const perPage = Math.min(Number(req.query.limit) || 100, 500);
     const skip = (Number(req.query.page) - 1) * perPage;
 
-    // // Construct a SECURE cache key based on the filter AND user context
-    // const cacheKey = `receiptEntries:${req.auth.userId}:${JSON.stringify(filter)}`;
-
-    // // Check if the data is cached in Redis
-    // const cachedEntries = await getFromCache(cacheKey);
-    // if (cachedEntries) {
-    //   return res.status(200).json({
-    //     success: true,
-    //     count: cachedEntries.length,
-    //     data: cachedEntries,
-    //   });
-    // }
-
-    // If not cached, fetch the data from the database
     const query = ReceiptEntry.find(filter)
       .sort({ date: -1 })
       .skip(skip)
@@ -562,13 +640,8 @@ exports.getReceipts = async (req, res) => {
       .populate({ path: "party", select: "name" })
       .populate({ path: "company", select: "businessName" });
 
-    // Fetch data and total count simultaneously
     const [data, total] = await Promise.all([query.lean(), ReceiptEntry.countDocuments(filter)]);
 
-    // Cache the fetched data in Redis for future requests
-    // await setToCache(cacheKey, data);
-
-    // Return the data in a consistent format
     res.status(200).json({
       success: true,
       total,
@@ -584,7 +657,6 @@ exports.getReceipts = async (req, res) => {
     });
   }
 };
-
 
 /** UPDATE */
 // exports.updateReceipt = async (req, res) => {
