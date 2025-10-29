@@ -138,37 +138,20 @@ async function notifyAdminOnSalesAction({
   );
 }
 
-// In controllers/salesController.js - Update getSalesEntries function
 exports.getSalesEntries = async (req, res) => {
   try {
-    // Ensure authentication and permissions
     await ensureAuthCaps(req);
     
     const filter = {};
+    const user = req.user;
 
-    // If user is not privileged (master/client/admin), restrict to their accessible companies
-    if (!userIsPriv(req)) {
-      // Use the accessible companies from the auth context
-      if (req.auth.allowedCompanies && req.auth.allowedCompanies.length > 0) {
-        filter.company = { $in: req.auth.allowedCompanies };
-      } else {
-        // If no accessible companies, return empty array
-        return res.status(200).json({
-          success: true,
-          count: 0,
-          data: [],
-        });
-      }
-    }
+    console.log("User role:", user.role);
+    console.log("User ID:", user.id);
+    console.log("Query companyId:", req.query.companyId);
 
-    // Client-specific filtering (existing logic)
-    if (req.user.role === "client") {
-      filter.client = req.user.id;
-    }
-
-    // Company-specific filtering from query params
+    // Handle company filtering properly
     if (req.query.companyId) {
-      // Ensure the requested company is accessible
+      // Validate company access
       if (!companyAllowedForUser(req, req.query.companyId)) {
         return res.status(403).json({ 
           success: false, 
@@ -176,13 +159,28 @@ exports.getSalesEntries = async (req, res) => {
         });
       }
       filter.company = req.query.companyId;
+    } else {
+      // If no specific company requested, filter by user's accessible companies
+      if (req.auth.allowedCompanies && req.auth.allowedCompanies.length > 0) {
+        filter.company = { $in: req.auth.allowedCompanies };
+      } else if (user.role === "user") {
+        // Regular users should only see data from their assigned companies
+        return res.status(200).json({
+          success: true,
+          count: 0,
+          data: [],
+        });
+      }
+      // For master/admin, no company filter = see all data
     }
 
-    console.log("Sales query filter:", filter);
-    console.log("User accessible companies:", req.auth.allowedCompanies);
-    console.log("User role:", req.user.role);
+    // For client users, also filter by client ID
+    if (user.role === "client") {
+      filter.client = user.id;
+    }
 
-    // Fetch data from database
+    console.log("Final filter for sales entries:", JSON.stringify(filter, null, 2));
+
     const entries = await SalesEntry.find(filter)
       .populate("party", "name")
       .populate("products.product", "name")
@@ -196,7 +194,7 @@ exports.getSalesEntries = async (req, res) => {
       .populate("bank")
       .sort({ date: -1 });
 
-    console.log("Found sales entries:", entries.length);
+    console.log(`Found ${entries.length} sales entries for user ${user.role}/${user.id}`);
 
     res.status(200).json({
       success: true,
