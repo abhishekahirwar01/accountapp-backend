@@ -55,6 +55,26 @@ async function notifyUpdate() {
     console.log('🔑 Using token:', masterToken ? '***provided***' : '***missing***');
     console.log('🆕 New Features: Receivable Sheet, Payables Sheet');
 
+    // FIRST: Clean up existing notifications for this version
+    console.log('🧹 Cleaning up existing notifications for this version...');
+    try {
+      const cleanupResponse = await axios.delete(`${baseURL}/api/update-notifications/version/${encodeURIComponent(version)}`, {
+        headers: {
+          Authorization: `Bearer ${masterToken}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 10000
+      });
+      console.log('✅ Cleanup completed:', cleanupResponse.data.message || 'Existing notifications removed');
+    } catch (cleanupError) {
+      if (cleanupError.response && cleanupError.response.status === 404) {
+        console.log('ℹ️  No existing notifications to clean up');
+      } else {
+        console.log('⚠️  Cleanup failed, but continuing...');
+      }
+    }
+
+    // THEN: Create new notifications
     const response = await axios.post(`${baseURL}/api/update-notifications`, updateData, {
       headers: {
         Authorization: `Bearer ${masterToken}`,
@@ -64,11 +84,14 @@ async function notifyUpdate() {
     });
 
     console.log('✅ Update notification created successfully!');
-    console.log('📊 Response:', JSON.stringify(response.data, null, 2));
-
+    
     // Verify the response structure
     if (response.data && response.data.notifications && Array.isArray(response.data.notifications)) {
       console.log(`📢 Notifications created for ${response.data.notifications.length} master admin(s)`);
+      
+      // Log recipient IDs to help debug duplicates
+      const recipientIds = response.data.notifications.map(n => n.recipient).filter(Boolean);
+      console.log(`👥 Recipients: ${recipientIds.join(', ')}`);
     }
 
     // Additional success message highlighting new features
@@ -106,5 +129,4 @@ if (require.main === module) {
   notifyUpdate();
 }
 
-
-notifyUpdate();
+module.exports = notifyUpdate;
