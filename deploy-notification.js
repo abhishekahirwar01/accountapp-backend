@@ -55,22 +55,30 @@ async function notifyUpdate() {
     console.log('🔑 Using token:', masterToken ? '***provided***' : '***missing***');
     console.log('🆕 New Features: Receivable Sheet, Payables Sheet');
 
-    // FIRST: Clean up existing notifications for this version
-    console.log('🧹 Cleaning up existing notifications for this version...');
+    // FIRST: Try to delete ALL notifications (not just for this version)
+    console.log('🧹 Cleaning up ALL existing notifications...');
     try {
-      const cleanupResponse = await axios.delete(`${baseURL}/api/update-notifications/version/${encodeURIComponent(version)}`, {
+      const cleanupResponse = await axios.delete(`${baseURL}/api/update-notifications`, {
         headers: {
           Authorization: `Bearer ${masterToken}`,
           'Content-Type': 'application/json'
         },
         timeout: 10000
       });
-      console.log('✅ Cleanup completed:', cleanupResponse.data.message || 'Existing notifications removed');
+      console.log('✅ Cleanup completed:', cleanupResponse.data.message || 'All existing notifications removed');
     } catch (cleanupError) {
       if (cleanupError.response && cleanupError.response.status === 404) {
         console.log('ℹ️  No existing notifications to clean up');
       } else {
-        console.log('⚠️  Cleanup failed, but continuing...');
+        console.log('⚠️  API cleanup failed, but continuing...');
+        // If API cleanup fails, try the database cleanup script as fallback
+        try {
+          console.log('🔄 Trying database cleanup as fallback...');
+          const { execSync } = require('child_process');
+          execSync('node scripts/cleanupTestNotifications.js', { stdio: 'inherit' });
+        } catch (dbCleanupError) {
+          console.log('⚠️  Database cleanup also failed, but continuing deployment...');
+        }
       }
     }
 
