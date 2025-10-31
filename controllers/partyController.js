@@ -325,6 +325,265 @@ exports.updateParty = async (req, res) => {
   }
 };
 
+exports.importParties = async (req, res) => {
+  const file = req.file;
+
+  if (!file) {
+    return res.status(400).json({ message: "No file uploaded." });
+  }
+
+  try {
+    await ensureAuthCaps(req);
+
+    if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateCustomers) {
+      return res.status(403).json({ message: "Not allowed to create customers" });
+    }
+
+    if (!file.originalname.toLowerCase().endsWith('.csv')) {
+      return res.status(400).json({ message: "Please upload a CSV file." });
+    }
+
+    const fileContent = file.buffer.toString('utf8');
+    const records = parseCSV(fileContent);
+
+    if (records.length === 0) {
+      return res.status(400).json({ message: "CSV file is empty or could not be parsed." });
+    }
+
+    const importedParties = [];
+    const errors = [];
+
+    // Define valid GST types based on your actual schema
+    const validGstTypes = [
+      "Regular",
+      "Composition", 
+      "Unregistered",
+      "Consumer",
+      "Overseas",
+      "Special Economic Zone",
+      "Unknown"
+    ];
+
+    // Mapping from common terms to your schema terms
+    const gstTypeMapping = {
+      'Registered': 'Regular',
+      'REGISTERED': 'Regular',
+      'registered': 'Regular',
+      'Composition': 'Composition',
+      'COMPOSITION': 'Composition',
+      'composition': 'Composition',
+      'Unregistered': 'Unregistered',
+      'UNREGISTERED': 'Unregistered',
+      'unregistered': 'Unregistered',
+      'Consumer': 'Consumer',
+      'Overseas': 'Overseas',
+      'Special Economic Zone': 'Special Economic Zone',
+      'Unknown': 'Unknown'
+    };
+
+    // Process each record
+    for (let i = 0; i < records.length; i++) {
+      const row = records[i];
+      const rowNumber = i + 2;
+
+      try {
+        // Validate required fields
+        if (!row.name || row.name.trim() === '') {
+          errors.push(`Row ${rowNumber}: Name is required`);
+          continue;
+        }
+
+        // Prepare party data
+        const partyData = {
+          name: row.name.trim(),
+          contactNumber: row.contactNumber?.trim() || '',
+          email: row.email?.trim()?.toLowerCase() || '',
+          address: row.address?.trim() || '',
+          city: row.city?.trim() || '',
+          state: row.state?.trim() || '',
+          pincode: row.pincode?.trim() || '',
+          gstin: row.gstin?.trim()?.toUpperCase() || '',
+          gstRegistrationType: row.gstRegistrationType?.trim() || 'Unregistered',
+          pan: row.pan?.trim()?.toUpperCase() || '',
+          isTDSApplicable: row.isTDSApplicable?.toLowerCase() === 'true' || row.isTDSApplicable === '1',
+          tdsRate: parseFloat(row.tdsRate) || 0,
+          tdsSection: row.tdsSection?.trim() || '',
+          createdByClient: req.auth.clientId,
+          createdByUser: req.auth.userId,
+        };
+
+        // Normalize GST registration type
+        if (partyData.gstRegistrationType && gstTypeMapping[partyData.gstRegistrationType]) {
+          partyData.gstRegistrationType = gstTypeMapping[partyData.gstRegistrationType];
+        }
+
+        // Validate GST Registration Type against actual schema enum
+        if (partyData.gstRegistrationType && !validGstTypes.includes(partyData.gstRegistrationType)) {
+          errors.push(`Row ${rowNumber}: Invalid GST registration type "${partyData.gstRegistrationType}". Must be one of: ${validGstTypes.join(', ')}`);
+          continue;
+        }
+
+        // Clear GSTIN if unregistered
+        if (partyData.gstRegistrationType === 'Unregistered') {
+          partyData.gstin = '';
+        }
+
+        // Validate TDS data
+        if (partyData.isTDSApplicable) {
+          if (!partyData.tdsSection || partyData.tdsSection.trim() === '') {
+            errors.push(`Row ${rowNumber}: TDS Section is required when TDS is applicable`);
+            continue;
+          }
+          if (partyData.tdsRate <= 0) {
+            errors.push(`Row ${rowNumber}: TDS Rate must be greater than 0 when TDS is applicable`);
+            continue;
+          }
+        } else {
+          partyData.tdsRate = 0;
+          partyData.tdsSection = '';
+        }
+
+        // Check for duplicate contact number or email
+        const existingParty = await Party.findOne({
+          createdByClient: req.auth.clientId,
+          $or: [
+            { contactNumber: partyData.contactNumber },
+            { email: partyData.email }
+          ].filter(condition => {
+            const value = Object.values(condition)[0];
+            return value && value.trim() !== '';
+          })
+        });
+
+        if (existingParty) {
+          if (existingParty.contactNumber === partyData.contactNumber && partyData.contactNumber) {
+            errors.push(`Row ${rowNumber}: Contact number '${partyData.contactNumber}' already exists`);
+            continue;
+          }
+          if (existingParty.email === partyData.email && partyData.email) {
+            errors.push(`Row ${rowNumber}: Email '${partyData.email}' already exists`);
+            continue;
+          }
+        }
+
+        // Create new party
+        const newParty = new Party(partyData);
+        const savedParty = await newParty.save();
+        importedParties.push(savedParty);
+
+        // Notify admin for each imported party
+        await notifyAdminOnPartyAction({
+          req,
+          action: "create",
+          partyName: savedParty.name,
+          entryId: savedParty._id,
+        });
+
+      } catch (error) {
+        console.error(`Error processing row ${rowNumber}:`, error);
+        if (error.code === 11000) {
+          const field = Object.keys(error.keyValue)[0];
+          if (field === "contactNumber") {
+            errors.push(`Row ${rowNumber}: Contact number already exists`);
+          } else if (field === "email") {
+            errors.push(`Row ${rowNumber}: Email already exists`);
+          } else {
+            errors.push(`Row ${rowNumber}: Duplicate field error`);
+          }
+        } else if (error.name === 'ValidationError') {
+          // Handle mongoose validation errors
+          const validationErrors = Object.values(error.errors).map(err => err.message);
+          errors.push(`Row ${rowNumber}: ${validationErrors.join(', ')}`);
+        } else {
+          errors.push(`Row ${rowNumber}: ${error.message}`);
+        }
+      }
+    }
+
+    // Invalidate cache after import
+    if (importedParties.length > 0) {
+      invalidateClient(req.auth.clientId);
+    }
+
+    return res.status(200).json({
+      message: 'Import completed',
+      importedCount: importedParties.length,
+      totalCount: records.length,
+      errors: errors.length > 0 ? errors : undefined,
+      importedParties: importedParties.map(p => ({ id: p._id, name: p.name }))
+    });
+
+  } catch (error) {
+    console.error("Error importing parties:", error);
+    return res.status(500).json({ 
+      message: "Error importing parties.", 
+      error: error.message 
+    });
+  }
+};
+
+// Replace your current parseCSV function with this improved version
+function parseCSV(content) {
+  const lines = content.split('\n').filter(line => line.trim() !== '');
+  
+  if (lines.length < 2) return []; // Need at least header and one data row
+
+  const headers = lines[0].split(',').map(header => header.trim());
+  const records = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue; // Skip empty lines
+
+    // More robust CSV parsing that handles quoted fields with commas
+    const values = [];
+    let current = '';
+    let inQuotes = false;
+    
+    for (let j = 0; j < line.length; j++) {
+      const char = line[j];
+      const nextChar = line[j + 1];
+      
+      if (char === '"') {
+        // Toggle quote state
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        // End of field
+        values.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    
+    // Push the last field
+    values.push(current.trim());
+
+    // Remove quotes from values if present
+    const cleanValues = values.map(value => {
+      if (value.startsWith('"') && value.endsWith('"')) {
+        return value.slice(1, -1);
+      }
+      return value;
+    });
+
+    const record = {};
+    
+    headers.forEach((header, index) => {
+      record[header] = cleanValues[index] || '';
+    });
+    
+    // Only add non-empty records (at least one field has value)
+    const hasData = Object.values(record).some(value => value !== '');
+    if (hasData) {
+      records.push(record);
+    }
+  }
+
+  console.log(`Parsed ${records.length} records from CSV`); // Debug log
+  return records;
+}
+
 exports.deleteParty = async (req, res) => {
   try {
     const doc = await Party.findById(req.params.id);
