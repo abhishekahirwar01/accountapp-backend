@@ -98,3 +98,19 @@ exports.updateValidityPartial = async (req, res) => {
     return res.status(500).json({ message: err.message });
   }
 };
+
+// In controllers/accountValidityController.js - update getMyValidity function
+exports.getMyValidity = async (req, res) => {
+  try {
+    // Get client ID from verifyClientOrAdmin middleware (from req.auth)
+    const clientId = req.auth.userId; // Use req.auth.userId from verifyClientOrAdmin
+    console.log("Client checking own validity:", clientId);
+    
+    const v = await AccountValidity.findOne({ client: clientId });
+    if (!v) return res.status(404).json({ message: "No validity set." });
+    return res.json({ ok: true, validity: v });
+  } catch (err) {
+    console.error("Error in getMyValidity:", err);
+    return res.status(500).json({ message: err.message });
+  }
+};
