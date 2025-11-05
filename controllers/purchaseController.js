@@ -213,7 +213,10 @@ exports.createPurchaseEntry = async (req, res) => {
 
           // Handle vendor balance for credit purchases
           if (paymentMethod === "Credit") {
-            vendorDoc.balance -= finalTotal; // Negative balance means we owe the vendor
+            // Update company-specific balance
+            if (!vendorDoc.balances) vendorDoc.balances = new Map();
+            const currentBalance = vendorDoc.balances.get(companyId.toString()) || 0;
+            vendorDoc.balances.set(companyId.toString(), currentBalance - finalTotal); // Negative balance means we owe the vendor
             await vendorDoc.save({ session });
           }
 
@@ -482,21 +485,33 @@ exports.updatePurchaseEntry = async (req, res) => {
       const amountDifference = newTotalAmount - originalTotalAmount;
       const vendorDoc = await Vendor.findById(entry.vendor);
       if (vendorDoc) {
-        vendorDoc.balance -= amountDifference; // Subtract difference (more negative = owe more)
+        // Update company-specific balance
+        if (!vendorDoc.balances) vendorDoc.balances = new Map();
+        const companyIdStr = entry.company.toString();
+        const currentBalance = vendorDoc.balances.get(companyIdStr) || 0;
+        vendorDoc.balances.set(companyIdStr, currentBalance - amountDifference);
         await vendorDoc.save();
       }
     } else if (originalPaymentMethod === "Credit" && newPaymentMethod !== "Credit") {
       // Changed from credit to non-credit - add back to balance (owe less)
       const vendorDoc = await Vendor.findById(entry.vendor);
       if (vendorDoc) {
-        vendorDoc.balance += originalTotalAmount; // Add back what we owed
+        // Update company-specific balance
+        if (!vendorDoc.balances) vendorDoc.balances = new Map();
+        const companyIdStr = entry.company.toString();
+        const currentBalance = vendorDoc.balances.get(companyIdStr) || 0;
+        vendorDoc.balances.set(companyIdStr, currentBalance + originalTotalAmount);
         await vendorDoc.save();
       }
     } else if (originalPaymentMethod !== "Credit" && newPaymentMethod === "Credit") {
       // Changed from non-credit to credit - subtract from balance (owe more)
       const vendorDoc = await Vendor.findById(entry.vendor);
       if (vendorDoc) {
-        vendorDoc.balance -= newTotalAmount; // Subtract new amount (owe more)
+        // Update company-specific balance
+        if (!vendorDoc.balances) vendorDoc.balances = new Map();
+        const companyIdStr = entry.company.toString();
+        const currentBalance = vendorDoc.balances.get(companyIdStr) || 0;
+        vendorDoc.balances.set(companyIdStr, currentBalance - newTotalAmount);
         await vendorDoc.save();
       }
     }
@@ -528,6 +543,31 @@ exports.updatePurchaseEntry = async (req, res) => {
   }
 };
 
+
+// --- GET BY ID ---------------------------------------------------
+exports.getPurchaseEntryById = async (req, res) => {
+  try {
+    await ensureAuthCaps(req);
+
+    const entry = await PurchaseEntry.findById(req.params.id)
+      .populate({ path: "vendor", select: "vendorName" })
+      .populate({ path: "products.product", select: "name unitType" })
+      .populate({ path: "services.serviceName", select: "serviceName" })
+      .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
+      .populate({ path: "company", select: "businessName" });
+
+    if (!entry) return res.status(404).json({ message: "Purchase entry not found" });
+
+    if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    res.json({ entry });
+  } catch (err) {
+    console.error("getPurchaseEntryById error:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
 
 // --- DELETE ------------------------------------------------------
 exports.deletePurchaseEntry = async (req, res) => {
@@ -562,7 +602,11 @@ exports.deletePurchaseEntry = async (req, res) => {
     // Handle vendor balance reversal for credit purchases
     if (entry.paymentMethod === "Credit") {
       if (vendorDoc) {
-        vendorDoc.balance += entry.totalAmount; // Add back what we owed (less negative)
+        // Update company-specific balance
+        if (!vendorDoc.balances) vendorDoc.balances = new Map();
+        const companyIdStr = entry.company.toString();
+        const currentBalance = vendorDoc.balances.get(companyIdStr) || 0;
+        vendorDoc.balances.set(companyIdStr, currentBalance + entry.totalAmount);
         await vendorDoc.save();
       }
     }

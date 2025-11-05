@@ -18,11 +18,16 @@ function sameTenant(a, b) {
 exports.getPayablesLedger = async (req, res) => {
   try {
     const clientId = req.auth.clientId;
+    const { companyId } = req.query;
+
+    // Build company filter
+    const companyFilter = companyId ? { company: companyId } : {};
 
     // Get all purchase entries (debit side - what we owe)
     const purchaseEntries = await PurchaseEntry.find({
       client: clientId,
-      paymentMethod: "Credit" // Only credit purchases create payables
+      paymentMethod: "Credit", // Only credit purchases create payables
+      ...companyFilter
     })
     .populate("vendor", "vendorName")
     .populate("company", "companyName")
@@ -31,7 +36,8 @@ exports.getPayablesLedger = async (req, res) => {
 
     // Get all payment entries (credit side - what we've paid)
     const paymentEntries = await PaymentEntry.find({
-      client: clientId
+      client: clientId,
+      ...companyFilter
     })
     .populate("vendor", "vendorName")
     .populate("company", "companyName")
@@ -91,7 +97,7 @@ exports.getPayablesLedger = async (req, res) => {
 exports.getVendorPayablesLedger = async (req, res) => {
   try {
     const clientId = req.auth.clientId;
-    const { vendorId, fromDate, toDate } = req.query;
+    const { vendorId, fromDate, toDate, companyId } = req.query;
 
     if (!vendorId) {
       return res.status(400).json({ message: "Vendor ID is required" });
@@ -112,10 +118,14 @@ exports.getVendorPayablesLedger = async (req, res) => {
       dateFilter.$lte = toDateObj;
     }
 
+    // Build company filter
+    const companyFilter = companyId ? { company: companyId } : {};
+
     // Get all purchase entries for the vendor (debit side - all purchases)
     const purchaseQuery = {
       client: clientId,
-      vendor: vendorId
+      vendor: vendorId,
+      ...companyFilter
     };
 
     if (Object.keys(dateFilter).length > 0) {
@@ -132,7 +142,8 @@ exports.getVendorPayablesLedger = async (req, res) => {
     const paymentQuery = {
       client: clientId,
       vendor: vendorId,
-      paymentMethod: { $ne: "Credit" } // Exclude credit payments
+      paymentMethod: { $ne: "Credit" }, // Exclude credit payments
+      ...companyFilter
     };
 
     if (Object.keys(dateFilter).length > 0) {
@@ -197,7 +208,7 @@ exports.getVendorPayablesLedger = async (req, res) => {
 exports.getExpensePayablesLedger = async (req, res) => {
   try {
     const clientId = req.auth.clientId;
-    const { expenseId, fromDate, toDate } = req.query;
+    const { expenseId, fromDate, toDate, companyId } = req.query;
 
     if (!expenseId) {
       return res.status(400).json({ message: "Expense ID is required" });
@@ -218,11 +229,15 @@ exports.getExpensePayablesLedger = async (req, res) => {
       dateFilter.$lte = toDateObj;
     }
 
+    // Build company filter
+    const companyFilter = companyId ? { company: companyId } : {};
+
     // Get all payment entries for the expense (these are the "payments" - credit side)
     const expenseQuery = {
       client: clientId,
       expense: expenseId,
-      isExpense: true
+      isExpense: true,
+      ...companyFilter
     };
 
     if (Object.keys(dateFilter).length > 0) {
