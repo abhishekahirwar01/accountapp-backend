@@ -308,3 +308,243 @@ exports.deleteVendor = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
+// Download import template
+exports.downloadImportTemplate = async (req, res) => {
+  try {
+    await ensureAuthCaps(req);
+
+    // permission gate (non-privileged must have explicit capability)
+    if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateVendors) {
+      return res.status(403).json({ message: "Not allowed to import vendors" });
+    }
+
+    // Create Excel template with headers
+    const ExcelJS = require('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Vendor Import Template');
+
+    // Define columns
+    worksheet.columns = [
+      { header: 'Vendor Name*', key: 'vendorname*', width: 20 },
+      { header: 'Contact Number', key: 'contactnumber', width: 15 },
+      { header: 'Email', key: 'email', width: 25 },
+      { header: 'Address', key: 'address', width: 30 },
+      { header: 'City', key: 'city', width: 15 },
+      { header: 'State', key: 'state', width: 15 },
+      { header: 'GSTIN', key: 'gstin', width: 15 },
+      { header: 'GST Registration Type', key: 'gstregistrationtype', width: 20 },
+      { header: 'PAN', key: 'pan', width: 15 },
+      { header: 'TDS Applicable (Yes/No)', key: 'istdsapplicable', width: 20 },
+      { header: 'TDS Section', key: 'tdssection', width: 15 }
+    ];
+
+    // Add sample data row
+    worksheet.addRow({
+      'vendorname*': 'ABC Suppliers',
+      contactnumber: '9876543210',
+      email: 'contact@abc.com',
+      address: '123 Main Street',
+      city: 'Mumbai',
+      state: 'Maharashtra',
+      gstin: '22AAAAA0000A1Z5',
+      gstregistrationtype: 'Regular',
+      pan: 'AAAAA0000A',
+      'istdsapplicable': 'Yes',
+      tdssection: '194C'
+    });
+
+    // Style the header row
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE6E6FA' }
+    };
+
+    // Set response headers
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="vendor_import_template.xlsx"');
+
+    // Write to response
+    await workbook.xlsx.write(res);
+    res.end();
+
+  } catch (err) {
+    console.error('Error generating template:', err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+// Import vendors from Excel/CSV
+exports.importVendors = async (req, res) => {
+  try {
+    await ensureAuthCaps(req);
+
+    // permission gate (non-privileged must have explicit capability)
+    if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateVendors) {
+      return res.status(403).json({ message: "Not allowed to import vendors" });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    const ExcelJS = require('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    let worksheet;
+
+    // Determine file type and read accordingly
+    if (req.file.originalname.endsWith('.csv')) {
+      // Handle CSV
+      const csv = require('csv-parser');
+      const results = [];
+
+      const buffer = req.file.buffer;
+      const stream = require('stream');
+      const bufferStream = new stream.PassThrough();
+      bufferStream.end(buffer);
+
+      await new Promise((resolve, reject) => {
+        bufferStream
+          .pipe(csv())
+          .on('data', (data) => results.push(data))
+          .on('end', resolve)
+          .on('error', reject);
+      });
+
+      // Convert CSV data to worksheet format
+      worksheet = workbook.addWorksheet('Data');
+      if (results.length > 0) {
+        worksheet.columns = Object.keys(results[0]).map(key => ({ header: key, key }));
+        results.forEach(row => worksheet.addRow(row));
+      }
+    } else {
+      // Handle Excel
+      await workbook.xlsx.load(req.file.buffer);
+      worksheet = workbook.getWorksheet(1);
+      if (!worksheet) {
+        return res.status(400).json({ message: "No worksheet found in Excel file" });
+      }
+    }
+
+    // Check if file is empty or has no data rows
+    if (worksheet.rowCount <= 1) {
+      return res.status(400).json({ message: "File appears to be empty or contains no data rows" });
+    }
+
+    const rows = [];
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) { // Skip header row
+        const rowData = {};
+        row.eachCell((cell, colNumber) => {
+          const header = worksheet.getRow(1).getCell(colNumber).value;
+          if (header) {
+            // Clean header name to match our mapping
+            const cleanHeader = header.toString().toLowerCase().replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, '').replace(/[^\w]/g, '');
+
+            // Handle hyperlink cells - extract the text value
+            let cellValue = cell.value;
+            if (cell.hyperlink) {
+              // If it's a hyperlink, use the hyperlink address or display text
+              cellValue = cell.hyperlink;
+            } else if (cell.value && typeof cell.value === 'object' && cell.value.text) {
+              // Some hyperlink cells store value as object with text property
+              cellValue = cell.value.text;
+            }
+
+            rowData[cleanHeader] = cellValue;
+          }
+        });
+        rows.push(rowData);
+      }
+    });
+
+    // Limit the number of rows to prevent abuse
+    if (rows.length > 1000) {
+      return res.status(400).json({ message: "File contains too many rows. Maximum allowed is 1000 rows." });
+    }
+
+    let importedCount = 0;
+    const errors = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      try {
+        // Map columns (handle variations in column names)
+        const vendorData = {
+          vendorName: row.vendorname || row['vendorname*'],
+          contactNumber: row.contactnumber,
+          email: row.email,
+          address: row.address,
+          city: row.city,
+          state: row.state,
+          gstin: row.gstin,
+          gstRegistrationType: row.gstregistrationtype,
+          pan: row.pan,
+          isTDSApplicable: (row.istdsapplicable || '').toString().toLowerCase() === 'yes',
+          tdsSection: row.tdssection,
+          createdByClient: req.auth.clientId,
+          createdByUser: req.auth.userId,
+        };
+
+        // Validate required fields
+        if (!vendorData.vendorName || vendorData.vendorName.toString().trim().length < 2) {
+          errors.push(`Row ${i + 2}: Vendor name is required and must be at least 2 characters`);
+          continue;
+        }
+
+        // Optional validations
+        if (vendorData.contactNumber && !/^[6-9]\d{9}$/.test(vendorData.contactNumber.toString())) {
+          errors.push(`Row ${i + 2}: Invalid mobile number format`);
+          continue;
+        }
+
+        if (vendorData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(vendorData.email.toString())) {
+          errors.push(`Row ${i + 2}: Invalid email format`);
+          continue;
+        }
+
+        // Check for duplicate vendor name within the file
+        const duplicateInFile = rows.slice(0, i).some(prevRow => {
+          const prevVendorName = prevRow.vendorname || prevRow['vendorname*'];
+          return prevVendorName?.toString().toLowerCase().trim() === vendorData.vendorName.toString().toLowerCase().trim();
+        });
+        if (duplicateInFile) {
+          errors.push(`Row ${i + 2}: Duplicate vendor name within the file`);
+          continue;
+        }
+
+        // Create vendor
+        const createdVendor = await Vendor.create(vendorData);
+        importedCount++;
+
+        // Notify admin
+        await notifyAdminOnVendorAction({
+          req,
+          action: "create",
+          vendorName: vendorData.vendorName,
+          entryId: createdVendor._id,
+        });
+
+      } catch (err) {
+        if (err.code === 11000) {
+          const field = Object.keys(err.keyValue)[0];
+          errors.push(`Row ${i + 2}: Duplicate ${field} - ${err.keyValue[field]}`);
+        } else {
+          errors.push(`Row ${i + 2}: ${err.message}`);
+        }
+      }
+    }
+
+    res.json({
+      message: "Import completed",
+      importedCount,
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (err) {
+    console.error('Import error:', err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};

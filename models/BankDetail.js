@@ -47,11 +47,17 @@ const BankDetailSchema = new Schema(
       },
     },
     city: { type: String, required: true, trim: true },
+    accountNo: { type: String, required: true, trim: true },
     ifscCode: {
       type: String,
 
     },
     branchAddress: { type: String, trim: true },
+    upiDetails: {
+      upiId: { type: String, trim: true },
+      upiName: { type: String, trim: true },
+      upiMobile: { type: String, trim: true },
+    },
 
     // Auditing
     createdByUser: { type: Schema.Types.ObjectId, ref: "User" },

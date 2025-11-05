@@ -194,4 +194,235 @@ exports.getServiceById = async (req, res) => {
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
-}
+};
+
+// Download import template
+exports.downloadImportTemplate = async (req, res) => {
+  try {
+    // Create Excel template with headers
+    const ExcelJS = require('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Services Import Template');
+
+    // Define columns
+    worksheet.columns = [
+      { header: 'Service Name*', key: 'serviceName', width: 25 },
+      { header: 'Amount', key: 'amount', width: 15 },
+      { header: 'Description', key: 'description', width: 30 },
+      { header: 'SAC Code', key: 'sac', width: 15 }
+    ];
+
+    // Add sample data row
+    worksheet.addRow({
+      serviceName: 'Software Development',
+      amount: 50000,
+      description: 'Custom software development services',
+      sac: '998314'
+    });
+
+    // Style the header row
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE6E6FA' }
+    };
+
+    // Style the sample data row
+    worksheet.getRow(2).font = { italic: true };
+    worksheet.getRow(2).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF0F8FF' }
+    };
+
+    // Generate buffer and send response
+    const buffer = await workbook.xlsx.writeBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="services_import_template.xlsx"');
+    res.send(buffer);
+
+  } catch (err) {
+    console.error('Error generating template:', err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
+// Import services from Excel/CSV
+exports.importServices = async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    const ExcelJS = require('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    let worksheet;
+
+    // Determine file type and read accordingly
+    if (req.file.originalname.endsWith('.csv')) {
+      // Handle CSV
+      const csv = require('csv-parser');
+      const results = [];
+
+      const buffer = req.file.buffer;
+      const stream = require('stream');
+      const bufferStream = new stream.PassThrough();
+      bufferStream.end(buffer);
+
+      await new Promise((resolve, reject) => {
+        bufferStream
+          .pipe(csv())
+          .on('data', (data) => results.push(data))
+          .on('end', resolve)
+          .on('error', reject);
+      });
+
+      // Convert CSV data to worksheet format
+      worksheet = workbook.addWorksheet('Data');
+      if (results.length > 0) {
+        worksheet.columns = Object.keys(results[0]).map(key => ({ header: key, key }));
+        results.forEach(row => worksheet.addRow(row));
+      }
+    } else {
+      // Handle Excel
+      await workbook.xlsx.load(req.file.buffer);
+      worksheet = workbook.getWorksheet(1);
+      if (!worksheet) {
+        return res.status(400).json({ message: "No worksheet found in Excel file" });
+      }
+    }
+
+    // Check if file is empty or has no data rows
+    if (worksheet.rowCount <= 1) {
+      return res.status(400).json({ message: "File appears to be empty or contains no data rows" });
+    }
+
+    const rows = [];
+    worksheet.eachRow((row, rowNumber) => {
+      if (rowNumber > 1) { // Skip header row
+        const rowData = {};
+        row.eachCell((cell, colNumber) => {
+          const header = worksheet.getRow(1).getCell(colNumber).value;
+          if (header) {
+            // Clean header name to match our mapping
+            const cleanHeader = header.toString().toLowerCase().replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, '').replace(/[^\w]/g, '');
+
+            // Handle hyperlink cells - extract the text value
+            let cellValue = cell.value;
+            if (cell.hyperlink) {
+              cellValue = cell.hyperlink;
+            } else if (cell.value && typeof cell.value === 'object' && cell.value.text) {
+              cellValue = cell.value.text;
+            }
+
+            rowData[cleanHeader] = cellValue;
+          }
+        });
+        rows.push(rowData);
+      }
+    });
+
+    // Limit the number of rows to prevent abuse
+    if (rows.length > 1000) {
+      return res.status(400).json({ message: "File contains too many rows. Maximum allowed is 1000 rows." });
+    }
+
+    let importedCount = 0;
+    const errors = [];
+
+    console.log(`Starting import of ${rows.length} rows...`);
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      console.log(`Processing row ${i + 2}:`, row);
+      try {
+        // Map columns
+        const serviceData = {
+          serviceName: row.servicename || row['servicename*'],
+          amount: row.amount,
+          description: row.description,
+          sac: row.sac || row.saccode,
+          createdByClient: req.auth.clientId,
+          createdByUser: req.auth.userId,
+        };
+
+        // Validate required fields
+        if (!serviceData.serviceName || serviceData.serviceName.toString().trim().length < 2) {
+          errors.push(`Row ${i + 2}: Service name is required and must be at least 2 characters`);
+          continue;
+        }
+
+        // Clean and validate data
+        serviceData.serviceName = serviceData.serviceName.toString().trim().toLowerCase();
+        if (serviceData.amount !== undefined && serviceData.amount !== null && serviceData.amount !== '') {
+          const amount = parseFloat(serviceData.amount);
+          if (isNaN(amount) || amount < 0) {
+            errors.push(`Row ${i + 2}: Amount must be a valid positive number`);
+            continue;
+          }
+          serviceData.amount = amount;
+        } else {
+          serviceData.amount = 0;
+        }
+        if (serviceData.description) serviceData.description = serviceData.description.toString().trim();
+        if (serviceData.sac) serviceData.sac = serviceData.sac.toString().trim();
+
+        // Check for duplicate service name within the same client
+        const existingService = await Service.findOne({
+          serviceName: serviceData.serviceName,
+          createdByClient: req.auth.clientId
+        });
+
+        if (existingService) {
+          errors.push(`Row ${i + 2}: Service "${serviceData.serviceName}" already exists`);
+          continue;
+        }
+
+        // Create service
+        console.log(`Creating service for row ${i + 2}:`, serviceData);
+        const createdService = await Service.create(serviceData);
+        importedCount++;
+        console.log(`Successfully imported row ${i + 2}: ${createdService._id}`);
+
+        // Notify admin (with error handling)
+        try {
+          await notifyAdminOnServiceAction({
+            req,
+            action: "create",
+            serviceName: serviceData.serviceName,
+            entryId: createdService._id,
+          });
+        } catch (notifyError) {
+          console.error(`Notification failed for row ${i + 2}, but import succeeded:`, notifyError.message);
+          // Don't fail the import due to notification error
+        }
+
+      } catch (err) {
+        console.error(`Error importing row ${i + 2}:`, err);
+        if (err.code === 11000) {
+          const field = Object.keys(err.keyValue)[0];
+          errors.push(`Row ${i + 2}: Duplicate ${field} - ${err.keyValue[field]}`);
+        } else {
+          errors.push(`Row ${i + 2}: ${err.message}`);
+        }
+      }
+    }
+
+    console.log(`Import completed. Imported: ${importedCount}, Errors: ${errors.length}`);
+    if (errors.length > 0) {
+      console.log('Import errors:', errors);
+    }
+
+    res.json({
+      message: "Import completed",
+      importedCount,
+      totalRows: rows.length,
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (err) {
+    console.error('Import error:', err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
