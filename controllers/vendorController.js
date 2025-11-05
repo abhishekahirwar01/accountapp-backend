@@ -198,6 +198,7 @@ exports.getVendors = async (req, res) => {
 exports.getVendorBalance = async (req, res) => {
   try {
     const { vendorId } = req.params;
+    const { companyId } = req.query;
 
     const vendor = await Vendor.findById(vendorId);
 
@@ -211,7 +212,43 @@ exports.getVendorBalance = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    res.json({ balance: vendor.balance });
+    // Calculate company-specific balance if companyId is provided
+    if (companyId) {
+      // Always calculate from transactions to ensure accuracy
+      // Import required models
+      const PurchaseEntry = require("../models/PurchaseEntry");
+      const PaymentEntry = require("../models/PaymentEntry");
+
+      // Get all purchase entries for this vendor and company
+      const purchaseEntries = await PurchaseEntry.find({
+        client: req.auth.clientId,
+        vendor: vendorId,
+        company: companyId
+      });
+
+      // Get all payment entries for this vendor and company
+      const paymentEntries = await PaymentEntry.find({
+        client: req.auth.clientId,
+        vendor: vendorId,
+        company: companyId,
+        paymentMethod: { $ne: "Credit" } // Exclude credit payments
+      });
+
+      // Calculate balance: purchases - payments
+      const totalPurchases = purchaseEntries.reduce((sum, entry) => sum + (entry.totalAmount || 0), 0);
+      const totalPayments = paymentEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+      const companyBalance = totalPurchases - totalPayments;
+
+      // Store the calculated balance for future use
+      if (!vendor.balances) vendor.balances = new Map();
+      vendor.balances.set(companyId, companyBalance);
+      await vendor.save();
+
+      res.json({ balance: companyBalance });
+    } else {
+      // Return stored balance for all companies (legacy support)
+      res.json({ balance: vendor.balance || 0 });
+    }
   } catch (err) {
     console.error("Error fetching vendor balance:", err);
     res.status(500).json({ message: "Server error", error: err.message });

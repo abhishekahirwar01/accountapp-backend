@@ -838,6 +838,30 @@ exports.deleteSalesEntry = async (req, res) => {
 //   }
 // };
 
+exports.getSalesEntryById = async (req, res) => {
+  try {
+    await ensureAuthCaps(req);
+
+    const entry = await SalesEntry.findById(req.params.id)
+      .populate({ path: "party", select: "name" })
+      .populate({ path: "products.product", select: "name unitType" })
+      .populate({ path: "services.service", select: "serviceName" })
+      .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
+      .populate({ path: "company", select: "businessName" });
+
+    if (!entry) return res.status(404).json({ message: "Sales entry not found" });
+
+    if (!userIsPriv(req) && !sameTenant(entry.client, req.auth.clientId)) {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    res.json({ entry });
+  } catch (err) {
+    console.error("getSalesEntryById error:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
 exports.sendCreditReminder = async (req, res) => {
   try {
     const { 

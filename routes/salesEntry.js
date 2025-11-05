@@ -14,5 +14,6 @@ router.put("/:id", verifyClientOrAdmin, salesController.updateSalesEntry);
 router.get("/by-client/:clientId", verifyMasterAdmin, salesController.getSalesEntriesByClient);
 router.put("/", verifyClientOrAdmin, salesController.updateSalesEntry);
 router.post("/send-credit-reminder", verifyClientOrAdmin, salesController.sendCreditReminder);
+router.get("/:id", verifyClientOrAdmin, salesController.getSalesEntryById);
 
 module.exports = router;

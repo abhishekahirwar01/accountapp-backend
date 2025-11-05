@@ -176,7 +176,10 @@ exports.createPayment = async (req, res) => {
     // Handle vendor balance for payments (reduce what we owe - make balance less negative)
     // Only update vendor balance if this is not an expense payment
     if (vendorDoc) {
-      vendorDoc.balance += Number(amount);
+      // Update company-specific balance
+      if (!vendorDoc.balances) vendorDoc.balances = new Map();
+      const currentBalance = vendorDoc.balances.get(companyId.toString()) || 0;
+      vendorDoc.balances.set(companyId.toString(), currentBalance + Number(amount));
       await vendorDoc.save();
     }
 
@@ -530,7 +533,11 @@ exports.updatePayment = async (req, res) => {
       if (amountDifference !== 0) {
         const currentVendorDoc = await Vendor.findById(payment.vendor);
         if (currentVendorDoc) {
-          currentVendorDoc.balance += Number(amountDifference); // Add the difference (if amount increased, balance increases more)
+          // Update company-specific balance
+          if (!currentVendorDoc.balances) currentVendorDoc.balances = new Map();
+          const companyIdStr = payment.company.toString();
+          const currentBalance = currentVendorDoc.balances.get(companyIdStr) || 0;
+          currentVendorDoc.balances.set(companyIdStr, currentBalance + Number(amountDifference));
           await currentVendorDoc.save();
         }
       }
@@ -560,6 +567,29 @@ exports.updatePayment = async (req, res) => {
   }
 };
 
+/** GET BY ID */
+exports.getPaymentById = async (req, res) => {
+  try {
+    await ensureAuthCaps(req);
+
+    const payment = await PaymentEntry.findById(req.params.id)
+      .populate({ path: "vendor", select: "vendorName" })
+      .populate({ path: "expense", select: "name" })
+      .populate({ path: "company", select: "businessName" });
+
+    if (!payment) return res.status(404).json({ message: "Payment not found" });
+
+    if (!userIsPriv(req) && !sameTenant(payment.client, req.auth.clientId)) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    res.json({ payment });
+  } catch (err) {
+    console.error("getPaymentById error:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
 /** DELETE */
 exports.deletePayment = async (req, res) => {
   try {
@@ -581,7 +611,11 @@ exports.deletePayment = async (req, res) => {
 
     // Handle vendor balance reversal for payment deletion (only for vendor payments)
     if (!payment.isExpense && entityDoc) {
-      entityDoc.balance -= Number(payment.amount); // Subtract the payment amount from vendor balance
+      // Update company-specific balance
+      if (!entityDoc.balances) entityDoc.balances = new Map();
+      const companyIdStr = payment.company.toString();
+      const currentBalance = entityDoc.balances.get(companyIdStr) || 0;
+      entityDoc.balances.set(companyIdStr, currentBalance - Number(payment.amount));
       await entityDoc.save();
     }
 
