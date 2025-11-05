@@ -6,7 +6,12 @@ const slugifyUsername = require("../utils/slugify");
 const Permission = require("../models/Permission");
 const AccountValidity = require("../models/AccountValidity");
 const { randomInt } = require("crypto");
-const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");
+const {
+  myCache,
+  key,
+  invalidateClientsForMaster,
+  invalidateClient,
+} = require("../cache");
 const axios = require("axios");
 
 // Create Client (Only Master Admin)
@@ -146,12 +151,10 @@ exports.createClient = async (req, res) => {
       await session.commitTransaction();
       // CACHE: invalidate the list for this master
       invalidateClientsForMaster(req.user.id);
-      return res
-        .status(201)
-        .json({
-          message: "Client created successfully",
-          client: createdClient,
-        });
+      return res.status(201).json({
+        message: "Client created successfully",
+        client: createdClient,
+      });
     } catch (err) {
       await session.abortTransaction();
       return res.status(500).json({ error: err.message });
@@ -172,26 +175,27 @@ exports.getClients = async (req, res) => {
     const cached = myCache.get(cacheKey);
     if (cached) {
       // ✅ add these 2 lines
-      res.set('X-Cache', 'HIT');
-      res.set('X-Cache-Key', cacheKey);
+      res.set("X-Cache", "HIT");
+      res.set("X-Cache-Key", cacheKey);
 
       return res.status(200).json(cached);
     }
 
-    const clients = await Client.find({ masterAdmin: req.user.id }).select("-password");
+    const clients = await Client.find({ masterAdmin: req.user.id }).select(
+      "-password"
+    );
 
     myCache.set(cacheKey, clients);
 
     // ✅ add these 2 lines
-    res.set('X-Cache', 'MISS');
-    res.set('X-Cache-Key', cacheKey);
+    res.set("X-Cache", "MISS");
+    res.set("X-Cache-Key", cacheKey);
 
     return res.status(200).json(clients);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
 };
-
 
 // Client Login
 exports.loginClient = async (req, res) => {
@@ -203,59 +207,99 @@ exports.loginClient = async (req, res) => {
 
     const { clientUsername, password } = req.body;
 
-    // 🧩 Validate input
+    // Validate required fields
     if (!clientUsername || !password) {
-      return res.status(400).json({ message: "Username and password are required" });
+      return res.status(400).json({
+        message: "Client username and password are required",
+        details: {
+          missingFields: [
+            ...(!clientUsername ? ["clientUsername"] : []),
+            ...(!password ? ["password"] : []),
+          ],
+        },
+      });
     }
 
-    // 🔎 Normalize username
+    // Validate input types
+    if (typeof clientUsername !== "string" || typeof password !== "string") {
+      return res.status(400).json({
+        message: "Invalid input format",
+        details: "Client username and password must be strings",
+      });
+    }
+
     const normalizedUsername = String(clientUsername).trim().toLowerCase();
 
-    // 🔍 Find client
+    // Validate username is not empty after normalization
+    if (!normalizedUsername) {
+      return res.status(400).json({
+        message: "Invalid client username",
+        details: "Client username cannot be empty or contain only whitespace",
+      });
+    }
+
+    // Find client
     const client = await Client.findOne({ clientUsername: normalizedUsername });
     if (!client) {
-      return res.status(404).json({ message: "Client not found" });
+      return res.status(404).json({
+        message: "Authentication failed",
+        details: "Invalid client username or password",
+      });
     }
 
     // 🔒 Account validity gate
     const validity = await AccountValidity.findOne({ client: client._id });
     if (!validity) {
-      return res
-        .status(403)
-        .json({ message: "Account validity not set. Contact support." });
+      return res.status(403).json({
+        message: "Account access restricted",
+        details: "Account validity not configured. Please contact support.",
+      });
     }
 
     if (validity.status === "disabled") {
-      return res
-        .status(403)
-        .json({ message: "Account disabled. Contact support." });
+      return res.status(403).json({
+        message: "Account suspended",
+        details:
+          "This account has been disabled. Please contact support for assistance.",
+      });
     }
 
-    if (new Date() >= new Date(validity.expiresAt)) {
-      // (optional) mark as expired asynchronously
+    const currentDate = new Date();
+    if (currentDate >= new Date(validity.expiresAt)) {
+      // Update status to expired asynchronously
       AccountValidity.updateOne(
         { _id: validity._id },
         { $set: { status: "expired" } }
-      ).catch(() => {});
-      return res
-        .status(403)
-        .json({ message: "Account validity expired. Contact support." });
+      ).catch(console.error); // Log the error instead of silently failing
+
+      return res.status(403).json({
+        message: "Account expired",
+        details:
+          "Your account validity period has ended. Please contact support to renew.",
+      });
     }
 
-    // 🔐 Compare password
+    // Verify password
     const isMatch = await bcrypt.compare(password, client.password);
     if (!isMatch) {
-      return res.status(401).json({ message: "Invalid password" });
+      return res.status(401).json({
+        message: "Authentication failed",
+        details: "Invalid client username or password",
+      });
     }
 
-    // 🎟️ Generate JWT token
+    // Generate JWT token
     const token = jwt.sign(
-      { id: client._id, role: "client", slug: client.slug },
+      {
+        id: client._id,
+        role: "client",
+        slug: client.slug,
+      },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
-    // ✅ Successful login response
+    // Successful login response
     res.status(200).json({
       message: "Login successful",
       token,
@@ -270,11 +314,33 @@ exports.loginClient = async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("❌ Error in loginClient:", err);
-    res.status(500).json({ error: err.message });
+    console.error("❌ Login error:", err);
+
+    // Handle specific error types
+    if (err.name === "MongoError" || err.name === "MongoNetworkError") {
+      return res.status(503).json({
+        message: "Service temporarily unavailable",
+        details: "Database connection error. Please try again later.",
+      });
+    }
+
+    if (err.name === "JsonWebTokenError") {
+      return res.status(500).json({
+        message: "Authentication service error",
+        details: "Token generation failed",
+      });
+    }
+
+    // Generic server error
+    res.status(500).json({
+      message: "Internal server error",
+      details:
+        process.env.NODE_ENV === "development"
+          ? err.message
+          : "Please try again later",
+    });
   }
 };
-
 
 // Update Client (Only Master Admin)
 exports.updateClient = async (req, res) => {
@@ -341,7 +407,6 @@ exports.deleteClient = async (req, res) => {
     // CACHE: invalidate both this single client + the list
     invalidateClient(req.user.id, id);
 
-
     res.status(200).json({ message: "Client deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -391,7 +456,7 @@ exports.getClientById = async (req, res) => {
 
     // 2) Fallback to DB
     let query;
-    if (req.user.role === 'client') {
+    if (req.user.role === "client") {
       // Clients can only fetch their own data
       query = { _id: id, _id: req.user.id };
     } else {
@@ -559,7 +624,7 @@ exports.requestClientOtp = async (req, res) => {
       AccountValidity.updateOne(
         { _id: validity._id },
         { $set: { status: "expired" } }
-      ).catch(() => { });
+      ).catch(() => {});
       return res
         .status(403)
         .json({ message: "Account validity expired. Contact support." });
@@ -573,13 +638,11 @@ exports.requestClientOtp = async (req, res) => {
       const wait = Math.ceil(
         (OTP_RESEND_SECONDS * 1000 -
           (Date.now() - client.otpLastSentAt.getTime())) /
-        1000
+          1000
       );
-      return res
-        .status(429)
-        .json({
-          message: `Please wait ${wait}s before requesting another OTP.`,
-        });
+      return res.status(429).json({
+        message: `Please wait ${wait}s before requesting another OTP.`,
+      });
     }
 
     const otp = generateOtp();
@@ -617,95 +680,152 @@ exports.requestClientOtp = async (req, res) => {
 // --- Login with OTP: POST /api/clients/login-otp ---
 exports.loginClientWithOtp = async (req, res) => {
   try {
-    const { clientUsername, otp, captchaToken } = req.body;
+    console.log("🔍 loginClientWithOtp called");
+    console.log("Headers:", req.headers);
+    console.log("Body:", req.body);
 
-    // Verify reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
-    }
+    const { clientUsername, otp } = req.body;
 
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
-
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
-    }
-
+    // Validate required fields
     if (!clientUsername || !otp) {
-      return res
-        .status(400)
-        .json({ message: "clientUsername and otp are required" });
+      return res.status(400).json({
+        message: "Client username and OTP are required",
+        details: {
+          missingFields: [
+            ...(!clientUsername ? ["clientUsername"] : []),
+            ...(!otp ? ["otp"] : []),
+          ],
+        },
+      });
+    }
+
+    // Validate input types
+    if (typeof clientUsername !== "string" || typeof otp !== "string") {
+      return res.status(400).json({
+        message: "Invalid input format",
+        details: "Client username and OTP must be strings",
+      });
     }
 
     const normalizedUsername = String(clientUsername).trim().toLowerCase();
+
+    // Validate username is not empty after normalization
+    if (!normalizedUsername) {
+      return res.status(400).json({
+        message: "Invalid client username",
+        details: "Client username cannot be empty or contain only whitespace",
+      });
+    }
+
+    // Validate OTP is not empty
+    if (!otp.trim()) {
+      return res.status(400).json({
+        message: "Invalid OTP",
+        details: "OTP cannot be empty",
+      });
+    }
+
+    // Find client
     const client = await Client.findOne({
       clientUsername: normalizedUsername,
     });
-    if (!client) return res.status(404).json({ message: "Client not found" });
 
-    // 🔒 validity gate (same as login)
+    if (!client) {
+      return res.status(404).json({
+        message: "Authentication failed",
+        details: "Invalid client username or OTP",
+      });
+    }
+
+    // 🔒 Account validity gate (same as login)
     const validity = await AccountValidity.findOne({ client: client._id });
-    if (!validity)
-      return res
-        .status(403)
-        .json({ message: "Account validity not set. Contact support." });
-    if (validity.status === "disabled")
-      return res
-        .status(403)
-        .json({ message: "Account disabled. Contact support." });
+    if (!validity) {
+      return res.status(403).json({
+        message: "Account access restricted",
+        details: "Account validity not configured. Please contact support.",
+      });
+    }
+
+    if (validity.status === "disabled") {
+      return res.status(403).json({
+        message: "Account suspended",
+        details:
+          "This account has been disabled. Please contact support for assistance.",
+      });
+    }
+
     if (new Date() >= new Date(validity.expiresAt)) {
+      // Update status to expired asynchronously
       AccountValidity.updateOne(
         { _id: validity._id },
         { $set: { status: "expired" } }
-      ).catch(() => { });
-      return res
-        .status(403)
-        .json({ message: "Account validity expired. Contact support." });
+      ).catch(console.error);
+
+      return res.status(403).json({
+        message: "Account expired",
+        details:
+          "Your account validity period has ended. Please contact support to renew.",
+      });
     }
 
-    // verify OTP
+    // Verify OTP setup
     if (!client.otpHash || !client.otpExpiresAt) {
-      return res
-        .status(400)
-        .json({ message: "No OTP in progress. Please request a new OTP." });
+      return res.status(400).json({
+        message: "OTP session expired",
+        details: "No OTP in progress. Please request a new OTP.",
+      });
     }
+
+    // Check OTP attempts
     if (client.otpAttempts >= OTP_MAX_ATTEMPTS) {
-      return res
-        .status(429)
-        .json({ message: "Too many attempts. Request a new OTP." });
+      return res.status(429).json({
+        message: "Too many attempts",
+        details: "Maximum OTP attempts exceeded. Please request a new OTP.",
+      });
     }
+
+    // Check OTP expiration
     if (client.otpExpiresAt.getTime() < Date.now()) {
+      // Clear expired OTP data
       client.otpHash = null;
       client.otpExpiresAt = null;
       client.otpAttempts = 0;
       await client.save();
-      return res
-        .status(400)
-        .json({ message: "OTP expired. Request a new OTP." });
+
+      return res.status(400).json({
+        message: "OTP expired",
+        details: "OTP has expired. Please request a new OTP.",
+      });
     }
 
-    const ok = await bcrypt.compare(String(otp), client.otpHash);
+    // Verify OTP
+    const isOtpValid = await bcrypt.compare(String(otp), client.otpHash);
     client.otpAttempts += 1;
 
-    if (!ok) {
+    if (!isOtpValid) {
       await client.save();
-      return res.status(401).json({ message: "Invalid OTP" });
+      return res.status(401).json({
+        message: "Authentication failed",
+        details:
+          "Invalid OTP. Attempts remaining: " +
+          (OTP_MAX_ATTEMPTS - client.otpAttempts),
+      });
     }
 
-    // success → clear otp fields
+    // Success - clear OTP fields
     client.otpHash = null;
     client.otpExpiresAt = null;
     client.otpAttempts = 0;
     await client.save();
 
-    // **IMPORTANT**: return the SAME shape as password login
+    // Generate JWT token (same as password login)
     const token = jwt.sign(
       { id: client._id, role: "client", slug: client.slug },
       process.env.JWT_SECRET,
       { expiresIn: "1d" }
     );
 
+    // Successful login response (same shape as password login)
     return res.status(200).json({
       message: "Login successful",
       token,
@@ -716,11 +836,34 @@ exports.loginClientWithOtp = async (req, res) => {
         contactName: client.contactName,
         email: client.email,
         phone: client.phone,
-        role: client.role, // stays "client" like your existing login
+        role: client.role,
       },
     });
   } catch (err) {
-    console.error("loginClientWithOtp error:", err);
-    return res.status(500).json({ message: "Internal server error" });
+    console.error("❌ loginClientWithOtp error:", err);
+
+    // Handle specific error types
+    if (err.name === "MongoError" || err.name === "MongoNetworkError") {
+      return res.status(503).json({
+        message: "Service temporarily unavailable",
+        details: "Database connection error. Please try again later.",
+      });
+    }
+
+    if (err.name === "JsonWebTokenError") {
+      return res.status(500).json({
+        message: "Authentication service error",
+        details: "Token generation failed",
+      });
+    }
+
+    // Generic server error
+    return res.status(500).json({
+      message: "Internal server error",
+      details:
+        process.env.NODE_ENV === "development"
+          ? err.message
+          : "Please try again later",
+    });
   }
 };
