@@ -9,6 +9,7 @@ router.post("/", verifyClientOrAdmin, vendorController.createVendor);
 router.get("/", verifyClientOrAdmin, vendorController.getVendors);
 router.get("/:vendorId/balance", verifyClientOrAdmin, vendorController.getVendorBalance);
 router.get("/balances", verifyClientOrAdmin, vendorController.getVendorBalancesBulk); // bulk
+router.get("/:id", verifyClientOrAdmin, vendorController.getVendor);
 router.put("/:id", verifyClientOrAdmin, vendorController.updateVendor);
 router.delete("/:id", verifyClientOrAdmin, vendorController.deleteVendor);
 

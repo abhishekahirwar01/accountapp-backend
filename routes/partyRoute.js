@@ -26,12 +26,11 @@ router.post("/", verifyClientOrAdmin, partyController.createParty);
 
 router.get("/", verifyClientOrAdmin, partyController.getParties);
 
-router.get("/:id", verifyClientOrAdmin, partyController.getParty);
-
-router.get("/:partyId/balance",verifyClientOrAdmin, partyController.getPartyBalance);
-
+// Specific routes before generic :id
 router.get("/balances", verifyClientOrAdmin, partyController.getPartyBalancesBulk); // bulk
-router.get("/:id", verifyClientOrAdmin, partyController.getPartyById);
+router.get("/:partyId/balance",verifyClientOrAdmin, partyController.getPartyBalance);
+router.put('/:partyId/balance', partyController.updatePartyBalance);
+router.get("/:id", verifyClientOrAdmin, partyController.getParty);
 router.put("/:id", verifyClientOrAdmin, partyController.updateParty);
 router.delete("/:id", verifyClientOrAdmin, partyController.deleteParty);
 

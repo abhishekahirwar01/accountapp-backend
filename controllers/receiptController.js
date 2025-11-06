@@ -25,21 +25,21 @@ function userCanAccessAllClientData(req) {
   return req.auth?.role === "master";
 }
 
-async function adjustBalanceGuarded({ partyId, clientId, delta, session }) {
+async function adjustBalanceGuarded({ partyId, clientId, companyId, delta, session }) {
   if (delta < 0) {
-    // deducting → require enough balance
+    // deducting → require enough balance for the specific company
     const updated = await Party.findOneAndUpdate(
-      { _id: partyId, createdByClient: clientId, balance: { $gte: -delta } },
-      { $inc: { balance: delta } }, // delta is negative, so it deducts
-      { new: true, session, select: { _id: 1, balance: 1 } }
+      { _id: partyId, createdByClient: clientId, [`balances.${companyId}`]: { $gte: -delta } },
+      { $inc: { [`balances.${companyId}`]: delta } }, // delta is negative, so it deducts
+      { new: true, session, select: { _id: 1, [`balances.${companyId}`]: 1 } }
     );
     return updated; // null if guard failed
   } else {
     // adding back / reducing receipt → always allowed
     return Party.findOneAndUpdate(
       { _id: partyId, createdByClient: clientId },
-      { $inc: { balance: delta } },
-      { new: true, session, select: { _id: 1, balance: 1 } }
+      { $inc: { [`balances.${companyId}`]: delta } },
+      { new: true, session, select: { _id: 1, [`balances.${companyId}`]: 1 } }
     );
   }
 }
@@ -193,10 +193,10 @@ exports.createReceipt = async (req, res) => {
       session = await mongoose.startSession();
       session.startTransaction();
 
-      // 1) Deduct amount from party balance
+      // 1) Deduct amount from party balance for specific company
       updatedParty = await Party.findOneAndUpdate(
         { _id: party, createdByClient: req.auth.clientId },
-        { $inc: { balance: -amt } },
+        { $inc: { [`balances.${companyDoc._id}`]: -amt } },
         { new: true, session }
       );
 
