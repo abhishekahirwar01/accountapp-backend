@@ -229,34 +229,159 @@ exports.getParty = async (req, res) => {
 
 exports.getPartyBalance = async (req, res) => {
   try {
-    const { partyId } = req.params; // Get the partyId from the URL parameter
+    const { partyId } = req.params;
+    const { companyId } = req.query;
 
-
-    // 2) If cache miss, fetch from DB
     const party = await Party.findById(partyId);
 
     if (!party) {
       return res.status(404).json({ message: "Customer not found" });
     }
 
-    res.json({ balance: party.balance });
+    // Check authorization
+    const sameTenant = String(party.createdByClient) === req.auth.clientId;
+    if (!PRIV_ROLES.has(req.auth.role) && !sameTenant) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    // If companyId provided, calculate company-specific balance
+    if (companyId && companyId !== "undefined" && companyId !== "null") {
+      // Use balances map if it exists
+      if (party.balances && party.balances.get(companyId) !== undefined) {
+        return res.json({ balance: party.balances.get(companyId) });
+      }
+
+      // Calculate from transactions
+      const SalesEntry = require("../models/SalesEntry");
+      const ReceiptEntry = require("../models/ReceiptEntry");
+
+      // Get sales entries for this party and company
+      const salesEntries = await SalesEntry.find({
+        client: req.auth.clientId,
+        party: partyId,
+        company: companyId
+      });
+
+      // Get receipt entries for this party and company
+      const receiptEntries = await ReceiptEntry.find({
+        client: req.auth.clientId,
+        party: partyId,
+        company: companyId
+      });
+
+      let totalCredit = 0;
+      let totalDebit = 0;
+
+      // Calculate credit (sales)
+      salesEntries.forEach(sale => {
+        const amount = sale.invoiceTotal || sale.totalAmount || 0;
+        totalCredit += amount;
+        
+        // If it's NOT a credit transaction, also count as debit (immediate payment)
+        if (sale.paymentMethod && sale.paymentMethod !== "Credit") {
+          totalDebit += amount;
+        }
+      });
+
+      // Calculate debit (receipts)
+      receiptEntries.forEach(receipt => {
+        totalDebit += receipt.amount || 0;
+      });
+
+      const companyBalance = totalCredit - totalDebit;
+
+      // Store in balances map
+      if (!party.balances) party.balances = new Map();
+      party.balances.set(companyId, companyBalance);
+      await party.save();
+
+      return res.json({ balance: companyBalance });
+    } else {
+      // Return overall balance (legacy support)
+      return res.json({ balance: party.balance || 0 });
+    }
   } catch (err) {
     console.error("Error fetching party balance:", err);
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
 
+// PUT /api/parties/:partyId/balance
+exports.updatePartyBalance = async (req, res) => {
+  try {
+    const { partyId } = req.params;
+    const { companyId, balance } = req.body;
 
+    const party = await Party.findById(partyId);
+    if (!party) {
+      return res.status(404).json({ message: "Party not found" });
+    }
+
+    // Authorization check
+    const sameTenant = String(party.createdByClient) === req.auth.clientId;
+    if (!PRIV_ROLES.has(req.auth.role) && !sameTenant) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    if (companyId) {
+      if (!party.balances) party.balances = new Map();
+      party.balances.set(companyId, balance);
+    } else {
+      party.balance = balance;
+    }
+
+    await party.save();
+    res.json({ message: "Balance updated successfully", party });
+  } catch (err) {
+    console.error("Error updating party balance:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
 // GET /api/parties/balances
 exports.getPartyBalancesBulk = async (req, res) => {
   try {
+    const { companyId } = req.query;
     const where = { createdByClient: req.auth.clientId };
 
-    const rows = await Party.find(where)
-      .select({ _id: 1, balance: 1 })
+    const parties = await Party.find(where)
+      .select({ _id: 1, name: 1, balances: 1 })
       .lean();
 
     const balances = {};
+
+    if (companyId && companyId !== "undefined" && companyId !== "null") {
+      // Return company-specific balances
+      parties.forEach(party => {
+        if (party.balances && party.balances.get) {
+          balances[party._id] = party.balances.get(companyId) || 0;
+        } else if (party.balances && party.balances[companyId] !== undefined) {
+          balances[party._id] = party.balances[companyId] || 0;
+        } else {
+          balances[party._id] = 0;
+        }
+      });
+    } else {
+      // Return overall balances (sum of all company balances)
+      parties.forEach(party => {
+        if (party.balances) {
+          if (party.balances instanceof Map) {
+            balances[party._id] = Array.from(party.balances.values()).reduce((sum, b) => sum + b, 0);
+          } else if (typeof party.balances === 'object') {
+            balances[party._id] = Object.values(party.balances).reduce((sum, b) => sum + b, 0);
+          } else {
+            balances[party._id] = 0;
+          }
+        } else {
+          balances[party._id] = 0;
+        }
+      });
+    }
+
+    // Log the balances for all companies (log balances for each party)
+    console.log("Balances for all companies:");
+    Object.keys(balances).forEach((partyId) => {
+      console.log(`Party: ${partyId}, Balance: ₹${balances[partyId]}`);
+    });
 
     return res.json({ balances });
   } catch (err) {
@@ -264,6 +389,7 @@ exports.getPartyBalancesBulk = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
+
 
 // Add this to your party.controller.js
 exports.getPartyById = async (req, res) => {

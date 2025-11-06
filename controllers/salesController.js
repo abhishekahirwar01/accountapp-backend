@@ -425,6 +425,22 @@ exports.createSalesEntry = async (req, res) => {
 
           entry = docs[0];
 
+
+           // ✅ ADD THIS: UPDATE PARTY BALANCE FOR COMPANY
+      if (normalizedPaymentMethod === "Credit") {
+        await Party.findByIdAndUpdate(
+          partyDoc._id,
+          { 
+            $inc: { 
+              // Update company-specific balance
+              [`balances.${companyDoc._id}`]: entry.totalAmount
+            } 
+          },
+          { session }
+        );
+        console.log(`✅ Updated party balance for company ${companyDoc._id}: +${entry.totalAmount}`);
+      }
+
           // Ensure only one response is sent
           if (!res.headersSent) {
             // After sales entry is created, notify the admin
@@ -514,6 +530,7 @@ exports.updateSalesEntry = async (req, res) => {
     const originalPaymentMethod = entry.paymentMethod;
     const originalTotalAmount = entry.totalAmount;
     const originalPartyId = entry.party.toString();
+    const originalCompanyId = entry.company.toString(); // Store original company ID
 
     // If company is being changed, check permission + existence
     if (otherUpdates.company) {
@@ -606,61 +623,84 @@ exports.updateSalesEntry = async (req, res) => {
       entry.totalAmount = sumProducts + sumServices;
     }
 
-    // CREDIT BALANCE ADJUSTMENT LOGIC
+    // CREDIT BALANCE ADJUSTMENT LOGIC - UPDATED FOR COMPANY-SPECIFIC BALANCES
     await session.withTransaction(async () => {
       const currentPartyId = party || originalPartyId;
       const currentPaymentMethod = normalizedPaymentMethod || originalPaymentMethod;
       const currentTotalAmount = entry.totalAmount;
+      const currentCompanyId = otherUpdates.company || originalCompanyId; // Use updated company if changed
 
-      // Find the current party document
-      const currentPartyDoc = await Party.findOne({
-        _id: currentPartyId,
-        createdByClient: req.auth.clientId,
-      }).session(session);
-      
-      if (!currentPartyDoc) {
-        throw new Error("Party not found");
-      }
-
-      // Handle credit balance adjustments
+      // Handle credit balance adjustments using company-specific balances
       if (originalPaymentMethod === "Credit" && currentPaymentMethod === "Credit") {
-        // Both old and new are Credit - adjust the balance by the difference
-        if (originalPartyId === currentPartyId) {
-          // Same party - adjust balance by amount difference
+        // Both old and new are Credit - adjust the company-specific balance by the difference
+        if (originalPartyId === currentPartyId && originalCompanyId === currentCompanyId) {
+          // Same party and same company - adjust balance by amount difference
           const amountDifference = currentTotalAmount - originalTotalAmount;
-          currentPartyDoc.balance += amountDifference;
+          await Party.findByIdAndUpdate(
+            currentPartyId,
+            { 
+              $inc: { 
+                [`balances.${currentCompanyId}`]: amountDifference
+              } 
+            },
+            { session }
+          );
+          console.log(`✅ Updated party balance for same company: ${currentCompanyId}, difference: ${amountDifference}`);
         } else {
-          // Different parties - remove from old party, add to new party
-          const originalPartyDoc = await Party.findOne({
-            _id: originalPartyId,
-            createdByClient: req.auth.clientId,
-          }).session(session);
+          // Different parties or different companies - complex adjustment needed
           
-          if (originalPartyDoc) {
-            originalPartyDoc.balance -= originalTotalAmount;
-            await originalPartyDoc.save({ session });
-          }
+          // Remove from original party's company balance
+          await Party.findByIdAndUpdate(
+            originalPartyId,
+            { 
+              $inc: { 
+                [`balances.${originalCompanyId}`]: -originalTotalAmount
+              } 
+            },
+            { session }
+          );
+          console.log(`✅ Removed from original party/company: ${originalPartyId}/${originalCompanyId}, amount: -${originalTotalAmount}`);
           
-          currentPartyDoc.balance += currentTotalAmount;
+          // Add to current party's company balance
+          await Party.findByIdAndUpdate(
+            currentPartyId,
+            { 
+              $inc: { 
+                [`balances.${currentCompanyId}`]: currentTotalAmount
+              } 
+            },
+            { session }
+          );
+          console.log(`✅ Added to current party/company: ${currentPartyId}/${currentCompanyId}, amount: +${currentTotalAmount}`);
         }
       } else if (originalPaymentMethod === "Credit" && currentPaymentMethod !== "Credit") {
-        // Changed from Credit to non-Credit - remove from party balance
-        const originalPartyDoc = await Party.findOne({
-          _id: originalPartyId,
-          createdByClient: req.auth.clientId,
-        }).session(session);
-        
-        if (originalPartyDoc) {
-          originalPartyDoc.balance -= originalTotalAmount;
-          await originalPartyDoc.save({ session });
-        }
+        // Changed from Credit to non-Credit - remove from original party's company balance
+        await Party.findByIdAndUpdate(
+          originalPartyId,
+          { 
+            $inc: { 
+              [`balances.${originalCompanyId}`]: -originalTotalAmount
+            } 
+          },
+          { session }
+        );
+        console.log(`✅ Removed credit balance (changed to non-credit): ${originalPartyId}/${originalCompanyId}, amount: -${originalTotalAmount}`);
       } else if (originalPaymentMethod !== "Credit" && currentPaymentMethod === "Credit") {
-        // Changed from non-Credit to Credit - add to party balance
-        currentPartyDoc.balance += currentTotalAmount;
+        // Changed from non-Credit to Credit - add to current party's company balance
+        await Party.findByIdAndUpdate(
+          currentPartyId,
+          { 
+            $inc: { 
+              [`balances.${currentCompanyId}`]: currentTotalAmount
+            } 
+          },
+          { session }
+        );
+        console.log(`✅ Added credit balance (changed to credit): ${currentPartyId}/${currentCompanyId}, amount: +${currentTotalAmount}`);
+      } else {
+        // Both are non-Credit, no balance adjustment needed
+        console.log(`ℹ️ No balance adjustment needed - both payment methods are non-credit`);
       }
-      // If both are non-Credit, no balance adjustment needed
-
-      await currentPartyDoc.save({ session });
     });
 
     // Fetch party name for notification
@@ -697,7 +737,6 @@ exports.updateSalesEntry = async (req, res) => {
     session.endSession();
   }
 };
-
 
 
 exports.deleteSalesEntry = async (req, res) => {

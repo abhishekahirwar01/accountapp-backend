@@ -195,6 +195,28 @@ exports.getVendors = async (req, res) => {
   }
 };
 
+exports.getVendor = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const vendor = await Vendor.findById(id);
+    if (!vendor) {
+      return res.status(404).json({ message: "Vendor not found" });
+    }
+
+    // Check if vendor belongs to the same client
+    const sameTenant = String(vendor.createdByClient) === req.auth.clientId;
+    if (!PRIV_ROLES.has(req.auth.role) && !sameTenant) {
+      return res.status(403).json({ message: "Not authorized" });
+    }
+
+    res.json(vendor);
+  } catch (err) {
+    console.error("Error fetching vendor:", err);
+    res.status(500).json({ message: "Server error", error: err.message });
+  }
+};
+
 exports.getVendorBalance = async (req, res) => {
   try {
     const { vendorId } = req.params;
