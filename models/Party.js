@@ -37,11 +37,24 @@ const partySchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+partySchema.path('contactNumber').validate(async function (value) {
+  if (!value) return true; // skip empty values
+  const count = await mongoose.models.Party.countDocuments({
+    contactNumber: value,
+    createdByClient: this.createdByClient,
+    _id: { $ne: this._id } // ignore self on update
+  });
+  return count === 0;
+}, 'Contact number already exists for this client');
 
-// Ensure contactNumber + client combo is unique
-partySchema.index({ contactNumber: 1, createdByClient: 1 }, { unique: true });
-
-// Ensure email + client combo is unique
-partySchema.index({ email: 1, createdByClient: 1 });
+partySchema.path('email').validate(async function (value) {
+  if (!value) return true; // skip empty values
+  const count = await mongoose.models.Party.countDocuments({
+    email: value,
+    createdByClient: this.createdByClient,
+    _id: { $ne: this._id }
+  });
+  return count === 0;
+}, 'Email already exists for this client');;
 
 module.exports = mongoose.model("Party", partySchema);
