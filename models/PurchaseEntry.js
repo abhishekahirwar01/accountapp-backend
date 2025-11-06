@@ -50,7 +50,7 @@ const purchaseSchema = new mongoose.Schema({
   invoiceYearYY: { type: Number, index: true },
   paymentMethod: {
     type: String,
-    enum: ["Cash", "Credit", "UPI", "Bank Transfer", "Cheque"]
+    enum: ["Cash", "Credit", "UPI", "Bank Transfer", "Cheque","Others"]
   },
 }, {
   timestamps: true,
