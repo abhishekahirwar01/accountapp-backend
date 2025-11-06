@@ -104,24 +104,33 @@ exports.createParty = async (req, res) => {
       email,
     } = req.body;
 
-    // Check for existing party with same contact number or email BEFORE creation
-    const existingParty = await Party.findOne({
-      createdByClient: req.auth.clientId,
-      $or: [
-        { contactNumber: contactNumber },
-        { email: email?.toLowerCase() }
-      ]
-    });
+    
+console.log("Incoming contactNumber:", contactNumber);
+console.log("Incoming email:", email);
 
-    if (existingParty) {
-      if (existingParty.contactNumber === contactNumber) {
-        return res.status(400).json({ message: "Contact number already exists for this client" });
-      }
-      if (existingParty.email === email?.toLowerCase()) {
-        return res.status(400).json({ message: "Email already exists for this client" });
-      }
-    }
+const conditions = [];
+if (contactNumber?.trim()) conditions.push({ contactNumber: contactNumber.trim() });
+if (email?.trim()) conditions.push({ email: email?.trim().toLowerCase() });
 
+console.log("Duplicate check conditions:", conditions);
+
+let existingParty = null;
+if (conditions.length > 0) {
+  existingParty = await Party.findOne({
+    createdByClient: req.auth.clientId,
+    $or: conditions
+  });
+  console.log("Existing party found:", existingParty);
+}
+
+if (existingParty) {
+  if (existingParty.contactNumber === contactNumber?.trim()) {
+    return res.status(400).json({ message: "Contact number already exists for this client" });
+  }
+  if (existingParty.email === email?.trim()?.toLowerCase()) {
+    return res.status(400).json({ message: "Email already exists for this client" });
+  }
+}
     const party = await Party.create({
       name,
       address,
