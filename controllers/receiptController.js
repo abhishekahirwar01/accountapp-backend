@@ -130,7 +130,7 @@ async function notifyAdminOnReceiptAction({ req, action, customerName, entryId, 
     adminUser._id,     // recipient (admin)
     actor.id,          // actor id (user OR client)
     action,            // "create" | "update" | "delete"
-    "payment",         // category you're using for receipts
+    "receipt",         // category for receipt entries
     entryId,           // receipt _id
     req.auth.clientId
   );
@@ -260,6 +260,16 @@ exports.createReceipt = async (req, res) => {
         try { session.endSession(); } catch (e) {}
       }
     }
+
+    // NEW: Add notification for receipt creation
+    await notifyAdminOnReceiptAction({
+      req,
+      action: "create",
+      customerName: partyDoc?.name || partyDoc?.partyName || partyDoc?.customerName,
+      entryId: receipt._id,
+      companyId: companyDoc._id.toString(),
+      newAmount: amt,
+    });
 
     // After successful receipt creation, add:
     // await deleteReceiptEntryCache(req.auth.clientId, companyId);
