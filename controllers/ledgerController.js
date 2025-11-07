@@ -70,10 +70,10 @@ exports.getPayablesLedger = async (req, res) => {
       referenceNumber: entry.referenceNumber
     }));
 
-    // Calculate totals
+    // Calculate totals (credit - debit: negative = payable, positive = advance)
     const totalDebit = debitEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
     const totalCredit = creditEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
-    const balance = totalDebit - totalCredit;
+    const balance = totalCredit - totalDebit;
 
     res.json({
       debit: debitEntries,
@@ -183,10 +183,10 @@ exports.getVendorPayablesLedger = async (req, res) => {
       referenceNumber: entry.referenceNumber
     }));
 
-    // Calculate totals
+    // Calculate totals (credit - debit: negative = payable, positive = advance)
     const totalDebit = debitEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
     const totalCredit = creditEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
-    const balance = totalDebit - totalCredit;
+    const balance = totalCredit - totalDebit;
 
     res.json({
       debit: debitEntries,
@@ -266,10 +266,10 @@ exports.getExpensePayablesLedger = async (req, res) => {
       referenceNumber: entry.referenceNumber
     }));
 
-    // Calculate totals
+    // Calculate totals (credit - debit: negative = payable, positive = advance)
     const totalDebit = debitEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
     const totalCredit = creditEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
-    const balance = totalDebit - totalCredit;
+    const balance = totalCredit - totalDebit;
 
     res.json({
       debit: debitEntries,

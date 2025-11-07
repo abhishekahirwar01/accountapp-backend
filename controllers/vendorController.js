@@ -256,10 +256,10 @@ exports.getVendorBalance = async (req, res) => {
         paymentMethod: { $ne: "Credit" } // Exclude credit payments
       });
 
-      // Calculate balance: purchases - payments
+      // Calculate balance: payments - purchases (negative = payable, positive = advance)
       const totalPurchases = purchaseEntries.reduce((sum, entry) => sum + (entry.totalAmount || 0), 0);
       const totalPayments = paymentEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
-      const companyBalance = totalPurchases - totalPayments;
+      const companyBalance = totalPayments - totalPurchases;
 
       // Store the calculated balance for future use
       if (!vendor.balances) vendor.balances = new Map();
