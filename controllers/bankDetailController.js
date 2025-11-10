@@ -122,9 +122,9 @@ exports.createBankDetail = async (req, res) => {
       user:req.auth.userId,
       company,
       bankName,
-      managerName,
-      contactNumber,
-      email,
+      // managerName,
+      // contactNumber,
+      // email,
       city,
       accountNo,
       ifscCode,
@@ -307,10 +307,10 @@ exports.updateBankDetail = async (req, res) => {
       clientName: req.body.clientName,
       businessName: req.body.businessName,
       bankName: req.body.bankName,
-      managerName: req.body.managerName,
-      contactNumber: req.body.contactNumber,
+      // managerName: req.body.managerName,
+      // contactNumber: req.body.contactNumber,
       post: req.body.post,
-      email: req.body.email,
+      // email: req.body.email,
       city: req.body.city,
       accountNo: req.body.accountNo,
       ifscCode: req.body.ifscCode,
@@ -384,9 +384,9 @@ exports.downloadImportTemplate = async (req, res) => {
     worksheet.columns = [
       { header: 'Company*', key: 'company', width: 25 },
       { header: 'Bank Name*', key: 'bankName', width: 25 },
-      { header: 'Manager Name', key: 'managerName', width: 20 },
-      { header: 'Contact Number', key: 'contactNumber', width: 15 },
-      { header: 'Email', key: 'email', width: 25 },
+      // { header: 'Manager Name', key: 'managerName', width: 20 },
+      // { header: 'Contact Number', key: 'contactNumber', width: 15 },
+      // { header: 'Email', key: 'email', width: 25 },
       { header: 'City', key: 'city', width: 15 },
       { header: 'Account No*', key: 'accountNo', width: 20 },
       { header: 'IFSC Code', key: 'ifscCode', width: 15 },
@@ -400,9 +400,9 @@ exports.downloadImportTemplate = async (req, res) => {
     worksheet.addRow({
       company: 'ABC Company Ltd',
       bankName: 'State Bank of India',
-      managerName: 'Rajesh Kumar',
-      contactNumber: '9876543210',
-      email: 'manager@sbi.com',
+      // managerName: 'Rajesh Kumar',
+      // contactNumber: '9876543210',
+      // email: 'manager@sbi.com',
       city: 'Mumbai',
       accountNo: '123456789012',
       ifscCode: 'SBIN0001234',
@@ -580,9 +580,9 @@ exports.importBankDetails = async (req, res) => {
         const bankDetailData = {
           company: company._id,
           bankName: row.bankname || row['bankname*'],
-          managerName: row.managername,
-          contactNumber: row.contactnumber,
-          email: row.email,
+          // managerName: row.managername,
+          // contactNumber: row.contactnumber,
+          // email: row.email,
           city: row.city,
           accountNo: row.accountno || row['accountno*'],
           ifscCode: row.ifscode,
@@ -608,9 +608,9 @@ exports.importBankDetails = async (req, res) => {
 
         // Clean and validate data
         bankDetailData.bankName = bankDetailData.bankName.toString().trim();
-        if (bankDetailData.managerName) bankDetailData.managerName = bankDetailData.managerName.toString().trim();
-        if (bankDetailData.contactNumber) bankDetailData.contactNumber = bankDetailData.contactNumber.toString().trim();
-        if (bankDetailData.email) bankDetailData.email = bankDetailData.email.toString().trim();
+        // if (bankDetailData.managerName) bankDetailData.managerName = bankDetailData.managerName.toString().trim();
+        // if (bankDetailData.contactNumber) bankDetailData.contactNumber = bankDetailData.contactNumber.toString().trim();
+        // if (bankDetailData.email) bankDetailData.email = bankDetailData.email.toString().trim();
         if (bankDetailData.city) bankDetailData.city = bankDetailData.city.toString().trim();
         if (bankDetailData.accountNo) bankDetailData.accountNo = bankDetailData.accountNo.toString().trim();
         if (bankDetailData.ifscCode) bankDetailData.ifscCode = bankDetailData.ifscCode.toString().trim();
