@@ -436,6 +436,9 @@ exports.updateParty = async (req, res) => {
     Object.assign(doc, req.body);
     await doc.save();
 
+    // Invalidate cache after update
+    invalidateClient(req.auth.clientId);
+
     // Notify admin after party updated
     await notifyAdminOnPartyAction({
       req,
