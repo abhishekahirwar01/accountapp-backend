@@ -58,6 +58,7 @@ const BankDetailSchema = new Schema(
       upiName: { type: String, trim: true },
       upiMobile: { type: String, trim: true },
     },
+    qrCode: { type: String, trim: true }, // Path to uploaded QR code image
 
     // Auditing
     createdByUser: { type: Schema.Types.ObjectId, ref: "User" },
