@@ -25,10 +25,9 @@ const BankDetailSchema = new Schema(
 
     // Form fields
     bankName: { type: String, required: true, trim: true },
-    managerName: { type: String, required: true, trim: true },
+    managerName: { type: String, trim: true },
     contactNumber: {
       type: String,
-      required: true,
       trim: true,
       validate: {
         validator: (v) => /^\d{10}$/.test(String(v || "")), // India 10-digit
@@ -58,6 +57,7 @@ const BankDetailSchema = new Schema(
       upiName: { type: String, trim: true },
       upiMobile: { type: String, trim: true },
     },
+    qrCode: { type: String, trim: true }, // Path to uploaded QR code image
 
     // Auditing
     createdByUser: { type: Schema.Types.ObjectId, ref: "User" },

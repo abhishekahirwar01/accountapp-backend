@@ -35,20 +35,6 @@ async function ensureAuthCaps(req) {
   }
 }
 
-// Build message text per action for vendors
-function buildVendorNotificationMessage(action, { actorName, vendorName }) {
-  const vName = vendorName || "Unknown Vendor";
-  switch (action) {
-    case "create":
-      return `New vendor created by ${actorName}: ${vName}`;
-    case "update":
-      return `Vendor updated by ${actorName}: ${vName}`;
-    case "delete":
-      return `Vendor deleted by ${actorName}: ${vName}`;
-    default:
-      return `Vendor ${action} by ${actorName}: ${vName}`;
-  }
-}
 
 // Build message text per action for bank details
 function buildBankDetailNotificationMessage(action, { actorName, bankName }) {
@@ -115,7 +101,14 @@ exports.createBankDetail = async (req, res) => {
     const decodedToken = jwt.verify(token, process.env.JWT_SECRET); // Use your JWT secret key to verify the token
 
     // Create a new BankDetail with the client ID
-    const { company, bankName, managerName, contactNumber, email, city, accountNo, ifscCode, branchAddress, upiDetails } = req.body;
+    const { company, bankName, managerName, contactNumber, email, city, accountNo, ifscCode, branchAddress, upiId, upiName, upiMobile } = req.body;
+
+    // Construct upiDetails object from separate fields
+    const upiDetails = {
+      upiId: upiId || undefined,
+      upiName: upiName || undefined,
+      upiMobile: upiMobile || undefined,
+    };
 
     const newBankDetail = new BankDetail({
       client:req.auth.clientId, // Assign the client from the token
@@ -130,6 +123,7 @@ exports.createBankDetail = async (req, res) => {
       ifscCode,
       branchAddress,
       upiDetails,
+      qrCode: req.file ? req.file.path : undefined, // Save QR code file path if uploaded
       createdByUser: decodedToken.userId, // If you want to assign the user who is creating the bank detail
     });
 
@@ -301,6 +295,13 @@ exports.getBankDetailById = async (req, res) => {
 /** PUT /api/bank-details/:id */
 exports.updateBankDetail = async (req, res) => {
   try {
+    // Construct upiDetails object from separate fields
+    const upiDetails = {
+      upiId: req.body.upiId || undefined,
+      upiName: req.body.upiName || undefined,
+      upiMobile: req.body.upiMobile || undefined,
+    };
+
     const update = {
       client: req.body.client,
       company: req.body.company,
@@ -315,7 +316,8 @@ exports.updateBankDetail = async (req, res) => {
       accountNo: req.body.accountNo,
       ifscCode: req.body.ifscCode,
       branchAddress: req.body.branchAddress,
-      upiDetails: req.body.upiDetails,
+      upiDetails,
+      qrCode: req.file ? req.file.path : req.body.qrCode, // Update QR code if new file uploaded, otherwise keep existing
     };
 
     // remove undefined keys to avoid overwriting with undefined
