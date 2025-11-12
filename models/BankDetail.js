@@ -25,26 +25,27 @@ const BankDetailSchema = new Schema(
 
     // Form fields
     bankName: { type: String, required: true, trim: true },
-    managerName: { type: String, trim: true },
-    contactNumber: {
-      type: String,
-      trim: true,
-      validate: {
-        validator: (v) => /^\d{10}$/.test(String(v || "")), // India 10-digit
-        message: "Enter a valid 10-digit contact number",
-      },
-    },
-    post: { type: String, trim: true }, // designation
-    email: {
-      type: String,
-      trim: true,
-      lowercase: true,
-      validate: {
-        validator: (v) =>
-          !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), // optional but validate if present
-        message: "Enter a valid email",
-      },
-    },
+    // managerName: { type: String, required: true, trim: true },
+    // contactNumber: {
+    //   type: String,
+    //   required: true,
+    //   trim: true,
+    //   validate: {
+    //     validator: (v) => /^\d{10}$/.test(String(v || "")), // India 10-digit
+    //     message: "Enter a valid 10-digit contact number",
+    //   },
+    // },
+    // post: { type: String, trim: true }, // designation
+    // email: {
+    //   type: String,
+    //   trim: true,
+    //   lowercase: true,
+    //   validate: {
+    //     validator: (v) =>
+    //       !v || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), // optional but validate if present
+    //     message: "Enter a valid email",
+    //   },
+    // },
     city: { type: String, required: true, trim: true },
     accountNo: { type: String, required: true, trim: true },
     ifscCode: {
@@ -69,7 +70,7 @@ const BankDetailSchema = new Schema(
 BankDetailSchema.index({ client: 1, bankName: 1, city: 1 });
 BankDetailSchema.index({
   bankName: "text",
-  managerName: "text",
+  // managerName: "text",
   city: "text",
   branchAddress: "text",
   businessName: "text",
