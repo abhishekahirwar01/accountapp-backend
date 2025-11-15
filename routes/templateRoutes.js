@@ -52,7 +52,17 @@ router.get('/settings/default-template', verifyClientOrAdmin, async (req, res) =
   }
 });
 
+const path = require("path");
 
+router.get("/services/import/template", async (req, res) => {
+  try {
+    const filePath = path.join(__dirname, "../templates/service-import-template.xlsx");
+    return res.download(filePath, "service-import-template.xlsx");
+  } catch (error) {
+    console.error("Template download error:", error);
+    return res.status(500).json({ message: "Failed to download template" });
+  }
+});
 // // PUT endpoint to explicitly update the default template
 // router.put('/settings/default-template', verifyMasterAdmin, async (req, res) => {
 //   const { defaultTemplate } = req.body;
