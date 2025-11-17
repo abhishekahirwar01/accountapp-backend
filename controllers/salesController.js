@@ -19,6 +19,7 @@ const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { sendCreditReminderEmail } = require("../services/emailService");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
+const stockController = require("./stockController");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
