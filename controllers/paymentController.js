@@ -5,8 +5,6 @@ const Vendor = require("../models/Vendor");
 const PaymentExpense = require("../models/PaymentExpense");
 const User = require("../models/User");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
-const { getFromCache, setToCache } = require('../RedisCache');
-const { deletePaymentEntryCache, deletePaymentEntryCacheByUser } = require("../utils/cacheHelpers");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 

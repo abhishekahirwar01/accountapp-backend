@@ -44,6 +44,7 @@ const reportRoutes = require('./routes/reportRoutes')
 const whatsappConnectionRoutes = require('./routes/whatsappConnectionRoutes');
 const whatsappRoutes = require('./routes/whatsapp.routes')
 const ledgerRoutes = require('./routes/ledgerRoutes');
+const profitLossRoutes = require('./routes/profitLossRoutes');
 const { startSchedulers, testReportImmediately } = require('./services/schedulerService');
 
 
@@ -179,6 +180,7 @@ app.use("/api/support", supportRoutes)
 // app.use('/api/whatsapp', whatsappConnectionRoutes);
 app.use('/api/whatsapp', whatsappRoutes)
 app.use('/api/ledger', ledgerRoutes);
+app.use('/api/profitloss', profitLossRoutes);
 
 app.get('/', (req, res) => {
   res.send("Account App CI/CD is working on New server(VPS) ......");
