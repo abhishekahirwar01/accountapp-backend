@@ -52,9 +52,6 @@ router.get('/settings/default-template', verifyClientOrAdmin, async (req, res) =
   }
 });
 
-<<<<<<< HEAD
-
-=======
 const path = require("path");
 
 router.get("/services/import/template", async (req, res) => {
@@ -66,7 +63,6 @@ router.get("/services/import/template", async (req, res) => {
     return res.status(500).json({ message: "Failed to download template" });
   }
 });
->>>>>>> a7756808d93daba6c776a5c3399b3d423d2d5b02
 // // PUT endpoint to explicitly update the default template
 // router.put('/settings/default-template', verifyMasterAdmin, async (req, res) => {
 //   const { defaultTemplate } = req.body;
