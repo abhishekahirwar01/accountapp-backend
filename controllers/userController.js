@@ -492,19 +492,11 @@ exports.getUsersByClient = async (req, res) => {
 
 exports.loginUser = async (req, res) => {
   try {
-    const { userId, password , captchaToken } = req.body;
+    const { userId, password } = req.body;
 
-    // Verify reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
-    }
-
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
-
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    // Validate input
+    if (!userId || !password) {
+      return res.status(400).json({ message: "User ID and password are required" });
     }
 
     const user = await User.findOne({ userId })
@@ -517,7 +509,9 @@ exports.loginUser = async (req, res) => {
     if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
 
     // permissions = role.permissions ∪ user.permissions
-    const perms = Array.from(new Set([...(user.role?.permissions || []), ...(user.permissions || [])]));
+    const perms = Array.from(
+      new Set([...(user.role?.permissions || []), ...(user.permissions || [])])
+    );
 
     const token = jwt.sign(
       {
@@ -542,6 +536,7 @@ exports.loginUser = async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("Login error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 };

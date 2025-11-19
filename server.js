@@ -46,7 +46,7 @@ const whatsappRoutes = require('./routes/whatsapp.routes')
 const ledgerRoutes = require('./routes/ledgerRoutes');
 const profitLossRoutes = require('./routes/profitLossRoutes');
 const { startSchedulers, testReportImmediately } = require('./services/schedulerService');
-
+const generateInvoiceRoutes =require("./RNutils/routes/generate-invoice")
 
 dotenv.config();
 connectDB();
@@ -135,7 +135,7 @@ app.use(async (req, res, next) => {
 app.use("/api/faq", faqRoutes)
 
 app.use("/api/integrations", integrationsRoutes);
-
+app.use("/api/pdf", generateInvoiceRoutes);
 app.use("/api/master-admin", masterAdminRoutes);
 app.post("/api/clients/:slug/login", loginClient);
 app.post("/api/clients/:slug/request-otp", requestClientOtp);
@@ -165,6 +165,11 @@ app.use("/api/shipping-addresses", shippingAddressRoutes);
 
 app.use("/api/update-notifications", updateNotificationRoutes);
 
+
+// 💤 Ping route to keep Render backend awake
+app.get("/ping", (req, res) => {
+  res.status(200).send("Server is awake 🚀");
+});
 
 // app.use("/", whatsappRoutes);
 
