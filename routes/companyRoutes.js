@@ -6,27 +6,16 @@ const {
   createCompanyByClient,
   getClientCompanies,
   getAllCompanies,
-<<<<<<< HEAD
-    updateCompany,
-    deleteCompany,
-    getCompaniesByClientId,
-    getMyCompanies,
-    getCompany
-=======
   updateCompany,
   deleteCompany,
   getCompaniesByClientId,
   getMyCompanies,
   getCompany
->>>>>>> a7756808d93daba6c776a5c3399b3d423d2d5b02
 } = require("../controllers/companyController");
 
 const verifyMasterAdmin = require("../middleware/verifyMasterAdmin");
 const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
 const verifyClient = require("../middleware/verifyClient");
-<<<<<<< HEAD
-
-=======
 const Company = require("../models/Company");
 
 // Check duplicate registration number
@@ -59,7 +48,6 @@ router.get("/my", verifyClientOrAdmin, getMyCompanies);
 router.get("/by-client/:clientId", verifyMasterAdmin, getCompaniesByClientId);
 
 // ✅ POST ROUTES
->>>>>>> a7756808d93daba6c776a5c3399b3d423d2d5b02
 
 
 // Master Admin creates company
@@ -77,33 +65,11 @@ router.get("/all", verifyMasterAdmin, getAllCompanies);
 // router.get("/", verifyClientOrAdmin, getCompanies);
 
 // Update company (client or master)
-<<<<<<< HEAD
-router.put("/:id", verifyClientOrAdmin,uploadLogo, updateCompany);
-=======
 router.put("/:id", verifyClientOrAdmin, uploadLogo, updateCompany);
->>>>>>> a7756808d93daba6c776a5c3399b3d423d2d5b02
 
 // Delete company (client or master)
 router.delete("/:id", verifyClientOrAdmin, deleteCompany);
 
-<<<<<<< HEAD
-router.get("/by-client/:clientId", verifyMasterAdmin, getCompaniesByClientId);
-
-// ✅ NEW: role-agnostic "my companies"
-// Usage
-router.get(
-  "/my",
-  verifyClientOrAdmin,
-  getMyCompanies
-);
-
-// Get single company by ID
-router.get("/:id", verifyClientOrAdmin, getCompany);
-
-
-
-module.exports = router;
-=======
 // Get single company by ID - YE SABSE LAST MEIN!
 router.get("/:id", verifyClientOrAdmin, getCompany);
 
@@ -138,4 +104,3 @@ router.get('/accessible', verifyClientOrAdmin, async (req, res) => {
 });
 
 module.exports = router;
->>>>>>> a7756808d93daba6c776a5c3399b3d423d2d5b02

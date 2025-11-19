@@ -3,8 +3,6 @@ const express = require("express");
 const router = express.Router();
 const ctrl = require("../controllers/bankDetailController");
 const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
-<<<<<<< HEAD
-=======
 const multer = require("multer");
 
 // Set up multer storage for QR code file handling
@@ -32,24 +30,16 @@ const upload = multer({
     fileSize: 5 * 1024 * 1024 // 5MB limit
   }
 });
->>>>>>> a7756808d93daba6c776a5c3399b3d423d2d5b02
 
 // Use your real auth middlewares here
 // Example placeholders:
 // const { requireAuth } = require("../middleware/auth");
 // router.use(requireAuth);
 
-<<<<<<< HEAD
-router.post("/", verifyClientOrAdmin, ctrl.createBankDetail);
-router.get("/", verifyClientOrAdmin, ctrl.getBankDetails);
-router.get("/:id", verifyClientOrAdmin, ctrl.getBankDetailById);
-router.put("/:id", verifyClientOrAdmin, ctrl.updateBankDetail);
-=======
 router.post("/", verifyClientOrAdmin, upload.single('qrCode'), ctrl.createBankDetail);
 router.get("/", verifyClientOrAdmin, ctrl.getBankDetails);
 router.get("/:id", verifyClientOrAdmin, ctrl.getBankDetailById);
 router.put("/:id", verifyClientOrAdmin, upload.single('qrCode'), ctrl.updateBankDetail);
->>>>>>> a7756808d93daba6c776a5c3399b3d423d2d5b02
 router.delete("/:id", verifyClientOrAdmin, ctrl.deleteBankDetail);
 router.get("/options", verifyClientOrAdmin, ctrl.listBanksForCompany);
 

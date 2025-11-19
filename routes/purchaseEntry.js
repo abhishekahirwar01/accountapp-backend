@@ -11,10 +11,7 @@ router.post("/", verifyClientOrAdmin, purchaseController.createPurchaseEntry);
 // // Get All Purchase Entries of Logged-in Client
 router.get("/", verifyClientOrAdmin, purchaseController.getPurchaseEntries);
 
-<<<<<<< HEAD
-=======
 router.get("/:id", verifyClientOrAdmin, purchaseController.getPurchaseEntryById);
->>>>>>> a7756808d93daba6c776a5c3399b3d423d2d5b02
 router.delete("/:id", verifyClientOrAdmin, purchaseController.deletePurchaseEntry);
 router.put("/:id", verifyClientOrAdmin, purchaseController.updatePurchaseEntry);
 
