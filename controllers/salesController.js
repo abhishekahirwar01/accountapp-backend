@@ -19,6 +19,7 @@ const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { sendCreditReminderEmail } = require("../services/emailService");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
+const stockController = require("./stockController");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
@@ -793,90 +794,6 @@ exports.deleteSalesEntry = async (req, res) => {
 };
 
 
-
-// controllers/salesController.js - Update sendCreditReminder function
-// exports.sendCreditReminder = async (req, res) => {
-//   try {
-//     const { 
-//       transactionId, 
-//       partyId, 
-//       daysOverdue, 
-//       pendingAmount,
-//       emailSubject,
-//       emailContent,
-//       isHtml = false
-//     } = req.body;
-
-//     // Get transaction details with populated data
-//     const transaction = await SalesEntry.findById(transactionId)
-//       .populate('party', 'name email contactNumber')
-//       .populate('company', 'businessName emailId')
-//       .populate('client');
-
-//     if (!transaction) {
-//       return res.status(404).json({ message: 'Transaction not found' });
-//     }
-
-//     // Get party details
-//     const party = await Party.findById(partyId);
-//     if (!party) {
-//       return res.status(404).json({ message: 'Party not found' });
-//     }
-
-//     // Check if party has email
-//     if (!party.email) {
-//       return res.status(400).json({ 
-//         message: 'Customer does not have an email address' 
-//       });
-//     }
-
-//     // Use custom content if provided, otherwise generate default
-//     const subject = emailSubject || `Payment Reminder - Invoice ${transaction.invoiceNumber}`;
-//     const content = emailContent || generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount);
-
-//     // Send credit reminder email
-//     await sendCreditReminderEmail({
-//       to: party.email,
-//       customerName: party.name,
-//       companyName: transaction.company.businessName,
-//       invoiceNumber: transaction.invoiceNumber || transaction.referenceNumber || 'N/A',
-//       invoiceDate: transaction.date,
-//       daysOverdue: daysOverdue,
-//       pendingAmount: pendingAmount,
-//       companyEmail: transaction.company.emailId,
-//       customSubject: subject,
-//       customContent: content,
-//       isHtml: isHtml
-//     });
-
-//     // Create notification for the reminder
-//     // await createNotification(
-//     //   `Credit reminder sent to ${party.name} for ₹${pendingAmount} (Invoice: ${transaction.invoiceNumber})`,
-//     //   req.auth.userId,
-//     //   req.auth.userId,
-//     //   'reminder',
-//     //   'sales',
-//     //   transactionId,
-//     //   req.auth.clientId
-//     // );
-
-//     res.json({ 
-//       message: 'Credit reminder sent successfully',
-//       sentTo: party.email,
-//       customerName: party.name,
-//       amount: pendingAmount
-//     });
-//      console.log(`Credit reminder sent to ${party.email} for ${party.name}`);
-
-//   } catch (error) {
-//     console.error('Error in sendCreditReminder:', error);
-//     res.status(500).json({ 
-//       message: 'Failed to send credit reminder', 
-//       error: error.message 
-//     });
-//   }
-// };
-
 exports.getSalesEntryById = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -1023,33 +940,6 @@ exports.sendCreditReminder = async (req, res) => {
   }
 };
 
-// Helper function to generate default email content
-// function generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount) {
-//   const invoiceNumber = transaction.invoiceNumber || transaction.referenceNumber || 'N/A';
-//   const invoiceDate = new Date(transaction.date).toLocaleDateString();
-//   const formattedAmount = new Intl.NumberFormat('en-IN').format(pendingAmount);
-  
-//   return `Dear ${party.name},
-
-// This is a friendly reminder regarding your outstanding payment. The following invoice is currently pending:
-
-// Invoice Number: ${invoiceNumber}
-// Invoice Date: ${invoiceDate}
-// Days Outstanding: ${daysOverdue} days
-// Pending Amount: ₹${formattedAmount}
-
-// ${daysOverdue > 30 ? `This invoice is ${daysOverdue - 30} days overdue. Please process the payment immediately to avoid any disruption in services.` : 'Please process this payment at your earliest convenience.'}
-
-// If you have already made the payment, please disregard this reminder. For any queries regarding this invoice, please contact us.
-
-// Thank you for your business!
-
-// Best regards,
-// ${transaction.company.businessName}
-// ${transaction.company.emailId ? `Email: ${transaction.company.emailId}` : ''}`;
-// }
-
-// Enhanced helper function to generate HTML email content
 function generateDefaultEmailContent(transaction, party, daysOverdue, pendingAmount) {
   const invoiceNumber = transaction.invoiceNumber || transaction.referenceNumber || 'N/A';
   const invoiceDate = new Date(transaction.date).toLocaleDateString();
