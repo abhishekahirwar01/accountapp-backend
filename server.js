@@ -49,8 +49,8 @@ const { startSchedulers, testReportImmediately } = require('./services/scheduler
 const dailyStockLedgerRoutes = require('./routes/dailyStockLedgerRoutes');
 
 
-// const { runDailyCarryForward } = require('./jobs/dailyStockCarryForward');
-// runDailyCarryForward();
+const { runDailyCarryForward } = require('./jobs/dailyStockCarryForward');
+runDailyCarryForward();
 
 // const {manualCreateCarryForward} = require("./jobs/manualCreateCarryForward")
 // manualCreateCarryForward();
