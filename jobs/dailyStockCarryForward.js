@@ -47,25 +47,29 @@ async function runDailyCarryForward() {
   }
 }
 
-// Dynamically fetch active company-client combinations
 async function getActiveCompanyClientCombinations() {
   try {
-    // Option 1: If you have a Company model with active companies
     const Company = mongoose.model('Company');
-    const activeCompanies = await Company.find({ 
-      isActive: true,
-      // Add other filters as needed
-    }).select('_id clientId').lean();
 
-    return activeCompanies.map(company => ({
-      companyId: company._id.toString(),
-      clientId: company.clientId ? company.clientId.toString() : null
-    }));
+   const activeCompanies = await Company.find({})
+  .select('_id client clientId selectedClient')
+  .lean();
+
+
+    return activeCompanies.map(company => {
+      const resolvedClientId =
+        company.clientId || company.client || company.selectedClient || null;
+
+      return {
+        companyId: company._id.toString(),
+        clientId: resolvedClientId ? resolvedClientId.toString() : null,
+      };
+    });
 
   } catch (error) {
     console.error('❌ Error fetching active companies:', error);
     
-    // Option 2: Fallback - Get from existing carry forward records
+    // Fallback - Get from existing carry forward records
     try {
       const StockCarryForward = mongoose.model('StockCarryForward');
       const uniqueCombinations = await StockCarryForward.aggregate([
@@ -96,6 +100,7 @@ async function getActiveCompanyClientCombinations() {
   }
 }
 
+
 // Manual trigger for testing
 async function manualRun() {
   console.log('🔄 Manually triggering carry forward job...');
@@ -103,7 +108,7 @@ async function manualRun() {
 }
 
 // Schedule to run every day at 00:05 AM
-cron.schedule('5 0 * * *', runDailyCarryForward, {
+cron.schedule('05 00 * * *', runDailyCarryForward, {
   timezone: "Asia/Kolkata"
 });
 
