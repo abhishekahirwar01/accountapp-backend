@@ -30,20 +30,41 @@ module.exports = async (rawProducts = [], clientId, userId) => {
   const existingUnits = await Unit.find({ createdByClient: clientId }).select('name').lean();
   const existingUnitNames = new Set(existingUnits.map(u => u.name.toLowerCase()));
 
+  // Merge duplicates by product, summing quantities
+  const productMap = new Map();
+  for (const item of rawProducts) {
+    const productId = item.product;
+    const qty = Number(item.quantity ?? 1);
+    if (!productId || !Number.isFinite(qty) || qty <= 0) {
+      throw new Error("Invalid item");
+    }
+    if (productMap.has(productId)) {
+      productMap.get(productId).quantity += qty;
+    } else {
+      productMap.set(productId, {
+        product: productId,
+        quantity: qty,
+        pricePerUnit: Number(item.pricePerUnit ?? 0),
+        unitType: item.unitType,
+        otherUnit: item.otherUnit,
+        gstPercentage: item.gstPercentage,
+        amount: Number(item.amount ?? 0)
+      });
+    }
+  }
+
   const items = [];
   let computedTotal = 0;
 
-  for (const item of rawProducts) {
-    const product = await Product.findOne({ _id: item.product, createdByClient: clientId });
-    if (!product) throw new Error(`Product not found or unauthorized: ${item.product}`);
+  for (const [productId, item] of productMap.entries()) {
+    const product = await Product.findOne({ _id: productId, createdByClient: clientId });
+    if (!product) throw new Error(`Product not found or unauthorized: ${productId}`);
 
-    const quantity = Number(item.quantity ?? 1);
-    if (isNaN(quantity)) throw new Error("Invalid quantity"); // Fixed this line
-
-    const pricePerUnit = Number(item.pricePerUnit ?? product.costPrice); // Using costPrice for purchases
+    const quantity = item.quantity;
+    const pricePerUnit = item.pricePerUnit || product.costPrice;
     if (isNaN(pricePerUnit)) throw new Error("Invalid price");
 
-    const amount = Number(item.amount ?? quantity * pricePerUnit);
+    const amount = item.amount || quantity * pricePerUnit;
 
      // Get GST percentage from the request or use product default
     const gstPercentage = Number(item.gstPercentage ?? product.gstPercentage ?? 18);

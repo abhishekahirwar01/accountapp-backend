@@ -6,8 +6,10 @@ const BankDetail = require("../models/BankDetail");
 const User = require("../models/User");
 const normalizePurchaseProducts = require("../utils/normalizePurchaseProducts");
 const normalizePurchaseServices = require("../utils/normalizePurchaseServices");
-const { getFromCache, setToCache } = require('../RedisCache');
-const { deletePurchaseEntryCache, deletePurchaseEntryCacheByUser } = require('../utils/cacheHelpers')
+
+const Product = require("../models/Product");
+const StockBatch = require("../models/StockBatch");
+const DailyStockLedger = require("../models/DailyStockLedger");
 
 // load effective caps if middleware didn’t attach them
 const { getEffectivePermissions } = require("../services/effectivePermissions");
@@ -124,6 +126,270 @@ async function notifyAdminOnPurchaseAction({ req, action, vendorName, entryId, c
 }
 
 
+// 🔄 FIFO HELPER FUNCTIONS
+
+/**
+ * Update Product stocks and cost price (weighted average)
+ */
+async function updateProductStockAndCostPrice(productId, newQuantity, newCostPrice, session = null) {
+  const product = await Product.findById(productId).session(session);
+  if (!product) throw new Error(`Product not found: ${productId}`);
+
+  // Calculate weighted average cost price
+  const currentTotalValue = product.stocks * product.costPrice;
+  const newTotalValue = newQuantity * newCostPrice;
+  const totalQuantity = product.stocks + newQuantity;
+
+  const weightedAverageCost = totalQuantity > 0
+    ? (currentTotalValue + newTotalValue) / totalQuantity
+    : newCostPrice;
+
+  // Update product
+  product.stocks = totalQuantity;
+  product.costPrice = weightedAverageCost;
+
+  await product.save({ session });
+  return product;
+}
+
+/**
+ * Create StockBatch entries for each product in purchase
+ */
+async function createStockBatches(purchaseEntry, products, session = null) {
+  const batchPromises = products.map(async (item) => {
+    const batch = new StockBatch({
+      product: item.product,
+      purchaseEntry: purchaseEntry._id,
+      companyId: purchaseEntry.company,
+      clientId: purchaseEntry.client,
+      purchaseDate: purchaseEntry.date,
+      costPrice: item.pricePerUnit,
+      initialQuantity: item.quantity,
+      remainingQuantity: item.quantity,
+      status: "active"
+    });
+
+    return await batch.save({ session });
+  });
+
+  return await Promise.all(batchPromises);
+}
+
+async function updateDailyStockLedgerForPurchase(purchaseEntry, products, session = null) {
+  const purchaseDate = new Date(purchaseEntry.date);
+  purchaseDate.setUTCHours(18, 30, 0, 0); // IST 00:00
+
+  // Find or create daily ledger
+  let ledger = await DailyStockLedger.findOne({
+    companyId: purchaseEntry.company,
+    clientId: purchaseEntry.client,
+    date: purchaseDate
+  }).session(session);
+
+  if (!ledger) {
+    // Get previous day's closing stock
+    const previousDay = new Date(purchaseDate);
+    previousDay.setDate(previousDay.getDate() - 1);
+    previousDay.setUTCHours(18, 30, 0, 0);
+
+    const previousLedger = await DailyStockLedger.findOne({
+      companyId: purchaseEntry.company,
+      clientId: purchaseEntry.client,
+      date: previousDay
+    }).session(session);
+
+    ledger = new DailyStockLedger({
+      companyId: purchaseEntry.company,
+      clientId: purchaseEntry.client,
+      date: purchaseDate,
+      openingStock: previousLedger ? {
+        quantity: Math.max(0, previousLedger.closingStock.quantity),
+        amount: Math.max(0, previousLedger.closingStock.amount)
+      } : { quantity: 0, amount: 0 },
+      closingStock: previousLedger ? {
+        quantity: Math.max(0, previousLedger.closingStock.quantity),
+        amount: Math.max(0, previousLedger.closingStock.amount)
+      } : { quantity: 0, amount: 0 },
+      totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
+      totalSalesOfTheDay: { quantity: 0, amount: 0 },
+      totalCOGS: 0
+    });
+  }
+
+  // ✅ Calculate new purchase values
+  const newPurchaseQuantity = products.reduce((sum, item) => sum + item.quantity, 0);
+  const newPurchaseAmount = products.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
+
+  console.log('🔴 DEBUG PURCHASE LEDGER UPDATE:');
+  console.log('  New Purchase:', newPurchaseQuantity, 'units, ₹', newPurchaseAmount);
+
+  // ✅ Update purchase values
+  ledger.totalPurchaseOfTheDay.quantity += newPurchaseQuantity;
+  ledger.totalPurchaseOfTheDay.amount += newPurchaseAmount;
+
+  // ✅ CORRECTED: Calculate closing stock quantity
+  const newClosingQuantity = Math.max(0, ledger.openingStock.quantity +
+    ledger.totalPurchaseOfTheDay.quantity -
+    ledger.totalSalesOfTheDay.quantity);
+
+  // ✅ CORRECTED: Calculate closing stock value from ACTUAL FIFO batches
+  const newClosingAmount = await calculateClosingStockValue(
+    purchaseEntry.company,
+    purchaseEntry.client,
+    session
+  );
+
+  // ✅ CORRECTED: Now calculate COGS properly
+  const totalAvailableValue = ledger.openingStock.amount + ledger.totalPurchaseOfTheDay.amount;
+  const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+
+  // ✅ Update ledger with correct values
+  ledger.closingStock.quantity = newClosingQuantity;
+  ledger.closingStock.amount = newClosingAmount;
+  ledger.totalCOGS = totalCOGS;
+
+  console.log('🟢 CORRECTED CALCULATIONS:');
+  console.log('  Total Available:', ledger.openingStock.quantity + ledger.totalPurchaseOfTheDay.quantity, 
+              'units, ₹', totalAvailableValue);
+  console.log('  Closing Stock:', newClosingQuantity, 'units, ₹', newClosingAmount);
+  console.log('  COGS: ₹', totalCOGS);
+
+  await ledger.save({ session });
+  return ledger;
+}
+
+
+/**
+ * Calculate average cost for fallback COGS calculation
+ */
+async function calculateAverageCost(companyId, clientId, session = null) {
+  try {
+    const activeBatches = await StockBatch.find({
+      companyId: companyId,
+      clientId: clientId,
+      status: "active",
+      remainingQuantity: { $gt: 0 }
+    }).session(session);
+
+    if (activeBatches.length === 0) return 0;
+
+    const totalValue = activeBatches.reduce((sum, batch) =>
+      sum + (batch.remainingQuantity * batch.costPrice), 0);
+    const totalQuantity = activeBatches.reduce((sum, batch) =>
+      sum + batch.remainingQuantity, 0);
+
+    return totalQuantity > 0 ? totalValue / totalQuantity : 0;
+  } catch (error) {
+    console.error("Error calculating average cost:", error);
+    return 0;
+  }
+}
+/**
+ * Reverse StockBatch entries and product stock for a purchase
+ */
+async function reversePurchaseStockUpdates(purchaseEntry, products = null, session = null) {
+  const productsToReverse = products || purchaseEntry.products;
+
+  // Find all stock batches for this purchase
+  const batches = await StockBatch.find({
+    purchaseEntry: purchaseEntry._id
+  }).session(session);
+
+  // Reverse product stock updates
+  // const reverseUpdates = productsToReverse.map(async (item) => {
+  //   const product = await Product.findById(item.product).session(session);
+  //   if (product) {
+  //     product.stocks = Math.max(0, product.stocks - item.quantity);
+  //     // Note: We don't reverse costPrice as it's complex to calculate
+  //     await product.save({ session });
+  //   }
+  // });
+  // await Promise.all(reverseUpdates);
+
+  // Deactivate or delete stock batches
+  const batchUpdates = batches.map(batch => {
+    batch.isActive = false;
+    batch.status = "cancelled";
+    return batch.save({ session });
+  });
+  await Promise.all(batchUpdates);
+
+  return batches;
+}
+
+
+
+async function calculateClosingStockValue(companyId, clientId, session = null) {
+  const activeBatches = await StockBatch.find({
+    companyId: companyId,
+    clientId: clientId,
+    status: "active",
+    remainingQuantity: { $gt: 0 }
+  }).session(session);
+
+  return activeBatches.reduce((sum, batch) =>
+    sum + (batch.remainingQuantity * batch.costPrice), 0);
+}
+/**
+ * CORRECTED: Reverse Daily Stock Ledger for purchase deletion
+ */
+async function reverseDailyStockLedgerForPurchase(purchaseEntry, products = null, date = null, session = null) {
+  const productsToReverse = products || purchaseEntry.products;
+  const purchaseDate = new Date(date || purchaseEntry.date);
+  purchaseDate.setUTCHours(18, 30, 0, 0);
+
+  const ledger = await DailyStockLedger.findOne({
+    companyId: purchaseEntry.company,
+    clientId: purchaseEntry.client,
+    date: purchaseDate
+  }).session(session);
+
+  if (ledger) {
+    // Calculate values to reverse
+    const purchaseQuantity = productsToReverse.reduce((sum, item) => sum + item.quantity, 0);
+    const purchaseAmount = productsToReverse.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
+
+    // Reverse purchase values
+    ledger.totalPurchaseOfTheDay.quantity = Math.max(0, ledger.totalPurchaseOfTheDay.quantity - purchaseQuantity);
+    ledger.totalPurchaseOfTheDay.amount = Math.max(0, ledger.totalPurchaseOfTheDay.amount - purchaseAmount);
+
+    // ✅ CORRECTED: Recalculate closing stock value from FIFO batches
+    const newClosingAmount = await calculateClosingStockValue(
+      purchaseEntry.company,
+      purchaseEntry.client,
+      session
+    );
+
+    // ✅ CORRECTED: Recalculate COGS
+    const totalAvailableValue = ledger.openingStock.amount + ledger.totalPurchaseOfTheDay.amount;
+    const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+
+    ledger.closingStock.quantity = Math.max(0, ledger.openingStock.quantity +
+      ledger.totalPurchaseOfTheDay.quantity -
+      ledger.totalSalesOfTheDay.quantity);
+    ledger.closingStock.amount = newClosingAmount;
+    ledger.totalCOGS = totalCOGS;
+
+    await ledger.save({ session });
+  }
+}
+
+/**
+ * Reverse product stock updates for purchase deletion
+ */
+async function reverseProductStocksForDeletion(purchaseEntry, session = null) {
+  const productUpdates = purchaseEntry.products.map(async (item) => {
+    const product = await Product.findById(item.product).session(session);
+    if (product) {
+      // Reduce stock by the purchased quantity
+      product.stocks = Math.max(0, product.stocks - item.quantity);
+      await product.save({ session });
+      console.log(`✅ Reduced stock for ${product.name}: -${item.quantity} units`);
+    }
+  });
+
+  await Promise.all(productUpdates);
+}
 // --- CREATE ------------------------------------------------------
 exports.createPurchaseEntry = async (req, res) => {
   const session = await mongoose.startSession();
@@ -210,6 +476,30 @@ exports.createPurchaseEntry = async (req, res) => {
             paymentMethod,
           }], { session });
           entry = docs[0];
+
+
+          // FIFO IMPLEMENTATION - Only for products (not services)
+          if (normalizedProducts.length > 0) {
+            // Update Product stocks and cost prices
+            // const productUpdates = normalizedProducts.map(item =>
+            //   updateProductStockAndCostPrice(
+            //     item.product,
+            //     item.quantity,
+            //     item.pricePerUnit,
+            //     session
+            //   )
+            // );
+            // await Promise.all(productUpdates);
+
+            // Create StockBatch entries
+            const createdBatches = await createStockBatches(entry, normalizedProducts, session);
+
+            // Update Daily Stock Ledger
+            await updateDailyStockLedgerForPurchase(entry, normalizedProducts, session);
+
+            console.log(`✅ Created ${createdBatches.length} stock batches for purchase`);
+          }
+
 
           // Handle vendor balance for credit purchases
           if (paymentMethod === "Credit") {
@@ -407,7 +697,150 @@ exports.getPurchaseEntriesByClient = async (req, res) => {
   }
 };
 
+// CORRECTED: Helper function to update daily stock ledger for purchase updates
+async function updateDailyStockLedgerForPurchaseUpdate(purchaseEntry, oldProducts, oldDate, session = null) {
+  const newDate = new Date(purchaseEntry.date);
+  newDate.setUTCHours(18, 30, 0, 0);
+  oldDate.setUTCHours(18, 30, 0, 0);
 
+  // Calculate old values
+  const oldPurchaseQuantity = oldProducts.reduce((sum, item) => sum + item.quantity, 0);
+  const oldPurchaseAmount = oldProducts.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
+
+  // Calculate new values
+  const newPurchaseQuantity = purchaseEntry.products.reduce((sum, item) => sum + item.quantity, 0);
+  const newPurchaseAmount = purchaseEntry.products.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
+
+  // If date changed, update both old and new date ledgers
+  if (oldDate.getTime() !== newDate.getTime()) {
+    // Remove from old date
+    const oldLedger = await DailyStockLedger.findOne({
+      companyId: purchaseEntry.company,
+      clientId: purchaseEntry.client,
+      date: oldDate
+    }).session(session);
+
+    if (oldLedger) {
+      oldLedger.totalPurchaseOfTheDay.quantity = Math.max(0, oldLedger.totalPurchaseOfTheDay.quantity - oldPurchaseQuantity);
+      oldLedger.totalPurchaseOfTheDay.amount = Math.max(0, oldLedger.totalPurchaseOfTheDay.amount - oldPurchaseAmount);
+
+      // ✅ CORRECTED: Calculate closing stock value from FIFO batches
+      const newClosingAmount = await calculateClosingStockValue(
+        purchaseEntry.company,
+        purchaseEntry.client,
+        session
+      );
+      
+      // ✅ CORRECTED: Calculate COGS properly
+      const totalAvailableValue = oldLedger.openingStock.amount + oldLedger.totalPurchaseOfTheDay.amount;
+      const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+
+      const newClosingQuantity = Math.max(0, oldLedger.openingStock.quantity +
+        oldLedger.totalPurchaseOfTheDay.quantity -
+        oldLedger.totalSalesOfTheDay.quantity);
+
+      oldLedger.closingStock.quantity = newClosingQuantity;
+      oldLedger.closingStock.amount = newClosingAmount;
+      oldLedger.totalCOGS = totalCOGS;
+      await oldLedger.save({ session });
+    }
+
+    // Add to new date
+    let newLedger = await DailyStockLedger.findOne({
+      companyId: purchaseEntry.company,
+      clientId: purchaseEntry.client,
+      date: newDate
+    }).session(session);
+
+    if (!newLedger) {
+      // Get previous day's closing stock
+      const previousDay = new Date(newDate);
+      previousDay.setDate(previousDay.getDate() - 1);
+      previousDay.setUTCHours(18, 30, 0, 0);
+
+      const previousLedger = await DailyStockLedger.findOne({
+        companyId: purchaseEntry.company,
+        clientId: purchaseEntry.client,
+        date: previousDay
+      }).session(session);
+
+      newLedger = new DailyStockLedger({
+        companyId: purchaseEntry.company,
+        clientId: purchaseEntry.client,
+        date: newDate,
+        openingStock: previousLedger ? {
+          quantity: Math.max(0, previousLedger.closingStock.quantity),
+          amount: Math.max(0, previousLedger.closingStock.amount)
+        } : { quantity: 0, amount: 0 },
+        closingStock: previousLedger ? {
+          quantity: Math.max(0, previousLedger.closingStock.quantity),
+          amount: Math.max(0, previousLedger.closingStock.amount)
+        } : { quantity: 0, amount: 0 },
+        totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
+        totalSalesOfTheDay: { quantity: 0, amount: 0 },
+        totalCOGS: 0
+      });
+    }
+
+    newLedger.totalPurchaseOfTheDay.quantity += newPurchaseQuantity;
+    newLedger.totalPurchaseOfTheDay.amount += newPurchaseAmount;
+
+    // ✅ CORRECTED: Calculate closing stock value from FIFO batches
+    const newClosingAmount = await calculateClosingStockValue(
+      purchaseEntry.company,
+      purchaseEntry.client,
+      session
+    );
+    
+    // ✅ CORRECTED: Calculate COGS properly
+    const totalAvailableValue = newLedger.openingStock.amount + newLedger.totalPurchaseOfTheDay.amount;
+    const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+
+    const newClosingQuantity = Math.max(0, newLedger.openingStock.quantity +
+      newLedger.totalPurchaseOfTheDay.quantity -
+      newLedger.totalSalesOfTheDay.quantity);
+
+    newLedger.closingStock.quantity = newClosingQuantity;
+    newLedger.closingStock.amount = newClosingAmount;
+    newLedger.totalCOGS = totalCOGS;
+    await newLedger.save({ session });
+  } else {
+    // Same date, just update the difference
+    const ledger = await DailyStockLedger.findOne({
+      companyId: purchaseEntry.company,
+      clientId: purchaseEntry.client,
+      date: newDate
+    }).session(session);
+
+    if (ledger) {
+      const quantityDiff = newPurchaseQuantity - oldPurchaseQuantity;
+      const amountDiff = newPurchaseAmount - oldPurchaseAmount;
+
+      ledger.totalPurchaseOfTheDay.quantity += quantityDiff;
+      ledger.totalPurchaseOfTheDay.amount += amountDiff;
+
+      // ✅ CORRECTED: Calculate closing stock value from FIFO batches
+      const newClosingAmount = await calculateClosingStockValue(
+        purchaseEntry.company,
+        purchaseEntry.client,
+        session
+      );
+      
+      // ✅ CORRECTED: Calculate COGS properly
+      const totalAvailableValue = ledger.openingStock.amount + ledger.totalPurchaseOfTheDay.amount;
+      const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+
+      const newClosingQuantity = Math.max(0, ledger.openingStock.quantity +
+        ledger.totalPurchaseOfTheDay.quantity -
+        ledger.totalSalesOfTheDay.quantity);
+
+      ledger.closingStock.quantity = newClosingQuantity;
+      ledger.closingStock.amount = newClosingAmount;
+      ledger.totalCOGS = totalCOGS;
+      await ledger.save({ session });
+    }
+  }
+}
 
 // --- UPDATE ------------------------------------------------------
 exports.updatePurchaseEntry = async (req, res) => {
@@ -425,8 +858,12 @@ exports.updatePurchaseEntry = async (req, res) => {
     const originalPaymentMethod = entry.paymentMethod;
     const originalTotalAmount = entry.totalAmount;
     const originalVendorId = entry.vendor.toString();
+    const oldDate = entry.date;
 
     const { products, services, ...otherUpdates } = req.body;
+
+    // Store old products before updating (for FIFO calculations)
+    const oldProducts = entry.products ? JSON.parse(JSON.stringify(entry.products)) : [];
 
     // Company change checks
     if (otherUpdates.company) {
@@ -517,7 +954,53 @@ exports.updatePurchaseEntry = async (req, res) => {
     }
     // If both non-credit, no change needed
 
+    // FIFO IMPLEMENTATION FOR UPDATE - Only if products changed
+    if (Array.isArray(products) && entry.products.length > 0) {
+      try {
+        // Find and update existing stock batches instead of creating new ones
+        const existingBatches = await StockBatch.find({
+          purchaseEntry: entry._id
+        });
+
+        // Update existing batches with new values
+        const batchUpdates = existingBatches.map(async (batch, index) => {
+          if (entry.products[index]) {
+            const newProduct = entry.products[index];
+
+            // Calculate quantity difference for ledger adjustment
+            const quantityDiff = newProduct.quantity - batch.initialQuantity;
+            const amountDiff = (newProduct.quantity * newProduct.pricePerUnit) -
+              (batch.initialQuantity * batch.costPrice);
+
+            // Update the batch
+            batch.initialQuantity = newProduct.quantity;
+            batch.remainingQuantity = Math.max(0, batch.remainingQuantity + quantityDiff);
+            batch.costPrice = newProduct.pricePerUnit;
+            batch.purchaseDate = entry.date;
+
+            await batch.save();
+
+            return { quantityDiff, amountDiff };
+          }
+          return { quantityDiff: 0, amountDiff: 0 };
+        });
+
+        await Promise.all(batchUpdates);
+
+        // Update Daily Stock Ledger for the changes
+        await updateDailyStockLedgerForPurchaseUpdate(entry, oldProducts, oldDate);
+
+        console.log(`✅ Updated ${existingBatches.length} existing stock batches for purchase`);
+
+      } catch (error) {
+        console.error("Error in FIFO update:", error);
+        // Don't fail the entire update, but log the error
+      }
+    }
+
+    // Save the updated purchase entry
     await entry.save();
+
     // Notify after save
     const companyId = entry.company.toString();
     const clientId = entry.client.toString();
@@ -608,6 +1091,22 @@ exports.deletePurchaseEntry = async (req, res) => {
         const currentBalance = vendorDoc.balances.get(companyIdStr) || 0;
         vendorDoc.balances.set(companyIdStr, currentBalance + entry.totalAmount);
         await vendorDoc.save();
+      }
+    }
+
+
+    // FIFO IMPLEMENTATION FOR DELETE - Reverse stock updates
+    if (entry.products && entry.products.length > 0) {
+      try {
+        await reverseProductStocksForDeletion(entry);
+        // Reverse stock batches and product updates
+        const reversedBatches = await reversePurchaseStockUpdates(entry);
+        await reverseDailyStockLedgerForPurchase(entry);
+
+        console.log(`✅ Reversed ${reversedBatches.length} stock batches for deleted purchase`);
+      } catch (error) {
+        console.error("Error in FIFO delete:", error);
+        // Don't fail the entire delete, but log the error
       }
     }
 
