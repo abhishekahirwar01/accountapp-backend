@@ -48,9 +48,7 @@ const profitLossRoutes = require('./routes/profitLossRoutes');
 const { startSchedulers, testReportImmediately } = require('./services/schedulerService');
 const dailyStockLedgerRoutes = require('./routes/dailyStockLedgerRoutes');
 
-
-const { runDailyCarryForward } = require('./jobs/dailyStockCarryForward');
-runDailyCarryForward();
+require('./jobs/dailyStockCarryForward');
 
 // const {manualCreateCarryForward} = require("./jobs/manualCreateCarryForward")
 // manualCreateCarryForward();

@@ -5,6 +5,8 @@ const Client = require("../models/Client");
 const Permission = require("../models/Permission");
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
 const { getEffectivePermissions } = require("../services/effectivePermissions");
+const StockCarryForwardService = require("../services/stockCarryForwardService");
+
 
 
 // Helper to convert absolute file path to a public URL under /uploads
@@ -134,6 +136,11 @@ exports.createCompany = async (req, res) => {
     });
 
     await company.save();
+    await StockCarryForwardService.createInitialDailyLedger({
+    companyId: company._id,
+    clientId: assignedClientId, // or req.user.id in createCompanyByClient
+    date: new Date() // today
+});
     res.status(201).json({ message: "Company created successfully", company });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -245,6 +252,11 @@ exports.createCompanyByClient = async (req, res) => {
     });
 
     await company.save();
+    await StockCarryForwardService.createInitialDailyLedger({
+    companyId: company._id,
+    clientId: req.user.id,
+    date: new Date()
+});
 
     // Invalidate cache
     // invalidateClient(req.user.id);
