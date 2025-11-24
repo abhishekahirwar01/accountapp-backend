@@ -2,7 +2,9 @@ const Product = require("../models/Product");
 const Unit = require("../models/Unit");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
-
+const XLSX = require("xlsx");
+const DailyStockLedgerService = require("../services/stockLedgerService");
+const StockBatch = require("../models/StockBatch");
 
 // Build message text per action
 function buildProductNotificationMessage(action, { actorName, productName }) {
@@ -44,17 +46,117 @@ async function notifyAdminOnProductAction({ req, action, productName, entryId })
   );
 }
 
+
+/**
+ * Create initial stock batch for product creation/import
+ */
+async function createInitialStockBatch(product, quantity, costPrice) {
+  try {
+    const stockBatch = new StockBatch({
+      product: product._id,
+      companyId: product.company,
+      clientId: product.createdByClient,
+      purchaseDate: new Date(),
+      costPrice: costPrice,
+      initialQuantity: quantity,
+      remainingQuantity: quantity,
+      status: "active",
+      isInitialStock: true // Flag to identify initial stock batches
+    });
+
+    await stockBatch.save();
+    console.log(`✅ Created initial stock batch for ${product.name}: ${quantity} units`);
+    return stockBatch;
+  } catch (error) {
+    console.error('Error creating initial stock batch:', error);
+    throw error;
+  }
+}
+
+
+/**
+ * Update stock batch for manual stock adjustments
+ */
+async function updateStockBatchForManualAdjustment(product, oldStocks, newStocks, costPrice) {
+  try {
+    const stockDifference = newStocks - oldStocks;
+    
+    if (stockDifference === 0) return;
+
+    if (stockDifference > 0) {
+      // Stock increased - create new stock batch
+      const stockBatch = new StockBatch({
+        product: product._id,
+        companyId: product.company,
+        clientId: product.createdByClient,
+        purchaseDate: new Date(),
+        costPrice: costPrice,
+        initialQuantity: stockDifference,
+        remainingQuantity: stockDifference,
+        status: "active",
+        isManualAdjustment: true
+      });
+      await stockBatch.save();
+      console.log(`✅ Created adjustment stock batch for ${product.name}: +${stockDifference} units`);
+    } else {
+      // Stock decreased - consume from existing batches (FIFO)
+      const quantityToReduce = Math.abs(stockDifference);
+      await consumeFromStockBatches(product._id, quantityToReduce);
+      console.log(`✅ Reduced stock from batches for ${product.name}: -${quantityToReduce} units`);
+    }
+  } catch (error) {
+    console.error('Error updating stock batch for manual adjustment:', error);
+    throw error;
+  }
+}
+
+/**
+ * Consume stock from existing batches (FIFO)
+ */
+async function consumeFromStockBatches(productId, quantityToReduce) {
+  const batches = await StockBatch.find({
+    product: productId,
+    status: "active",
+    remainingQuantity: { $gt: 0 }
+  }).sort({ purchaseDate: 1 }); // FIFO: oldest first
+
+  let remainingQty = quantityToReduce;
+  
+  for (const batch of batches) {
+    if (remainingQty <= 0) break;
+
+    const consumeQty = Math.min(batch.remainingQuantity, remainingQty);
+    batch.remainingQuantity -= consumeQty;
+    remainingQty -= consumeQty;
+
+    if (batch.remainingQuantity === 0) {
+      batch.status = "consumed";
+    }
+
+    await batch.save();
+  }
+
+  if (remainingQty > 0) {
+    console.warn(`⚠️ Could not fully reduce ${quantityToReduce} units from batches. Remaining: ${remainingQty}`);
+  }
+}
+
 // POST /api/products
 exports.createProduct = async (req, res) => {
   try {
-    const { name, stocks, unit, hsn, sellingPrice } = req.body;
+    const { name, stocks, unit, hsn, sellingPrice, costPrice, company } = req.body;
+
+    if (!company || company.trim() === "") {
+      return res.status(400).json({ message: "Company is required" });
+    }
 
     // console.log('Creating product:', { name, stocks, unit, clientId: req.auth.clientId });
 
     // Check if product already exists for this client
     const existingProduct = await Product.findOne({
       name: name.trim(),
-      createdByClient: req.auth.clientId
+      createdByClient: req.auth.clientId,
+      company: company
     });
 
     if (existingProduct) {
@@ -90,9 +192,26 @@ exports.createProduct = async (req, res) => {
         unit: normalizedUnit,
         hsn,
         sellingPrice,
+        costPrice,
         createdByClient: req.auth.clientId, // tenant id
-        createdByUser:   req.auth.userId,   // who created it
+        createdByUser: req.auth.userId,   // who created it
+        company: company,
       });
+
+      // Populate company before returning
+      await product.populate('company');
+
+      // ⬇️ UPDATE DAILY STOCK LEDGER ⬇️
+      if (stocks > 0 && costPrice > 0) {
+        await DailyStockLedgerService.handleProductCreation({
+          companyId: company,
+          clientId: req.auth.clientId,
+          stocks: stocks,
+          costPrice: costPrice
+        });
+
+         await createInitialStockBatch(product, stocks, costPrice);
+      }
 
       // console.log('Product created successfully:', product);
 
@@ -126,10 +245,19 @@ exports.createProduct = async (req, res) => {
 // GET /api/products
 exports.getProducts = async (req, res) => {
   try {
-    // ✅ scope by tenant
-    const clientId = req.auth.clientId;
+    const { clientId } = req.auth;
+    const { company } = req.query; // ✅ Get company from query params
 
-    const products = await Product.find({ createdByClient: clientId })
+    // Build filter object
+    const filter = { createdByClient: clientId };
+
+    // ✅ Add company filter if provided
+    if (company) {
+      filter.company = company;
+    }
+
+    const products = await Product.find(filter)
+      .populate('company') // ✅ Optional: populate company details
       .sort({ createdAt: -1 })
       .lean();
 
@@ -138,12 +266,15 @@ exports.getProducts = async (req, res) => {
     return res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-
 // PATCH /api/products/:id
 exports.updateProducts = async (req, res) => {
   try {
     const productId = req.params.id;
-    const { name, stocks, unit, hsn, sellingPrice } = req.body;
+    const { name, stocks, unit, hsn, sellingPrice, costPrice, company } = req.body;
+
+    if (company !== undefined && (!company || company.trim() === "")) {
+      return res.status(400).json({ message: "Company is required" });
+    }
 
     const product = await Product.findById(productId);
     if (!product) return res.status(404).json({ message: "Product not found" });
@@ -155,10 +286,15 @@ exports.updateProducts = async (req, res) => {
       return res.status(403).json({ message: "Not authorized to update this product" });
     }
 
+    const oldStocks = product.stocks;
+    const oldCostPrice = product.costPrice;
+
     if (name) product.name = name;
     if (typeof stocks === "number" && stocks >= 0) product.stocks = stocks;
     if (hsn !== undefined) product.hsn = hsn;
     if (typeof sellingPrice === "number" && sellingPrice >= 0) product.sellingPrice = sellingPrice;
+    if (typeof costPrice === "number" && costPrice >= 0) product.costPrice = costPrice;
+    if (company !== undefined) product.company = company;
 
     if (unit !== undefined) {
       let normalizedUnit = null;
@@ -193,6 +329,22 @@ exports.updateProducts = async (req, res) => {
 
     await product.save();
 
+  
+    // Populate company before returning
+    await product.populate('company');
+    const currentCostPrice = costPrice || oldCostPrice;
+    if (stocks !== undefined && stocks !== oldStocks && currentCostPrice > 0) {
+      await DailyStockLedgerService.handleProductUpdate({
+        companyId: company || product.company,
+        clientId: req.auth.clientId,
+        oldStocks: oldStocks,
+        newStocks: stocks,
+        costPrice: currentCostPrice
+      });
+
+
+       await updateStockBatchForManualAdjustment(product, oldStocks, stocks, currentCostPrice);
+    }
     // Notify admin after product updated
     await notifyAdminOnProductAction({
       req,
@@ -224,6 +376,16 @@ exports.deleteProducts = async (req, res) => {
     if (!sameTenant && !privileged) {
       return res.status(403).json({ message: "Not authorized to delete this product" });
     }
+
+    // ⬇️ UPDATE DAILY STOCK LEDGER ⬇️
+   if (product.stocks > 0 && product.costPrice > 0) {
+  await DailyStockLedgerService.handleProductDeletion({
+    companyId: product.company,
+    clientId: req.auth.clientId,
+    stocks: product.stocks,
+    costPrice: product.costPrice
+  });
+}
 
     // Notify admin before deleting
     await notifyAdminOnProductAction({
@@ -335,10 +497,15 @@ exports.updateStockBulk = async (req, res) => {
 
 
 exports.importProductsFromFile = async (req, res) => {
-  const file = req.file;  // File uploaded using multer
+  const file = req.file;
+  const { company } = req.body;
 
   if (!file) {
     return res.status(400).json({ message: "No file uploaded." });
+  }
+
+  if (!company) {
+    return res.status(400).json({ message: "Company is required for import." });
   }
 
   try {
@@ -346,37 +513,41 @@ exports.importProductsFromFile = async (req, res) => {
     const worksheet = workbook.Sheets[workbook.SheetNames[0]];
     const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
-    // Validate and format the data
-    const products = jsonData.map((item) => ({
-      name: item["Item Name"],
-      stocks: item["Stock"],
-      unit: item["Unit"],
-      hsn: item["HSN"],
-      sellingPrice: item["Selling Price"] || 0,
-    }));
+    // Validate required fields
+    const productsToCreate = [];
+    const errors = [];
 
-    // Check if product already exists and handle units
-    for (const product of products) {
-      const existingProduct = await Product.findOne({ name: product.name, createdByClient: req.auth.clientId });
+    for (const [index, item] of jsonData.entries()) {
+      const rowNumber = index + 2; // +2 because header is row 1
 
-      if (existingProduct) {
-        return res.status(400).json({
-          message: `Product ${product.name} already exists. Please update it instead of creating new.`,
-        });
+      if (!item["Item Name"]) {
+        errors.push(`Row ${rowNumber}: "Item Name" is required`);
+        continue;
       }
 
-      let normalizedUnit = null;
-      if (product.unit && typeof product.unit === 'string' && product.unit.trim()) {
-        normalizedUnit = product.unit.trim().toLowerCase();
+      // Check for duplicates before processing
+      const existingProduct = await Product.findOne({
+        name: item["Item Name"].toString().trim(),
+        createdByClient: req.auth.clientId,
+        company: company
+      });
 
-        // Check if unit exists for this client (case-insensitive)
+      if (existingProduct) {
+        errors.push(`Row ${rowNumber}: Product "${item["Item Name"]}" already exists`);
+        continue;
+      }
+
+      // Handle unit creation/lookup
+      let normalizedUnit = null;
+      if (item["Unit"] && item["Unit"].toString().trim()) {
+        normalizedUnit = item["Unit"].toString().trim().toLowerCase();
+
         let existingUnit = await Unit.findOne({
           createdByClient: req.auth.clientId,
           name: { $regex: new RegExp(`^${normalizedUnit}$`, 'i') }
         });
 
         if (!existingUnit) {
-          // Create new unit
           existingUnit = await Unit.create({
             name: normalizedUnit,
             createdByClient: req.auth.clientId,
@@ -385,21 +556,71 @@ exports.importProductsFromFile = async (req, res) => {
         }
       }
 
-      // Save new product
-      await Product.create({
-        name: product.name,
-        stocks: product.stocks,
+      productsToCreate.push({
+        name: item["Item Name"].toString().trim(),
+        stocks: Number(item["Stock"]) || 0,
         unit: normalizedUnit,
-        hsn: product.hsn,
-        sellingPrice: product.sellingPrice,
-        createdByClient: req.auth.clientId, // Add the client ID for multi-tenancy
-        createdByUser: req.auth.userId, // Add the user ID
+        hsn: item["HSN"] ? item["HSN"].toString() : "",
+        sellingPrice: Number(item["Selling Price"]) || 0,
+        costPrice: Number(item["Cost Price"]) || 0,
+        company: company,
+        createdByClient: req.auth.clientId,
+        createdByUser: req.auth.userId,
       });
     }
 
-    return res.status(200).json({ message: "Products imported successfully." });
+    if (errors.length > 0) {
+      return res.status(400).json({
+        message: "Validation errors found",
+        errors
+      });
+    }
+
+    if (productsToCreate.length === 0) {
+      return res.status(400).json({ message: "No valid products to import" });
+    }
+
+    // Use bulk insert for better performance
+    const createdProducts = await Product.insertMany(productsToCreate);
+
+    for (const product of createdProducts) {
+      if (product.stocks > 0 && product.costPrice > 0) {
+        await DailyStockLedgerService.handleProductCreation({
+          companyId: product.company,
+          clientId: req.auth.clientId,
+          stocks: product.stocks,
+          costPrice: product.costPrice
+        });
+      }
+    }
+
+    // Send notifications for each created product
+    for (const product of createdProducts) {
+      await notifyAdminOnProductAction({
+        req,
+        action: "create",
+        productName: product.name,
+        entryId: product._id,
+      });
+    }
+
+    return res.status(200).json({
+      message: `${createdProducts.length} products imported successfully`,
+      importedCount: createdProducts.length
+    });
+
   } catch (error) {
     console.error("Error importing products:", error);
-    res.status(500).json({ message: "Error importing products.", error: error.message });
+
+    if (error.code === 11000) {
+      return res.status(400).json({
+        message: "Duplicate products found during import"
+      });
+    }
+
+    return res.status(500).json({
+      message: "Error importing products",
+      error: error.message
+    });
   }
 };

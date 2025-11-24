@@ -46,6 +46,14 @@ const whatsappRoutes = require('./routes/whatsapp.routes')
 const ledgerRoutes = require('./routes/ledgerRoutes');
 const profitLossRoutes = require('./routes/profitLossRoutes');
 const { startSchedulers, testReportImmediately } = require('./services/schedulerService');
+const dailyStockLedgerRoutes = require('./routes/dailyStockLedgerRoutes');
+
+
+const { runDailyCarryForward } = require('./jobs/dailyStockCarryForward');
+runDailyCarryForward();
+
+// const {manualCreateCarryForward} = require("./jobs/manualCreateCarryForward")
+// manualCreateCarryForward();
 
 
 dotenv.config();
@@ -181,6 +189,7 @@ app.use("/api/support", supportRoutes)
 app.use('/api/whatsapp', whatsappRoutes)
 app.use('/api/ledger', ledgerRoutes);
 app.use('/api/profitloss', profitLossRoutes);
+app.use('/api/daily-stock-ledger', dailyStockLedgerRoutes);
 
 app.get('/', (req, res) => {
   res.send("Account App CI/CD is working on New server(VPS) ......");

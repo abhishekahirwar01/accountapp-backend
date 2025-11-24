@@ -7,6 +7,8 @@ const User = require("../models/User");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
+const { updateDailyLedgerForExpense } = require("./ledger/updateDailyLedgerForExpense");
+
 
 // roles that can bypass allowedCompanies restrictions
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
@@ -195,6 +197,16 @@ exports.createPayment = async (req, res) => {
       amount,
     });
 
+
+    if (isExpense) {
+  await updateDailyLedgerForExpense({
+    companyId: companyDoc._id,
+    clientId: req.auth.clientId,
+    date,
+    expenseHeadId: expenseDoc._id,
+    amountDelta: Number(amount)
+  });
+}
 
 
     // Access clientId and companyId after creation
@@ -525,6 +537,100 @@ exports.updatePayment = async (req, res) => {
     Object.assign(payment, rest);
     await payment.save();
 
+
+    // ---- DAILY LEDGER ADJUSTMENTS (EXPENSE) ----
+const oldIsExpense = payment.isExpense;
+const oldExpenseId = payment.expense?.toString();
+const oldAmount = Number(payment.amount);
+const oldDate = payment.date;
+const oldCompanyId = payment.company.toString();
+
+const newIsExpense = payment.isExpense;
+const newExpenseId = payment.expense?.toString();
+// const newAmount = Number(payment.amount);
+const newDate = payment.date;
+// const newCompanyId = payment.company.toString();
+
+// CASE A: WAS expense → NOW not expense
+if (oldIsExpense && !newIsExpense) {
+  await updateDailyLedgerForExpense({
+    companyId: oldCompanyId,
+    clientId: req.auth.clientId,
+    date: oldDate,
+    expenseHeadId: oldExpenseId,
+    amountDelta: -oldAmount
+  });
+}
+
+// CASE B: NOW expense → WAS not expense
+else if (!oldIsExpense && newIsExpense) {
+  await updateDailyLedgerForExpense({
+    companyId: newCompanyId,
+    clientId: req.auth.clientId,
+    date: newDate,
+    expenseHeadId: newExpenseId,
+    amountDelta: newAmount
+  });
+}
+
+// CASE C: Both are expense → compare details
+else if (oldIsExpense && newIsExpense) {
+
+  // 1. Expense Head changed
+  if (oldExpenseId !== newExpenseId) {
+    // remove old head
+    await updateDailyLedgerForExpense({
+      companyId: oldCompanyId,
+      clientId: req.auth.clientId,
+      date: oldDate,
+      expenseHeadId: oldExpenseId,
+      amountDelta: -oldAmount
+    });
+
+    // add new head
+    await updateDailyLedgerForExpense({
+      companyId: newCompanyId,
+      clientId: req.auth.clientId,
+      date: newDate,
+      expenseHeadId: newExpenseId,
+      amountDelta: newAmount
+    });
+  }
+
+  // 2. Amount changed
+  else if (oldAmount !== newAmount) {
+    const delta = newAmount - oldAmount;
+
+    await updateDailyLedgerForExpense({
+      companyId: newCompanyId,
+      clientId: req.auth.clientId,
+      date: newDate,
+      expenseHeadId: newExpenseId,
+      amountDelta: delta
+    });
+  }
+
+  // 3. Date or Company changed
+  else if (oldDate.toString() !== newDate.toString() || oldCompanyId !== newCompanyId) {
+    await updateDailyLedgerForExpense({
+      companyId: oldCompanyId,
+      clientId: req.auth.clientId,
+      date: oldDate,
+      expenseHeadId: oldExpenseId,
+      amountDelta: -oldAmount
+    });
+
+    await updateDailyLedgerForExpense({
+      companyId: newCompanyId,
+      clientId: req.auth.clientId,
+      date: newDate,
+      expenseHeadId: newExpenseId,
+      amountDelta: newAmount
+    });
+  }
+}
+
+
     // Handle vendor balance adjustment for amount changes (only for vendor payments)
     if (!payment.isExpense) {
       const amountDifference = newAmount - originalAmount;
@@ -618,6 +724,18 @@ exports.deletePayment = async (req, res) => {
     }
 
     await payment.deleteOne();
+
+    // ---- DAILY LEDGER REVERSE FOR EXPENSE ----
+if (payment.isExpense) {
+  await updateDailyLedgerForExpense({
+    companyId: payment.company.toString(),
+    clientId: payment.client.toString(),
+    date: payment.date,
+    expenseHeadId: payment.expense.toString(),
+    amountDelta: -Number(payment.amount)
+  });
+}
+
 
     const entityName = payment.isExpense
       ? (entityDoc?.name || "Unknown Expense")
