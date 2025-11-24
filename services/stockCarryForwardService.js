@@ -76,23 +76,26 @@ static async carryForwardStock({ companyId, clientId, date }) {
 }
 
 static async createInitialDailyLedger({ companyId, clientId, date }) {
-  const todayIST = this.convertToISTDate(date);
+    const todayIST = this.getTodayIST(date);
 
-  const ledger = new DailyStockLedger({
-    companyId,
-    clientId,
-    date: todayIST,
-    openingStock: { quantity: 0, amount: 0 },
-    closingStock: { quantity: 0, amount: 0 },
-    totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
-    totalSalesOfTheDay: { quantity: 0, amount: 0 },
-    totalCOGS: 0
-  });
+    const exists = await DailyStockLedger.findOne({
+        companyId,
+        clientId,
+        date: todayIST
+    });
 
-  await ledger.save();
+    if (exists) return exists;
 
-  console.log("✨ Created first DSL for new company:", todayIST.toISOString());
-  return ledger;
+    return await DailyStockLedger.create({
+        companyId,
+        clientId,
+        date: todayIST,
+        openingStock: { quantity: 0, amount: 0 },
+        closingStock: { quantity: 0, amount: 0 },
+        totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
+        totalSalesOfTheDay: { quantity: 0, amount: 0 },
+        totalCOGS: 0
+    });
 }
 
 
