@@ -32,70 +32,69 @@ class StockCarryForwardService {
   /**
    * Carry forward yesterday's closing stock to today's opening stock
    */
-  static async carryForwardStock({ companyId, clientId, date }) {
-    try {
-      // Convert to IST dates (18:30 UTC format)
-      const todayIST = this.getTodayIST(date);
-      const yesterdayIST = this.getYesterdayIST(date);
+static async carryForwardStock({ companyId, clientId, date }) {
+  try {
+    const todayIST = this.getTodayIST(date);
+    const yesterdayIST = this.getYesterdayIST(date);
 
-      console.log(`📅 Carry forward:`);
-      console.log(`   Input date: ${date.toISOString()}`);
-      console.log(`   Yesterday (IST): ${yesterdayIST.toISOString()}`);
-      console.log(`   Today (IST): ${todayIST.toISOString()}`);
+    // Get yesterday ledger
+    const yesterdayLedger = await DailyStockLedger.findOne({
+      companyId,
+      clientId,
+      date: yesterdayIST
+    });
 
-      // Find yesterday's ledger
-      const yesterdayLedger = await DailyStockLedger.findOne({
-        companyId: companyId,
-        clientId: clientId,
-        date: yesterdayIST
-      });
+    let openingStock = { quantity: 0, amount: 0 };
 
-      // If no yesterday data, start with zero opening
-      let openingStock = { quantity: 0, amount: 0 };
-      
-      if (yesterdayLedger && yesterdayLedger.closingStock) {
-        openingStock = {
-          quantity: yesterdayLedger.closingStock.quantity || 0,
-          amount: yesterdayLedger.closingStock.amount || 0
-        };
-        console.log(`✅ Found yesterday's closing: ${openingStock.quantity} units, ₹${openingStock.amount}`);
-      } else {
-        console.log(`⚠️ No yesterday data found, starting with zero opening`);
-      }
-
-      // Find or create today's ledger with carried forward opening stock
-      const todayLedger = await DailyStockLedger.findOneAndUpdate(
-        {
-          companyId: companyId,
-          clientId: clientId,
-          date: todayIST
-        },
-        {
-          $set: {
-            openingStock: openingStock,
-            // Also update closing stock if it's a new document or needs correction
-            closingStock: openingStock
-          },
-          $setOnInsert: {
-            totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
-            totalSalesOfTheDay: { quantity: 0, amount: 0 }
-          }
-        },
-        { 
-          upsert: true, 
-          new: true,
-          setDefaultsOnInsert: true 
-        }
-      );
-
-      console.log(`✅ Today's opening set to: ${todayLedger.openingStock.quantity} units, ₹${todayLedger.openingStock.amount}`);
-      
-      return todayLedger;
-    } catch (error) {
-      console.error('❌ Error in stock carry forward:', error);
-      throw error;
+    if (yesterdayLedger) {
+      openingStock = {
+        quantity: yesterdayLedger.closingStock.quantity,
+        amount: yesterdayLedger.closingStock.amount
+      };
     }
+
+    // Create today's ledger (ONLY CRON CAN CALL THIS)
+    const todayLedger = new DailyStockLedger({
+      companyId,
+      clientId,
+      date: todayIST,
+      openingStock,
+      closingStock: openingStock,
+      totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
+      totalSalesOfTheDay: { quantity: 0, amount: 0 },
+      totalCOGS: 0
+    });
+
+    await todayLedger.save();
+    console.log("✨ DSL Created for:", todayIST);
+
+    return todayLedger;
+
+  } catch (err) {
+    console.error("❌ carryForwardStock error:", err);
   }
+}
+
+static async createInitialDailyLedger({ companyId, clientId, date }) {
+  const todayIST = this.convertToISTDate(date);
+
+  const ledger = new DailyStockLedger({
+    companyId,
+    clientId,
+    date: todayIST,
+    openingStock: { quantity: 0, amount: 0 },
+    closingStock: { quantity: 0, amount: 0 },
+    totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
+    totalSalesOfTheDay: { quantity: 0, amount: 0 },
+    totalCOGS: 0
+  });
+
+  await ledger.save();
+
+  console.log("✨ Created first DSL for new company:", todayIST.toISOString());
+  return ledger;
+}
+
 
   /**
    * Ensure carry forward happens for a specific company/date
