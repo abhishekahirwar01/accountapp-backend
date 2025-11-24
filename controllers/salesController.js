@@ -2891,30 +2891,31 @@ exports.deleteSalesEntry = async (req, res) => {
     // Start the transaction
     await session.withTransaction(async () => {
       // 🟢🟢🟢 ADD FIFO STOCK REVERSAL LOGIC HERE 🟢🟢🟢
-     if (entry.stockImpact && entry.stockImpact.length > 0) {
-  
-  console.log("🟡 Starting FIFO stock reversal for DELETE using stockImpact...");
+      if (entry.stockImpact && entry.stockImpact.length > 0) {
 
-  // Reverse exact batch-wise consumption
-  const { hadStockImpact, originalCOGS } = await reverseStockForSales(entry, session);
+        console.log("🟡 Starting FIFO stock reversal for DELETE using stockImpact...");
 
-  if (hadStockImpact) {
-    // Build original products WITH NEGAIVE QUANTITIES from stockImpact
-    const originalProducts = entry.stockImpact.map(p => ({
-      quantity: p.quantity, // this is original consumed qty
-      pricePerUnit: p.cogs / p.quantity
-    }));
+        // Reverse exact batch-wise consumption
+        const { hadStockImpact, originalCOGS } = await reverseStockForSales(entry, session);
 
-    await reverseDailyStockLedgerForSales(
-      entry,
-      originalProducts,
-      originalCOGS,
-      session
-    );
-  }
+        if (hadStockImpact) {
+          // Build original products WITH NEGAIVE QUANTITIES from stockImpact
+          const originalProducts = entry.stockImpact.map(p => ({
+            quantity: p.quantity, // this is original consumed qty
+            pricePerUnit: p.cogs / p.quantity
+          }));
 
-  console.log("✅ Stock & ledger reversal successful for DELETE.");
-}
+          await reverseDailyStockLedgerForSales(
+            entry,
+            entry.products,   // <-- use the real sales line items
+            originalCOGS,
+            session
+          );
+
+        }
+
+        console.log("✅ Stock & ledger reversal successful for DELETE.");
+      }
 
       // 🟢🟢🟢 REVERSE CREDIT BALANCE IF PAYMENT WAS CREDIT 🟢🟢🟢
       if (paymentMethod === "Credit") {
