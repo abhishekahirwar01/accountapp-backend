@@ -147,13 +147,13 @@
 //  */
 // async function consumeStockBatches(products, companyId, clientId, salesDate, session = null) {
 //   const consumptionResults = [];
-  
+
 //   for (const item of products) {
 //     const productId = item.product;
 //     const quantityNeeded = item.quantity;
 //     let remainingQty = quantityNeeded;
 //     let totalCost = 0;
-    
+
 //     // Get active batches sorted by purchase date (oldest first)
 //     const activeBatches = await StockBatch.find({
 //       product: productId,
@@ -164,46 +164,46 @@
 //     })
 //     .sort({ purchaseDate: 1 })
 //     .session(session);
-    
+
 //     const batchConsumptions = [];
-    
+
 //     for (const batch of activeBatches) {
 //       if (remainingQty <= 0) break;
-      
+
 //       const consumeQty = Math.min(remainingQty, batch.remainingQuantity);
 //       const costForThisBatch = consumeQty * batch.costPrice;
-      
+
 //       // Update batch
 //       batch.remainingQuantity -= consumeQty;
 //       if (batch.remainingQuantity === 0) {
 //         batch.status = "consumed";
 //       }
-      
+
 //       await batch.save({ session });
-      
+
 //       batchConsumptions.push({
 //         batchId: batch._id,
 //         quantity: consumeQty,
 //         cost: costForThisBatch,
 //         costPrice: batch.costPrice
 //       });
-      
+
 //       totalCost += costForThisBatch;
 //       remainingQty -= consumeQty;
 //     }
-    
-  
-    
+
+
+
 //     consumptionResults.push({
 //       product: productId,
 //       quantity: quantityNeeded,
 //       totalCost,
 //       batchConsumptions
 //     });
-    
+
 //     console.log(`✅ Consumed ${quantityNeeded} units of ${product?.name} with COGS: ₹${totalCost}`);
 //   }
-  
+
 //   return consumptionResults;
 // }
 
@@ -294,10 +294,10 @@
 // async function reverseSalesStockConsumption(salesEntry, session = null) {
 //   // Find all stock transactions for this sales entry
 //   // (You might want to create a SalesStockConsumption model to track this)
-  
+
 //   // For now, we'll reverse by re-adding quantities to batches
 //   // This is complex and might require tracking consumption records
-  
+
 //   console.log(`⚠️ Stock consumption reversal for sales ${salesEntry._id} - Manual adjustment needed`);
 //   return [];
 // }
@@ -375,7 +375,7 @@
 // exports.getSalesEntries = async (req, res) => {
 //   try {
 //     await ensureAuthCaps(req);
-    
+
 //     const filter = {};
 //     const user = req.user;
 
@@ -681,7 +681,7 @@
 //           if (normalizedProducts.length > 0) {
 //             try {
 //               console.log('🟡 Starting FIFO stock consumption for sales...');
-              
+
 //               // Consume stock using FIFO method
 //               const cogsResults = await consumeStockBatches(
 //                 normalizedProducts,
@@ -704,7 +704,7 @@
 //               await entry.save({ session });
 
 //               console.log(`✅ Processed FIFO consumption for ${normalizedProducts.length} products, COGS: ₹${entry.cogsAmount}`);
-              
+
 //             } catch (fifoError) {
 //               console.error("❌ Error in sales FIFO processing:", fifoError);
 //               // Don't fail the entire transaction for FIFO errors, but log them
@@ -927,7 +927,7 @@
 //           console.log(`✅ Updated party balance for same company: ${currentCompanyId}, difference: ${amountDifference}`);
 //         } else {
 //           // Different parties or different companies - complex adjustment needed
-          
+
 //           // Remove from original party's company balance
 //           await Party.findByIdAndUpdate(
 //             originalPartyId,
@@ -939,7 +939,7 @@
 //             { session }
 //           );
 //           console.log(`✅ Removed from original party/company: ${originalPartyId}/${originalCompanyId}, amount: -${originalTotalAmount}`);
-          
+
 //           // Add to current party's company balance
 //           await Party.findByIdAndUpdate(
 //             currentPartyId,
@@ -987,13 +987,13 @@
 //       if (productsChanged && (originalProducts.length > 0 || normalizedProducts.length > 0)) {
 //         try {
 //           console.log('🟡 Starting FIFO stock update for sales...');
-          
+
 //           // Step 1: Reverse original stock consumption (restore batches)
 //           if (originalProducts.length > 0) {
 //             await reverseSalesStockConsumption(entry, originalProducts, originalDate, session);
 //             console.log(`✅ Reversed original stock consumption for ${originalProducts.length} products`);
 //           }
-          
+
 //           // Step 2: Apply new stock consumption
 //           if (normalizedProducts.length > 0) {
 //             const cogsResults = await consumeStockBatches(
@@ -1003,7 +1003,7 @@
 //               entry.date || new Date(),
 //               session
 //             );
-            
+
 //             // Update Daily Stock Ledger for the changes
 //             await updateDailyStockLedgerForSalesUpdate(
 //               entry, 
@@ -1014,7 +1014,7 @@
 //               originalDate,
 //               session
 //             );
-            
+
 //             // Save new COGS information
 //             entry.cogsAmount = cogsResults.reduce((sum, result) => sum + result.totalCost, 0);
 //             console.log(`✅ Applied new stock consumption, COGS: ₹${entry.cogsAmount}`);
@@ -1022,7 +1022,7 @@
 //             // No products in update - clear COGS
 //             entry.cogsAmount = 0;
 //           }
-          
+
 //         } catch (fifoError) {
 //           console.error("❌ Error in sales FIFO update:", fifoError);
 //           // Don't fail the entire transaction for FIFO errors
@@ -1106,24 +1106,24 @@
 //       if (products.length > 0) {
 //         try {
 //           console.log('🟡 Starting FIFO stock reversal for sales deletion...');
-          
+
 //           // Reverse product stock updates
 //           await reverseProductStocksForSalesDeletion(entry, session);
-          
+
 //           // Reverse stock batch consumption (this is simplified - in production track actual consumption)
 //           await reverseSalesStockConsumption(entry, products, entry.date, session);
-          
+
 //           // Reverse Daily Stock Ledger entries
 //           await reverseDailyStockLedgerForSales(entry, products, cogsAmount, entry.date, session);
-          
+
 //           console.log(`✅ Reversed FIFO stock consumption for ${products.length} products`);
-          
+
 //         } catch (fifoError) {
 //           console.error("❌ Error in sales FIFO deletion:", fifoError);
 //           // Don't fail the entire deletion for FIFO errors, but log them
 //         }
 //       }
-      
+
 //       // 🟢🟢🟢 REVERSE CREDIT BALANCE IF PAYMENT WAS CREDIT 🟢🟢🟢
 //       if (paymentMethod === "Credit") {
 //         try {
@@ -1292,12 +1292,12 @@
 //       amount: pendingAmount,
 //       sentFrom: 'Client Gmail' // Indicate it was sent from client's email
 //     });
-    
+
 //     console.log(`✅ Credit reminder sent from client Gmail to ${party.email} for ${party.name}`);
 
 //   } catch (error) {
 //     console.error('Error in sendCreditReminder:', error);
-    
+
 //     // Handle specific Gmail connection errors
 //     if (error.message.includes('Gmail is not connected') || 
 //         error.message.includes('No client Gmail available') ||
@@ -1307,7 +1307,7 @@
 //         error: error.message 
 //       });
 //     }
-    
+
 //     res.status(500).json({ 
 //       message: 'Failed to send credit reminder', 
 //       error: error.message 
@@ -1319,7 +1319,7 @@
 //   const invoiceNumber = transaction.invoiceNumber || transaction.referenceNumber || 'N/A';
 //   const invoiceDate = new Date(transaction.date).toLocaleDateString();
 //   const formattedAmount = new Intl.NumberFormat('en-IN').format(pendingAmount);
-  
+
 //   const overdueNotice = daysOverdue > 30 
 //     ? `<p style="color: #d32f2f; font-weight: bold;">This invoice is ${daysOverdue - 30} days overdue. Please process the payment immediately to avoid any disruption in services.</p>`
 //     : '<p>Please process this payment at your earliest convenience.</p>';
@@ -1369,11 +1369,11 @@
 //     <div class="header">
 //       <h2>Payment Reminder</h2>
 //     </div>
-    
+
 //     <p>Dear <strong>${party.name}</strong>,</p>
-    
+
 //     <p>This is a friendly reminder regarding your outstanding payment. The following invoice is currently pending:</p>
-    
+
 //     <table style="width: 100%; border-collapse: collapse; margin: 20px 0;">
 //       <tr>
 //         <td style="padding: 8px; border-bottom: 1px solid #eee;"><strong>Invoice Number:</strong></td>
@@ -1392,13 +1392,13 @@
 //         <td style="padding: 8px;" class="amount">₹${formattedAmount}</td>
 //       </tr>
 //     </table>
-    
+
 //     ${overdueNotice}
-    
+
 //     <p>If you have already made the payment, please disregard this reminder. For any queries regarding this invoice, please contact us.</p>
-    
+
 //     <p>Thank you for your business!</p>
-    
+
 //     <div class="footer">
 //       <p><strong>Best regards,</strong><br>
 //       ${transaction.company.businessName}<br>
@@ -1560,6 +1560,9 @@ async function notifyAdminOnSalesAction({
 /**
  * Consume stock from batches for sales (FIFO)
  */
+/**
+ * Consume stock from batches for sales (FIFO)
+ */
 async function consumeStockForSales(salesEntry, products, session = null) {
   try {
     const consumptionResults = [];
@@ -1567,17 +1570,17 @@ async function consumeStockForSales(salesEntry, products, session = null) {
 
     for (const item of products) {
       const productId = item.product;
-      const quantityToConsume = item.quantity;
+      const quantityToConsume = Number(item.quantity) || 0;
 
-      console.log(`🛒 Consuming ${quantityToConsume} units from product: ${productId}`);
+      if (!quantityToConsume) continue;
 
       const batches = await StockBatch.find({
         product: productId,
         status: { $in: ["active", "partial", "sold"] },
         remainingQuantity: { $gt: 0 }
-      }).sort({ purchaseDate: 1 }).session(session);
-
-      console.log(`📦 Found ${batches.length} batches for product ${productId}`);
+      })
+        .sort({ purchaseDate: 1 })
+        .session(session);
 
       let remainingQty = quantityToConsume;
       const consumedBatches = [];
@@ -1587,6 +1590,8 @@ async function consumeStockForSales(salesEntry, products, session = null) {
         if (remainingQty <= 0) break;
 
         const consumeQty = Math.min(batch.remainingQuantity, remainingQty);
+        if (consumeQty <= 0) continue;
+
         batch.remainingQuantity -= consumeQty;
         remainingQty -= consumeQty;
 
@@ -1594,6 +1599,7 @@ async function consumeStockForSales(salesEntry, products, session = null) {
         itemCOGS += batchCOGS;
         totalCOGS += batchCOGS;
 
+        // push log into batch
         batch.consumedBySales.push({
           salesEntry: salesEntry._id,
           consumedQty: consumeQty,
@@ -1613,30 +1619,24 @@ async function consumeStockForSales(salesEntry, products, session = null) {
         }
 
         await batch.save({ session });
-        console.log(`✅ Consumed ${consumeQty} units from batch ${batch._id} at cost ₹${batch.costPrice}/unit`);
       }
-
-      // In consumeStockForSales function, add this at the start of the product loop:
-      console.log(`🔍 DEBUG: Starting consumption for product ${productId}`);
-      console.log(`🔍 DEBUG: Requested quantity: ${quantityToConsume}`);
-      console.log(`🔍 DEBUG: Current product stock: ${(await Product.findById(productId).session(session))?.stocks}`);
-      console.log(`🔍 DEBUG: Available batches:`, batches.map(b => ({ batch: b._id, remaining: b.remainingQuantity })));
-
 
       if (remainingQty > 0) {
-        const totalAvailableBefore = batches.reduce((sum, batch) => sum + batch.remainingQuantity, 0);
-        console.warn(`⚠️ Insufficient stock in batches for product ${productId}. Requested: ${quantityToConsume}, Available in batches: ${totalAvailableBefore}`);
-        throw new Error(`Insufficient stock in batches. Available: ${totalAvailableBefore}, Requested: ${quantityToConsume}`);
+        const totalAvailableBefore = batches.reduce(
+          (sum, batch) => sum + batch.remainingQuantity,
+          0
+        );
+        throw new Error(
+          `Insufficient stock in batches. Available: ${totalAvailableBefore}, Requested: ${quantityToConsume}`
+        );
       }
 
-
-      // 🔥 FIX: UPDATE PRODUCT STOCK (This is essential!)
-      // const product = await Product.findById(productId).session(session);
-      // if (product) {
-      //   product.stocks = Math.max(0, product.stocks - quantityToConsume);
-      //   await product.save({ session });
-      //   console.log(`✅ Updated product stock: ${product.name} = ${product.stocks} units`);
-      // }
+      // update product stock
+      const product = await Product.findById(productId).session(session);
+      if (product) {
+        product.stocks = Math.max(0, (product.stocks || 0) - quantityToConsume);
+        await product.save({ session });
+      }
 
       consumptionResults.push({
         productId,
@@ -1644,16 +1644,16 @@ async function consumeStockForSales(salesEntry, products, session = null) {
         cogs: itemCOGS,
         batches: consumedBatches
       });
-
-      console.log(`💰 COGS for ${quantityToConsume} units: ₹${itemCOGS}`);
     }
 
+    // IMPORTANT: caller will store consumptionResults on salesEntry.stockImpact
     return { consumptionResults, totalCOGS };
   } catch (error) {
-    console.error('Error consuming stock for sales:', error);
+    console.error("Error consuming stock for sales:", error);
     throw error;
   }
 }
+
 
 
 async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleCOGS, session = null) {
@@ -1753,79 +1753,76 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
 async function reverseStockForSales(salesEntry, session = null) {
   try {
     const saleId = salesEntry._id.toString();
-    const productIds = salesEntry.products.map(p => p.product);
-    const saleDate = new Date(salesEntry.date);
-    const timeWindow = 86400000; // 24 hour window for matching consumption records
+    const stockImpact = Array.isArray(salesEntry.stockImpact)
+      ? salesEntry.stockImpact
+      : [];
 
-    const batches = await StockBatch.find({
-      product: { $in: productIds },
-      companyId: salesEntry.company,
-      clientId: salesEntry.client
-    }).session(session);
-
-    if (!batches.length) {
-      console.log(`ℹ️ No batches found for sale entry ${saleId}. Skipping stock reversal.`);
+    if (!stockImpact.length) {
+      console.log(
+        `ℹ️ No stockImpact stored for sale entry ${saleId}. Skipping stock reversal.`
+      );
       return { hadStockImpact: false, originalCOGS: 0 };
     }
-
-    console.log(`🔁 Reversing stock for sale entry ${saleId}. Checking ${batches.length} batches for consumption records within 1 hour of sale date.`);
 
     let originalCOGS = 0;
     const qtyByProduct = new Map();
 
-    for (const batch of batches) {
-      const remainingLogs = [];
-      for (const log of batch.consumedBySales) {
-        const consumedAt = new Date(log.consumedAt);
-        const timeDiff = Math.abs(consumedAt - saleDate);
+    for (const impact of stockImpact) {
+      const productId =
+        (impact.productId && impact.productId.toString()) ||
+        (impact.product && impact.product.toString());
 
-        // Check if this consumption log matches the sale (either by saleEntry field or by time proximity)
-        const matchesSale = (log.saleEntry && log.saleEntry.toString() === saleId) || (timeDiff < timeWindow);
+      for (const b of impact.batches || []) {
+        const batchId = b.batchId || b._id;
+        const qty = Number(b.consumedQty) || 0;
+        if (!batchId || !qty) continue;
 
-        if (matchesSale) {
-          let qty = Number(log.consumedQty) || Number(log.quantity) || 0;
+        const batch = await StockBatch.findById(batchId).session(session);
+        if (!batch) continue;
 
-          // For old records without consumedQty, use the original sales quantity for this product
-          if (qty === 0) {
-            const originalProduct = salesEntry.products.find(p => p.product.toString() === batch.product.toString());
-            qty = originalProduct ? Number(originalProduct.quantity) || 0 : 0;
-          }
+        batch.remainingQuantity = (batch.remainingQuantity || 0) + qty;
 
-          // Restore batch quantity
-          batch.remainingQuantity += qty;
+        // clean logs for this sale
+        batch.consumedBySales = (batch.consumedBySales || []).filter(
+          log =>
+            !(
+              log.salesEntry &&
+              log.salesEntry.toString() === saleId &&
+              Number(log.consumedQty) === qty
+            )
+        );
 
-          // COGS for this log
-          originalCOGS += qty * batch.costPrice;
-
-          // Accumulate qty per product
-          const productKey = batch.product.toString();
-          qtyByProduct.set(productKey, (qtyByProduct.get(productKey) || 0) + qty);
-
-          console.log(`🔁 Reversed consumption: batch ${batch._id}, qty ${qty}, cost ₹${qty * batch.costPrice}`);
-        } else {
-          remainingLogs.push(log);
+        if (batch.remainingQuantity > 0 && batch.status === "sold") {
+          batch.status = "active";
+          batch.isActive = true;
         }
+
+        await batch.save({ session });
+
+        originalCOGS += qty * (b.costPrice || batch.costPrice || 0);
+
+        if (productId) {
+          qtyByProduct.set(
+            productId,
+            (qtyByProduct.get(productId) || 0) + qty
+          );
+        }
+
+        console.log(
+          `🔁 Reversed batch ${batch._id}: +${qty} units @ ₹${b.costPrice || batch.costPrice
+          }`
+        );
       }
-
-      batch.consumedBySales = remainingLogs;
-
-      // If batch was sold and now has quantity again → make it active
-      if (batch.remainingQuantity > 0 && batch.status === "sold") {
-        batch.status = "active";
-        batch.isActive = true;
-      }
-
-      await batch.save({ session });
     }
 
-    // Restore Product.stocks
+    // restore product.stocks
     for (const [productId, qty] of qtyByProduct.entries()) {
       const product = await Product.findById(productId).session(session);
       if (product) {
         product.stocks = (product.stocks || 0) + qty;
         await product.save({ session });
         console.log(
-          `🔁 Restored product stock: ${product.name} += ${qty} → ${product.stocks} units`
+          `🔁 Restored product stock: ${product.name} += ${qty} → ${product.stocks}`
         );
       }
     }
@@ -1840,6 +1837,7 @@ async function reverseStockForSales(salesEntry, session = null) {
     throw error;
   }
 }
+
 
 
 
@@ -2187,14 +2185,21 @@ exports.createSalesEntry = async (req, res) => {
               console.log(`🔍 Stock BEFORE consumption: ${productBefore.stocks} units`);
 
               // Consume stock from batches (FIFO) - get both results and COGS
+              // Consume stock and get exact batch-wise impact
               const { consumptionResults, totalCOGS } = await consumeStockForSales(entry, normalizedProducts, session);
+
+              // 🔥 SAVE THE IMPACT SO UPDATE CAN REVERSE IT PERFECTLY
+              entry.stockImpact = consumptionResults;
+              await entry.save({ session });
+
+              // Update daily stock ledger AFTER stockImpact is saved
+              await updateDailyStockLedgerForSales(entry, normalizedProducts, totalCOGS, session);
+
 
               // 🔥 ADD DEBUG: Check stock after consumption
               const productAfter = await Product.findById(normalizedProducts[0].product).session(session);
               console.log(`🔍 Stock AFTER consumption: ${productAfter.stocks} units`);
 
-              // Update daily stock ledger with COGS
-              await updateDailyStockLedgerForSales(entry, normalizedProducts, totalCOGS, session);
 
               console.log(`✅ Stock consumed for sales: ${consumptionResults.length} products, Total COGS: ₹${totalCOGS}`);
             } catch (stockError) {
@@ -2425,7 +2430,7 @@ const sameTenant = (entryClientId, userClientId) => {
 //           console.log(`✅ Updated party balance for same company: ${currentCompanyId}, difference: ${amountDifference}`);
 //         } else {
 //           // Different parties or different companies - complex adjustment needed
-          
+
 //           // Remove from original party's company balance
 //           await Party.findByIdAndUpdate(
 //             originalPartyId,
@@ -2437,7 +2442,7 @@ const sameTenant = (entryClientId, userClientId) => {
 //             { session }
 //           );
 //           console.log(`✅ Removed from original party/company: ${originalPartyId}/${originalCompanyId}, amount: -${originalTotalAmount}`);
-          
+
 //           // Add to current party's company balance
 //           await Party.findByIdAndUpdate(
 //             currentPartyId,
@@ -2543,8 +2548,8 @@ exports.updateSalesEntry = async (req, res) => {
     // Snapshot original data for reversal
     const originalProducts = Array.isArray(existingEntry.products)
       ? existingEntry.products.map(p =>
-          p.toObject ? p.toObject() : { ...p }
-        )
+        p.toObject ? p.toObject() : { ...p }
+      )
       : [];
 
     const {
@@ -2674,17 +2679,17 @@ exports.updateSalesEntry = async (req, res) => {
           productsTotal ||
           (Array.isArray(entry.products)
             ? entry.products.reduce(
-                (s, it) => s + (Number(it.amount) || 0),
-                0
-              )
+              (s, it) => s + (Number(it.amount) || 0),
+              0
+            )
             : 0);
         const sumServices =
           servicesTotal ||
           (Array.isArray(entry.services)
             ? entry.services.reduce(
-                (s, it) => s + (Number(it.amount) || 0),
-                0
-              )
+              (s, it) => s + (Number(it.amount) || 0),
+              0
+            )
             : 0);
         entry.totalAmount = sumProducts + sumServices;
       }
@@ -2692,11 +2697,14 @@ exports.updateSalesEntry = async (req, res) => {
       // 3️⃣ CONSUME NEW STOCK + UPDATE LEDGER FOR NEW STATE
       let newCOGS = 0;
       if (Array.isArray(entry.products) && entry.products.length > 0) {
-        const { totalCOGS } = await consumeStockForSales(
+        const { consumptionResults, totalCOGS } = await consumeStockForSales(
           entry,
           entry.products,
           session
         );
+
+        // 🔐 Save fresh stock impact for this updated sale
+        entry.stockImpact = consumptionResults;
         newCOGS = totalCOGS || 0;
 
         await updateDailyStockLedgerForSales(
@@ -2705,7 +2713,11 @@ exports.updateSalesEntry = async (req, res) => {
           newCOGS,
           session
         );
+      } else {
+        // no products → clear any old impact
+        entry.stockImpact = [];
       }
+
 
       // 4️⃣ CREDIT BALANCE ADJUSTMENT (company-specific balances) INSIDE SAME TXN
       const currentPartyId = party || originalPartyId;
@@ -2879,25 +2891,30 @@ exports.deleteSalesEntry = async (req, res) => {
     // Start the transaction
     await session.withTransaction(async () => {
       // 🟢🟢🟢 ADD FIFO STOCK REVERSAL LOGIC HERE 🟢🟢🟢
-      // Reverse FIFO stock consumption if there were products
-      if (entry.products && entry.products.length > 0) {
-        try {
-          console.log('🟡 Starting FIFO stock reversal for sales deletion...');
+      if (entry.stockImpact && entry.stockImpact.length > 0) {
 
-          // Reverse stock batch consumption using the same logic as update
-          const { hadStockImpact, originalCOGS } = await reverseStockForSales(entry, session);
+        console.log("🟡 Starting FIFO stock reversal for DELETE using stockImpact...");
 
-          if (hadStockImpact) {
-            // Reverse Daily Stock Ledger entries
-            await reverseDailyStockLedgerForSales(entry, entry.products, originalCOGS, session);
-          }
+        // Reverse exact batch-wise consumption
+        const { hadStockImpact, originalCOGS } = await reverseStockForSales(entry, session);
 
-          console.log(`✅ Reversed FIFO stock consumption for ${entry.products.length} products`);
+        if (hadStockImpact) {
+          // Build original products WITH NEGAIVE QUANTITIES from stockImpact
+          const originalProducts = entry.stockImpact.map(p => ({
+            quantity: p.quantity, // this is original consumed qty
+            pricePerUnit: p.cogs / p.quantity
+          }));
 
-        } catch (fifoError) {
-          console.error("❌ Error in sales FIFO deletion:", fifoError);
-          // Don't fail the entire deletion for FIFO errors, but log them
+          await reverseDailyStockLedgerForSales(
+            entry,
+            entry.products,   // <-- use the real sales line items
+            originalCOGS,
+            session
+          );
+
         }
+
+        console.log("✅ Stock & ledger reversal successful for DELETE.");
       }
 
       // 🟢🟢🟢 REVERSE CREDIT BALANCE IF PAYMENT WAS CREDIT 🟢🟢🟢

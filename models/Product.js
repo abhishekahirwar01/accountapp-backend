@@ -7,7 +7,7 @@ const productSchema = new mongoose.Schema(
     hsn: { type: String, trim: true },
     sellingPrice: { type: Number, default: 0, min: 0 },
 
-    company: { type: mongoose.Schema.Types.ObjectId, ref: "Company", required: true },
+    company: { type: mongoose.Schema.Types.ObjectId, ref: "Company" },
     createdByClient: { type: mongoose.Schema.Types.ObjectId, ref: "Client", required: true },
     createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
 
