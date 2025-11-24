@@ -22,6 +22,7 @@ const vendorSchema = new mongoose.Schema(
       required: true,
     },
      createdByUser:   { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+     company: { type: mongoose.Schema.Types.ObjectId, ref: "Company" },
      balances: { type: Map, of: Number, default: {} }, // companyId -> balance
   },
   { timestamps: true }

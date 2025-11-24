@@ -481,15 +481,15 @@ exports.createPurchaseEntry = async (req, res) => {
           // FIFO IMPLEMENTATION - Only for products (not services)
           if (normalizedProducts.length > 0) {
             // Update Product stocks and cost prices
-            // const productUpdates = normalizedProducts.map(item =>
-            //   updateProductStockAndCostPrice(
-            //     item.product,
-            //     item.quantity,
-            //     item.pricePerUnit,
-            //     session
-            //   )
-            // );
-            // await Promise.all(productUpdates);
+            const productUpdates = normalizedProducts.map(item =>
+              updateProductStockAndCostPrice(
+                item.product,
+                item.quantity,
+                item.pricePerUnit,
+                session
+              )
+            );
+            await Promise.all(productUpdates);
 
             // Create StockBatch entries
             const createdBatches = await createStockBatches(entry, normalizedProducts, session);
@@ -986,6 +986,29 @@ exports.updatePurchaseEntry = async (req, res) => {
         });
 
         await Promise.all(batchUpdates);
+
+        // Update Product stocks for the changes
+        const productUpdates = entry.products.map(async (newItem, index) => {
+          const oldItem = oldProducts[index];
+          if (oldItem && newItem.product.toString() === oldItem.product.toString()) {
+            const quantityDiff = newItem.quantity - oldItem.quantity;
+            if (quantityDiff !== 0) {
+              await updateProductStockAndCostPrice(
+                newItem.product,
+                quantityDiff,
+                newItem.pricePerUnit
+              );
+            }
+          } else if (newItem) {
+            // New product added
+            await updateProductStockAndCostPrice(
+              newItem.product,
+              newItem.quantity,
+              newItem.pricePerUnit
+            );
+          }
+        });
+        await Promise.all(productUpdates);
 
         // Update Daily Stock Ledger for the changes
         await updateDailyStockLedgerForPurchaseUpdate(entry, oldProducts, oldDate);

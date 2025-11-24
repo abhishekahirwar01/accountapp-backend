@@ -98,6 +98,7 @@ exports.createVendor = async (req, res) => {
       gstRegistrationType,
       pan,
       isTDSApplicable,
+      company,
     } = req.body;
 
     // Validation - ONLY vendorName is required
@@ -127,6 +128,7 @@ if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       gstRegistrationType,
       pan,
       isTDSApplicable,
+      company,
       createdByClient: req.auth.clientId,
       createdByUser: req.auth.userId,
     });
@@ -543,6 +545,7 @@ exports.importVendors = async (req, res) => {
           pan: row.pan,
           isTDSApplicable: (row.istdsapplicable || '').toString().toLowerCase() === 'yes',
           tdsSection: row.tdssection,
+          company: row.company,
           createdByClient: req.auth.clientId,
           createdByUser: req.auth.userId,
         };
