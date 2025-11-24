@@ -86,6 +86,22 @@ const salesSchema = new mongoose.Schema({
     type: String,
     default: ""
   },
+
+  stockImpact: [
+    {
+      productId: { type: mongoose.Schema.Types.ObjectId, ref: "Product" },
+      quantity: { type: Number, required: true }, // total qty consumed for this product
+      cogs: { type: Number, required: true },     // COGS for this product line
+      batches: [
+        {
+          batchId: { type: mongoose.Schema.Types.ObjectId, ref: "StockBatch" },
+          consumedQty: { type: Number, required: true },
+          costPrice: { type: Number, required: true },
+          cogs: { type: Number, required: true }
+        }
+      ]
+    }
+  ]
 }, { timestamps: true });
 
 // Unique per company + year + number (ignore when not set)

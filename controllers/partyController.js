@@ -102,6 +102,7 @@ exports.createParty = async (req, res) => {
       tdsSection,
       contactNumber,
       email,
+      company,
     } = req.body;
 
     
@@ -145,6 +146,7 @@ if (existingParty) {
       tdsSection,
       contactNumber,
       email: email?.toLowerCase(),
+      company,
       createdByClient: req.auth.clientId,
       createdByUser: req.auth.userId,
     });
@@ -546,6 +548,7 @@ exports.importParties = async (req, res) => {
           isTDSApplicable: row.isTDSApplicable?.toLowerCase() === 'true' || row.isTDSApplicable === '1',
           tdsRate: parseFloat(row.tdsRate) || 0,
           tdsSection: row.tdsSection?.trim() || '',
+          company: row.company?.trim() || '',
           createdByClient: req.auth.clientId,
           createdByUser: req.auth.userId,
         };
