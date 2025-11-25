@@ -547,7 +547,7 @@ exports.getPurchaseEntries = async (req, res) => {
       dateFrom,
       dateTo,
       page = 1,
-      limit = 100,
+      limit = 10000,
     } = req.query;
 
     const clientId = req.auth.clientId;  // Extract clientId correctly
@@ -570,7 +570,7 @@ exports.getPurchaseEntries = async (req, res) => {
       ];
     }
 
-    const perPage = Math.min(Number(limit) || 100, 500);
+    const perPage = Math.min(Number(limit) || 10000, 10000);
     const skip = (Number(page) - 1) * perPage;
 
     // Construct a cache key based on the query parameters

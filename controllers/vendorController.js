@@ -169,7 +169,7 @@ exports.getVendors = async (req, res) => {
     const {
       q,
       page = 1,
-      limit = 100,
+      limit,
     } = req.query;
 
     const where = { createdByClient: req.auth.clientId };
@@ -183,11 +183,16 @@ exports.getVendors = async (req, res) => {
       ];
     }
 
-    const perPage = Math.min(Number(limit) || 100, 500);
-    const skip = (Number(page) - 1) * perPage;
+    const perPage = limit ? Math.min(Number(limit), 5000) : null; // No limit if not specified
+    const skip = perPage ? (Number(page) - 1) * perPage : 0;
+
+    let query = Vendor.find(where).sort({ createdAt: -1 });
+    if (perPage) {
+      query = query.skip(skip).limit(perPage);
+    }
 
     const [vendors, total] = await Promise.all([
-      Vendor.find(where).sort({ createdAt: -1 }).skip(skip).limit(perPage).lean(),
+      query.lean(),
       Vendor.countDocuments(where),
     ]);
 
