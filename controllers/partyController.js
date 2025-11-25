@@ -187,7 +187,7 @@ exports.getParties = async (req, res) => {
     const {
       q,
       page = 1,
-      limit = 100,
+      limit = 1000,
     } = req.query;
 
     const where = { createdByClient: req.auth.clientId };
@@ -201,11 +201,16 @@ exports.getParties = async (req, res) => {
     }
 
       // 2) If cache miss, fetch from DB
-    const perPage = Math.min(Number(limit) || 100, 500);
-    const skip = (Number(page) - 1) * perPage;
+    const perPage = limit ? Math.min(Number(limit), 5000) : null; // No limit if not specified
+    const skip = perPage ? (Number(page) - 1) * perPage : 0;
+
+    let query = Party.find(where).sort({ createdAt: -1 });
+    if (perPage) {
+      query = query.skip(skip).limit(perPage);
+    }
 
     const [parties, total] = await Promise.all([
-      Party.find(where).sort({ createdAt: -1 }).skip(skip).limit(perPage).lean(),
+      query.lean(),
       Party.countDocuments(where),
     ]);
 
@@ -534,6 +539,22 @@ exports.importParties = async (req, res) => {
         }
 
         // Prepare party data
+        let companyId = undefined;
+        if (row.company?.trim()) {
+          // Look up company by businessName for the client
+          const Company = require("../models/Company");
+          const company = await Company.findOne({
+            businessName: row.company.trim(),
+            client: req.auth.clientId
+          });
+          if (company) {
+            companyId = company._id;
+          } else {
+            errors.push(`Row ${rowNumber}: Company "${row.company.trim()}" not found`);
+            continue;
+          }
+        }
+
         const partyData = {
           name: row.name.trim(),
           contactNumber: row.contactNumber?.trim() || '',
@@ -548,7 +569,7 @@ exports.importParties = async (req, res) => {
           isTDSApplicable: row.isTDSApplicable?.toLowerCase() === 'true' || row.isTDSApplicable === '1',
           tdsRate: parseFloat(row.tdsRate) || 0,
           tdsSection: row.tdsSection?.trim() || '',
-          company: row.company?.trim() || '',
+          company: companyId,
           createdByClient: req.auth.clientId,
           createdByUser: req.auth.userId,
         };
