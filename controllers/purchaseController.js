@@ -186,36 +186,42 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
     date: purchaseDate
   }).session(session);
 
+  // if (!ledger) {
+  //   // Get previous day's closing stock
+  //   const previousDay = new Date(purchaseDate);
+  //   previousDay.setDate(previousDay.getDate() - 1);
+  //   previousDay.setUTCHours(18, 30, 0, 0);
+
+  //   const previousLedger = await DailyStockLedger.findOne({
+  //     companyId: purchaseEntry.company,
+  //     clientId: purchaseEntry.client,
+  //     date: previousDay
+  //   }).session(session);
+
+  //   ledger = new DailyStockLedger({
+  //     companyId: purchaseEntry.company,
+  //     clientId: purchaseEntry.client,
+  //     date: purchaseDate,
+  //     openingStock: previousLedger ? {
+  //       quantity: Math.max(0, previousLedger.closingStock.quantity),
+  //       amount: Math.max(0, previousLedger.closingStock.amount)
+  //     } : { quantity: 0, amount: 0 },
+  //     closingStock: previousLedger ? {
+  //       quantity: Math.max(0, previousLedger.closingStock.quantity),
+  //       amount: Math.max(0, previousLedger.closingStock.amount)
+  //     } : { quantity: 0, amount: 0 },
+  //     totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
+  //     totalSalesOfTheDay: { quantity: 0, amount: 0 },
+  //     totalCOGS: 0
+  //   });
+  // }
+
+
   if (!ledger) {
-    // Get previous day's closing stock
-    const previousDay = new Date(purchaseDate);
-    previousDay.setDate(previousDay.getDate() - 1);
-    previousDay.setUTCHours(18, 30, 0, 0);
-
-    const previousLedger = await DailyStockLedger.findOne({
-      companyId: purchaseEntry.company,
-      clientId: purchaseEntry.client,
-      date: previousDay
-    }).session(session);
-
-    ledger = new DailyStockLedger({
-      companyId: purchaseEntry.company,
-      clientId: purchaseEntry.client,
-      date: purchaseDate,
-      openingStock: previousLedger ? {
-        quantity: Math.max(0, previousLedger.closingStock.quantity),
-        amount: Math.max(0, previousLedger.closingStock.amount)
-      } : { quantity: 0, amount: 0 },
-      closingStock: previousLedger ? {
-        quantity: Math.max(0, previousLedger.closingStock.quantity),
-        amount: Math.max(0, previousLedger.closingStock.amount)
-      } : { quantity: 0, amount: 0 },
-      totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
-      totalSalesOfTheDay: { quantity: 0, amount: 0 },
-      totalCOGS: 0
-    });
-  }
-
+      console.log("❌ DSL missing for this date. Cron must create it. Skipping purchase update.");
+      return;
+    }
+    
   // ✅ Calculate new purchase values
   const newPurchaseQuantity = products.reduce((sum, item) => sum + item.quantity, 0);
   const newPurchaseAmount = products.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
@@ -259,31 +265,7 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
 }
 
 
-/**
- * Calculate average cost for fallback COGS calculation
- */
-async function calculateAverageCost(companyId, clientId, session = null) {
-  try {
-    const activeBatches = await StockBatch.find({
-      companyId: companyId,
-      clientId: clientId,
-      status: "active",
-      remainingQuantity: { $gt: 0 }
-    }).session(session);
 
-    if (activeBatches.length === 0) return 0;
-
-    const totalValue = activeBatches.reduce((sum, batch) =>
-      sum + (batch.remainingQuantity * batch.costPrice), 0);
-    const totalQuantity = activeBatches.reduce((sum, batch) =>
-      sum + batch.remainingQuantity, 0);
-
-    return totalQuantity > 0 ? totalValue / totalQuantity : 0;
-  } catch (error) {
-    console.error("Error calculating average cost:", error);
-    return 0;
-  }
-}
 /**
  * Reverse StockBatch entries and product stock for a purchase
  */

@@ -1667,29 +1667,36 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
       date: salesDate
     }).session(session);
 
+    // if (!ledger) {
+    //   // Create new ledger
+    //   const previousDay = new Date(salesDate);
+    //   previousDay.setDate(previousDay.getDate() - 1);
+    //   previousDay.setUTCHours(18, 30, 0, 0);
+
+    //   const previousLedger = await DailyStockLedger.findOne({
+    //     companyId: salesEntry.company,
+    //     clientId: salesEntry.client,
+    //     date: previousDay
+    //   }).session(session);
+
+    //   ledger = new DailyStockLedger({
+    //     companyId: salesEntry.company,
+    //     clientId: salesEntry.client,
+    //     date: salesDate,
+    //     openingStock: previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 },
+    //     closingStock: previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 },
+    //     totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
+    //     totalSalesOfTheDay: { quantity: 0, amount: 0 },
+    //     totalCOGS: 0
+    //   });
+    // }
+
+
     if (!ledger) {
-      // Create new ledger
-      const previousDay = new Date(salesDate);
-      previousDay.setDate(previousDay.getDate() - 1);
-      previousDay.setUTCHours(18, 30, 0, 0);
+  console.log("❌ No ledger for this date. Cron must create it. Skipping ledger update.");
+  return; // important
+}
 
-      const previousLedger = await DailyStockLedger.findOne({
-        companyId: salesEntry.company,
-        clientId: salesEntry.client,
-        date: previousDay
-      }).session(session);
-
-      ledger = new DailyStockLedger({
-        companyId: salesEntry.company,
-        clientId: salesEntry.client,
-        date: salesDate,
-        openingStock: previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 },
-        closingStock: previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 },
-        totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
-        totalSalesOfTheDay: { quantity: 0, amount: 0 },
-        totalCOGS: 0
-      });
-    }
 
     // ✅ CRITICAL FIX: Load existing COGS or initialize to 0
     const existingCOGS = ledger.totalCOGS || 0;
