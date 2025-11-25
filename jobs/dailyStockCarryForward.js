@@ -3,40 +3,28 @@ const cron = require('node-cron');
 const mongoose = require('mongoose');
 const StockCarryForwardService = require('../services/stockCarryForwardService');
 const DailyStockLedger = require('../models/DailyStockLedger');
+const moment = require('moment-timezone');
 
 
 async function runDailyCarryForward() {
   try {
     console.log('🔄 Starting daily stock carry forward job...', new Date().toISOString());
 
-    // Get yesterday's date for carry forward
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    yesterday.setHours(0, 0, 0, 0);
+    // Build the "today" anchor in IST
+    const todayISTDate = StockCarryForwardService.getTodayIST(new Date());
 
-    console.log('📅 Processing carry forward for date:', yesterday.toISOString());
+    console.log('📅 Processing carry forward for IST date (stored value):', todayISTDate.toISOString());
 
-    // Dynamically get all active company-client combinations
     const combinations = await getActiveCompanyClientCombinations();
-
-    console.log(`🏢 Found ${combinations.length} active combinations to process`);
-
-    if (combinations.length === 0) {
-      console.log('ℹ️ No active companies found to process');
-      return;
-    }
 
     for (const combo of combinations) {
       try {
         console.log(`🔍 Processing company: ${combo.companyId}, client: ${combo.clientId}`);
 
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
+        // Use the same date object for all ops
+        const yesterdayIST = StockCarryForwardService.getYesterdayIST(todayISTDate);
+        const todayIST = StockCarryForwardService.getTodayIST(todayISTDate);
 
-        const todayIST = StockCarryForwardService.convertToISTDate(today);
-        const yesterdayIST = StockCarryForwardService.getYesterdayIST(today);
-
-        // check if yesterday ledger exists
         const yesterdayLedger = await DailyStockLedger.findOne({
           companyId: combo.companyId,
           clientId: combo.clientId,
@@ -44,28 +32,24 @@ async function runDailyCarryForward() {
         });
 
         if (!yesterdayLedger) {
-          console.log("🆕 New company detected — No DSL history.");
-          console.log("✨ Creating FIRST Daily Ledger with zero opening stock");
-
+          console.log("🆕 No DSL history. Creating FIRST Daily Ledger with zero opening stock");
           await StockCarryForwardService.createInitialDailyLedger({
             companyId: combo.companyId,
             clientId: combo.clientId,
-            date: today
+            date: todayISTDate
           });
         } else {
           console.log("➡ Carrying forward yesterday closing into today's opening");
           await StockCarryForwardService.carryForwardStock({
             companyId: combo.companyId,
             clientId: combo.clientId,
-            date: today
+            date: todayISTDate
           });
         }
 
-
         console.log(`✅ Carry forward completed for company: ${combo.companyId}`);
-      } catch (error) {
-        console.error(`❌ Carry forward failed for company ${combo.companyId}:`, error.message);
-        // Continue with other companies even if one fails
+      } catch (err) {
+        console.error(`❌ Carry forward failed for ${combo.companyId}:`, err);
       }
     }
 
