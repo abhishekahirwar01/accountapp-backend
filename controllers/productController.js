@@ -387,6 +387,13 @@ exports.deleteProducts = async (req, res) => {
   });
 }
 
+// ✅ NEW: DELETE STOCK BATCHES FOR THIS PRODUCT
+    await StockBatch.deleteMany({
+      product: productId,
+      clientId: req.auth.clientId
+    });
+    console.log(`✅ Deleted stock batches for product: ${product.name}`);
+
     // Notify admin before deleting
     await notifyAdminOnProductAction({
       req,
@@ -421,6 +428,13 @@ exports.bulkDeleteProducts = async (req, res) => {
     if (products.length !== productIds.length) {
       return res.status(403).json({ message: "Some products not found or not authorized to delete" });
     }
+
+     // ✅ NEW: DELETE STOCK BATCHES FOR ALL PRODUCTS
+    await StockBatch.deleteMany({
+      product: { $in: productIds },
+      clientId: req.auth.clientId
+    });
+    console.log(`✅ Deleted stock batches for ${productIds.length} products`);
 
     // Delete the products
     const result = await Product.deleteMany({
