@@ -1,10 +1,8 @@
 // controllers/profitLossController.js
 const mongoose = require("mongoose");
 const SalesEntry = require("../models/SalesEntry");
-const PurchaseEntry = require("../models/PurchaseEntry");
 const ReceiptEntry = require("../models/ReceiptEntry");
 const PaymentEntry = require("../models/PaymentEntry");
-const Product = require("../models/Product");
 const DailyStockLedger = require("../models/DailyStockLedger"); // ⬅️ ADD THIS
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 
@@ -46,7 +44,217 @@ function companyAllowedForUser(req, companyId) {
   return allowed.length === 0 || allowed.includes(String(companyId));
 }
 
+// // ✅ UPDATED: Get sales breakdown - Credit goes to credit side, rest to cash side
+// async function getSalesBreakdownByPaymentMethod(clientId, companyId, startDate, endDate) {
+//   try {
+//     // Build base filter
+//     const baseFilter = {
+//       date: { $gte: new Date(startDate), $lte: new Date(endDate) },
+//       client: new mongoose.Types.ObjectId(clientId)
+//     };
 
+//     // Add company filter if specified
+//     if (companyId) {
+//       baseFilter.company = new mongoose.Types.ObjectId(companyId);
+//     }
+
+//     console.log('🔍 Getting sales breakdown with filter:', baseFilter);
+
+//     // Aggregate sales by payment method
+//     const salesBreakdown = await SalesEntry.aggregate([
+//       { $match: baseFilter },
+//       {
+//         $group: {
+//           _id: "$paymentMethod",
+//           totalAmount: { $sum: "$totalAmount" },
+//           count: { $sum: 1 }
+//         }
+//       }
+//     ]);
+
+//     console.log('📊 Raw sales breakdown:', salesBreakdown);
+
+//     // Initialize breakdown structure - SIMPLIFIED: only cash and credit
+//     const breakdown = {
+//       cash: 0,      // All non-credit payments (Cash, UPI, Bank Transfer, Cheque, Others)
+//       credit: 0,    // Only Credit payments
+//       total: 0,
+//       count: 0
+//     };
+
+//     // Process each payment method
+//     salesBreakdown.forEach(item => {
+//       const method = (item._id || 'other').toLowerCase();
+//       const amount = item.totalAmount || 0;
+//       const count = item.count || 0;
+
+//       if (method === 'credit') {
+//         // Only Credit goes to credit side
+//         breakdown.credit += amount;
+//       } else {
+//         // Everything else (Cash, UPI, Bank Transfer, Cheque, Others) goes to cash side
+//         breakdown.cash += amount;
+//       }
+
+//       breakdown.total += amount;
+//       breakdown.count += count;
+//     });
+
+//     console.log('✅ Final sales breakdown (Cash vs Credit):', breakdown);
+//     return breakdown;
+
+//   } catch (error) {
+//     console.error("Error getting sales breakdown:", error);
+//     // Return default structure in case of error
+//     return {
+//       cash: 0,
+//       credit: 0,
+//       total: 0,
+//       count: 0
+//     };
+//   }
+// }
+
+// ✅ FIXED: Get sales breakdown separating products vs services WITH POPULATION
+async function getSalesBreakdownByPaymentMethod(clientId, companyId, startDate, endDate) {
+  try {
+    const baseFilter = {
+      date: { $gte: new Date(startDate), $lte: new Date(endDate) },
+      client: new mongoose.Types.ObjectId(clientId)
+    };
+
+    if (companyId) {
+      baseFilter.company = new mongoose.Types.ObjectId(companyId);
+    }
+
+    console.log('🔍 Getting sales breakdown with filter:', baseFilter);
+
+    // Get ALL sales entries with products and services POPULATED
+    const salesEntries = await SalesEntry.find(baseFilter)
+      .populate('products.product')  // Populate product details
+      .populate('services.service')  // ⬅️ THIS IS WHAT YOU'RE MISSING - Populate service details
+      .select('totalAmount paymentMethod products services date invoiceNumber')
+      .lean();
+
+    console.log(`📊 Found ${salesEntries.length} sales entries`);
+    
+    const breakdown = {
+      // TRADING ACCOUNT (Products only)
+      trading: {
+        cash: 0,
+        credit: 0,
+        total: 0,
+        count: 0
+      },
+      // P&L ACCOUNT (Services only)  
+      services: {
+        cash: 0,
+        credit: 0,
+        total: 0,
+        count: 0
+      },
+      // OVERALL TOTAL
+      overall: {
+        cash: 0,
+        credit: 0,
+        total: 0,
+        count: 0
+      }
+    };
+
+    // Process each sales entry
+    salesEntries.forEach(entry => {
+      const method = (entry.paymentMethod || 'other').toLowerCase();
+      const amount = entry.totalAmount || 0;
+
+      // Check if this sale has products vs services
+      const hasProducts = entry.products && entry.products.length > 0;
+      const hasServices = entry.services && entry.services.length > 0;
+
+      console.log(`📄 Invoice ${entry.invoiceNumber}: Products: ${hasProducts}, Services: ${hasServices}`);
+
+      if (hasProducts && !hasServices) {
+        // PURE PRODUCT SALE → Trading Account
+        if (method === 'credit') {
+          breakdown.trading.credit += amount;
+        } else {
+          breakdown.trading.cash += amount;
+        }
+        breakdown.trading.total += amount;
+        breakdown.trading.count += 1;
+        console.log(`  → Pure Product Sale: ₹${amount} (${method})`);
+      } else if (hasServices && !hasProducts) {
+        // PURE SERVICE SALE → P&L Account
+        if (method === 'credit') {
+          breakdown.services.credit += amount;
+        } else {
+          breakdown.services.cash += amount;
+        }
+        breakdown.services.total += amount;
+        breakdown.services.count += 1;
+        console.log(`  → Pure Service Sale: ₹${amount} (${method})`);
+        
+        // Log service details for debugging
+        entry.services.forEach((serviceItem, index) => {
+          console.log(`    Service ${index + 1}:`, {
+            serviceName: serviceItem.service?.serviceName || 'Unknown Service',
+            amount: serviceItem.amount,
+            lineTotal: serviceItem.lineTotal
+          });
+        });
+      } else if (hasProducts && hasServices) {
+        // MIXED SALE → Split based on ACTUAL amounts
+        const productAmount = entry.products.reduce((sum, p) => sum + (p.lineTotal || p.amount || 0), 0);
+        const serviceAmount = entry.services.reduce((sum, s) => sum + (s.lineTotal || s.amount || 0), 0);
+
+        console.log(`  → Mixed Sale: Products ₹${productAmount}, Services ₹${serviceAmount}, Total: ₹${amount}`);
+
+        if (method === 'credit') {
+          breakdown.trading.credit += productAmount;
+          breakdown.services.credit += serviceAmount;
+        } else {
+          breakdown.trading.cash += productAmount;
+          breakdown.services.cash += serviceAmount;
+        }
+        breakdown.trading.total += productAmount;
+        breakdown.services.total += serviceAmount;
+        breakdown.trading.count += 1;
+        breakdown.services.count += 1;
+
+        // Log service details for debugging
+        entry.services.forEach((serviceItem, index) => {
+          console.log(`    Service ${index + 1}:`, {
+            serviceName: serviceItem.service?.serviceName || 'Unknown Service',
+            amount: serviceItem.amount,
+            lineTotal: serviceItem.lineTotal
+          });
+        });
+      } else {
+        console.log(`  → No products or services found in sale`);
+      }
+
+      // Overall totals
+      if (method === 'credit') {
+        breakdown.overall.credit += amount;
+      } else {
+        breakdown.overall.cash += amount;
+      }
+      breakdown.overall.total += amount;
+      breakdown.overall.count += 1;
+    });
+
+    console.log('✅ Corrected sales breakdown with services:', breakdown);
+    return breakdown;
+
+  } catch (error) {
+    console.error("Error getting sales breakdown:", error);
+    return {
+      trading: { cash: 0, credit: 0, total: 0, count: 0 },
+      services: { cash: 0, credit: 0, total: 0, count: 0 },
+      overall: { cash: 0, credit: 0, total: 0, count: 0 }
+    };
+  }
+}
 
 // ✅ UPDATED: Get opening stock from Daily Stock Ledger - USE IST DATES
 async function getOpeningStock(clientId, companyId, startDate) {
@@ -113,7 +321,7 @@ async function getPurchasesFromLedger(clientId, companyId, startDate, endDate) {
     // Convert dates to IST format
     const startDateIST = new Date(startDate);
     startDateIST.setUTCHours(18, 30, 0, 0);
-    
+
     const endDateIST = new Date(endDate);
     endDateIST.setUTCHours(18, 30, 0, 0);
 
@@ -142,7 +350,7 @@ async function getSalesFromLedger(clientId, companyId, startDate, endDate) {
     // Convert dates to IST format
     const startDateIST = new Date(startDate);
     startDateIST.setUTCHours(18, 30, 0, 0);
-    
+
     const endDateIST = new Date(endDate);
     endDateIST.setUTCHours(18, 30, 0, 0);
 
@@ -184,7 +392,7 @@ exports.getProfitLossStatement = async (req, res) => {
 
     const startDate = new Date(fromDate);
     const endDate = new Date(toDate);
-    
+
     if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
       return res.status(400).json({
         success: false,
@@ -198,11 +406,13 @@ exports.getProfitLossStatement = async (req, res) => {
     console.log('📅 Profit & Loss Period:', { startDate, endDate, companyId });
 
     // ✅ UPDATED: Get stock values from Daily Stock Ledger
-    const [openingStock, closingStock, ledgerPurchases, ledgerSales] = await Promise.all([
+    // ✅ UPDATED: Get stock values from Daily Stock Ledger + sales breakdown
+    const [openingStock, closingStock, ledgerPurchases, ledgerSales, salesBreakdown] = await Promise.all([
       getOpeningStock(req.auth.clientId, companyId, startDate),
       getClosingStock(req.auth.clientId, companyId, endDate),
       getPurchasesFromLedger(req.auth.clientId, companyId, startDate, endDate),
-      getSalesFromLedger(req.auth.clientId, companyId, startDate, endDate)
+      getSalesFromLedger(req.auth.clientId, companyId, startDate, endDate),
+      getSalesBreakdownByPaymentMethod(req.auth.clientId, companyId, startDate, endDate) // ✅ ADD THIS
     ]);
 
     console.log('📊 Stock Values from Ledger:', {
@@ -244,7 +454,7 @@ exports.getProfitLossStatement = async (req, res) => {
         { $match: baseFilter },
         { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } }
       ]),
-      
+
       // Payments aggregation with expense type breakdown
       PaymentEntry.aggregate([
         { $match: baseFilter },
@@ -279,7 +489,7 @@ exports.getProfitLossStatement = async (req, res) => {
 
     // Extract totals
     const totalReceipts = receiptResult[0]?.total || 0;
-    
+
     // Process payment results
     const vendorPaymentsTotal = paymentResult
       .filter(p => p._id.isExpense === false)
@@ -298,7 +508,7 @@ exports.getProfitLossStatement = async (req, res) => {
     // ✅ UPDATED: Trading Account Calculations using ledger data
     const costOfGoodsSold = openingStock + ledgerPurchases - closingStock;
     const grossProfit = ledgerSales - costOfGoodsSold;
-    
+
     const totalIncome = ledgerSales + totalReceipts;
     const totalExpenses = costOfGoodsSold + vendorPaymentsTotal + totalExpensePayments;
     const netProfit = totalIncome - totalExpenses;
@@ -316,8 +526,41 @@ exports.getProfitLossStatement = async (req, res) => {
         to: endDate.toISOString().split('T')[0],
         company: companyId || 'All Companies'
       },
-      
-      // Trading Account Section (from Daily Stock Ledger)
+
+      // // Trading Account Section (from Daily Stock Ledger)
+      // trading: {
+      //   openingStock: openingStock,
+      //   purchases: ledgerPurchases,
+      //   closingStock: closingStock,
+      //   costOfGoodsSold: costOfGoodsSold,
+      //   grossProfit: grossProfit,
+      //   grossLoss: grossProfit < 0 ? Math.abs(grossProfit) : 0,
+      //   sales: {
+      //     total: ledgerSales,
+      //     breakdown: salesBreakdown // ✅ ADD SALES BREAKDOWN HERE
+      //   }
+      // },
+
+      // // Two-side P&L structure
+      // // Two-side P&L structure
+      // income: {
+      //   total: totalIncome,
+      //   breakdown: {
+      //     sales: {
+      //       amount: ledgerSales,
+      //       label: "Sales",
+      //       count: salesBreakdown.count,
+      //       paymentMethods: salesBreakdown // ✅ ADD PAYMENT METHOD BREAKDOWN
+      //     },
+      //     receipts: {
+      //       amount: totalReceipts,
+      //       label: "Receipts",
+      //       count: receiptResult[0]?.count || 0
+      //     }
+      //   }
+      // },
+
+      // Trading Account Section (PRODUCTS ONLY)
       trading: {
         openingStock: openingStock,
         purchases: ledgerPurchases,
@@ -325,17 +568,27 @@ exports.getProfitLossStatement = async (req, res) => {
         costOfGoodsSold: costOfGoodsSold,
         grossProfit: grossProfit,
         grossLoss: grossProfit < 0 ? Math.abs(grossProfit) : 0,
-        sales: ledgerSales // ✅ ADDED: Sales from ledger
+        sales: {
+          total: salesBreakdown.trading.total, // ONLY PRODUCT SALES
+          breakdown: salesBreakdown.trading
+        }
       },
-      
+
       // Two-side P&L structure
       income: {
         total: totalIncome,
         breakdown: {
-          sales: {
-            amount: ledgerSales,
-            label: "Sales",
-            count: 0 // We don't have count from ledger yet
+          productSales: {        // MOVED FROM TRADING ACCOUNT
+            amount: salesBreakdown.trading.total,
+            label: "Product Sales",
+            count: salesBreakdown.trading.count,
+            paymentMethods: salesBreakdown.trading
+          },
+          serviceIncome: {       // NEW: SERVICE INCOME
+            amount: salesBreakdown.services.total,
+            label: "Service Income",
+            count: salesBreakdown.services.count,
+            paymentMethods: salesBreakdown.services
           },
           receipts: {
             amount: totalReceipts,
@@ -344,7 +597,7 @@ exports.getProfitLossStatement = async (req, res) => {
           }
         }
       },
-      
+
       expenses: {
         total: totalExpenses,
         breakdown: {
@@ -365,7 +618,7 @@ exports.getProfitLossStatement = async (req, res) => {
           expenseBreakdown: expensePaymentsBreakdown
         }
       },
-      
+
       // Summary section
       summary: {
         grossProfit,
@@ -377,7 +630,7 @@ exports.getProfitLossStatement = async (req, res) => {
         expenseRatio: Math.round(expenseRatio * 100) / 100,
         isProfitable: netProfit > 0
       },
-      
+
       // Data source information
       dataSource: {
         stockData: "daily_stock_ledger",
