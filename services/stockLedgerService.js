@@ -1,5 +1,6 @@
 // services/dailyStockLedgerService.js
 const DailyStockLedger = require("../models/DailyStockLedger");
+const Product = require("../models/Product");
 
 class DailyStockLedgerService {
   /**
