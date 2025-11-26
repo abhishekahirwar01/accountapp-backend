@@ -175,6 +175,98 @@ async function createStockBatches(purchaseEntry, products, session = null) {
   return await Promise.all(batchPromises);
 }
 
+// async function updateDailyStockLedgerForPurchase(purchaseEntry, products, session = null) {
+//   const purchaseDate = new Date(purchaseEntry.date);
+//   purchaseDate.setUTCHours(18, 30, 0, 0); // IST 00:00
+
+//   // Find or create daily ledger
+//   let ledger = await DailyStockLedger.findOne({
+//     companyId: purchaseEntry.company,
+//     clientId: purchaseEntry.client,
+//     date: purchaseDate
+//   }).session(session);
+
+//   // ✅ Calculate new purchase values ONCE
+//   const newPurchaseQuantity = products.reduce((sum, item) => sum + item.quantity, 0);
+//   const newPurchaseAmount = products.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
+
+//   console.log('🔴 DEBUG PURCHASE LEDGER UPDATE:');
+//   console.log('  New Purchase:', newPurchaseQuantity, 'units, ₹', newPurchaseAmount);
+
+//   if (!ledger) {
+//     // Get previous day's closing stock
+//     const previousDay = new Date(purchaseDate);
+//     previousDay.setDate(previousDay.getDate() - 1);
+//     previousDay.setUTCHours(18, 30, 0, 0);
+
+//     const previousLedger = await DailyStockLedger.findOne({
+//       companyId: purchaseEntry.company,
+//       clientId: purchaseEntry.client,
+//       date: previousDay
+//     }).session(session);
+
+//     const openingStock = previousLedger ? {
+//       quantity: Math.max(0, previousLedger.closingStock.quantity),
+//       amount: Math.max(0, previousLedger.closingStock.amount)
+//     } : { quantity: 0, amount: 0 };
+
+//     // ✅ Create new ledger with initial purchase values
+//     ledger = new DailyStockLedger({
+//       companyId: purchaseEntry.company,
+//       clientId: purchaseEntry.client,
+//       date: purchaseDate,
+//       openingStock: openingStock,
+//       closingStock: {
+//         quantity: openingStock.quantity + newPurchaseQuantity,
+//         amount: openingStock.amount + newPurchaseAmount
+//       },
+//       totalPurchaseOfTheDay: { quantity: newPurchaseQuantity, amount: newPurchaseAmount },
+//       totalSalesOfTheDay: { quantity: 0, amount: 0 },
+//       totalCOGS: 0
+//     });
+
+//     console.log('🟢 NEW LEDGER CREATED:');
+//     console.log('  Opening Stock:', openingStock.quantity, 'units, ₹', openingStock.amount);
+//     console.log('  Purchase:', newPurchaseQuantity, 'units, ₹', newPurchaseAmount);
+//     console.log('  Closing Stock:', ledger.closingStock.quantity, 'units, ₹', ledger.closingStock.amount);
+
+//   } else {
+//     // ✅ LEDGER EXISTS: Update purchase values and recalculate closing
+//     ledger.totalPurchaseOfTheDay.quantity += newPurchaseQuantity;
+//     ledger.totalPurchaseOfTheDay.amount += newPurchaseAmount;
+
+//     // ✅ Calculate closing stock quantity
+//     const newClosingQuantity = Math.max(0, ledger.openingStock.quantity +
+//       ledger.totalPurchaseOfTheDay.quantity -
+//       ledger.totalSalesOfTheDay.quantity);
+
+//     // ✅ Calculate closing stock value from ACTUAL FIFO batches
+//     const newClosingAmount = await calculateClosingStockValue(
+//       purchaseEntry.company,
+//       purchaseEntry.client,
+//       session
+//     );
+
+//     // ✅ Calculate COGS properly
+//     const totalAvailableValue = ledger.openingStock.amount + ledger.totalPurchaseOfTheDay.amount;
+//     const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+
+//     // ✅ Update ledger with correct values
+//     ledger.closingStock.quantity = newClosingQuantity;
+//     ledger.closingStock.amount = newClosingAmount;
+//     ledger.totalCOGS = totalCOGS;
+
+//     console.log('🟢 EXISTING LEDGER UPDATED:');
+//     console.log('  Total Available:', ledger.openingStock.quantity + ledger.totalPurchaseOfTheDay.quantity, 
+//                 'units, ₹', totalAvailableValue);
+//     console.log('  Closing Stock:', newClosingQuantity, 'units, ₹', newClosingAmount);
+//     console.log('  COGS: ₹', totalCOGS);
+//   }
+
+//   await ledger.save({ session });
+//   return ledger;
+// }
+
 async function updateDailyStockLedgerForPurchase(purchaseEntry, products, session = null) {
   const purchaseDate = new Date(purchaseEntry.date);
   purchaseDate.setUTCHours(18, 30, 0, 0); // IST 00:00
@@ -236,20 +328,21 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
     ledger.totalPurchaseOfTheDay.amount += newPurchaseAmount;
 
     // ✅ Calculate closing stock quantity
-    const newClosingQuantity = Math.max(0, ledger.openingStock.quantity +
+    const newClosingQuantity = Math.max(0, 
+      ledger.openingStock.quantity +
       ledger.totalPurchaseOfTheDay.quantity -
-      ledger.totalSalesOfTheDay.quantity);
+      ledger.totalSalesOfTheDay.quantity
+    );
 
-    // ✅ Calculate closing stock value from ACTUAL FIFO batches
-    const newClosingAmount = await calculateClosingStockValue(
-      purchaseEntry.company,
-      purchaseEntry.client,
-      session
+    // ✅ FIXED: Calculate closing stock THEORETICALLY
+    const newClosingAmount = Math.max(0,
+      ledger.openingStock.amount +
+      ledger.totalPurchaseOfTheDay.amount -
+      ledger.totalSalesOfTheDay.amount
     );
 
     // ✅ Calculate COGS properly
-    const totalAvailableValue = ledger.openingStock.amount + ledger.totalPurchaseOfTheDay.amount;
-    const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+   const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
 
     // ✅ Update ledger with correct values
     ledger.closingStock.quantity = newClosingQuantity;
@@ -257,8 +350,9 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
     ledger.totalCOGS = totalCOGS;
 
     console.log('🟢 EXISTING LEDGER UPDATED:');
-    console.log('  Total Available:', ledger.openingStock.quantity + ledger.totalPurchaseOfTheDay.quantity, 
-                'units, ₹', totalAvailableValue);
+    console.log('  Opening Stock:', ledger.openingStock.quantity, 'units, ₹', ledger.openingStock.amount);
+    console.log('  Purchases:', ledger.totalPurchaseOfTheDay.quantity, 'units, ₹', ledger.totalPurchaseOfTheDay.amount);
+    console.log('  Sales:', ledger.totalSalesOfTheDay.quantity, 'units, ₹', ledger.totalSalesOfTheDay.amount);
     console.log('  Closing Stock:', newClosingQuantity, 'units, ₹', newClosingAmount);
     console.log('  COGS: ₹', totalCOGS);
   }
@@ -266,7 +360,6 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
   await ledger.save({ session });
   return ledger;
 }
-
 
 /**
  * Reverse StockBatch entries and product stock for a purchase
@@ -345,8 +438,7 @@ async function reverseDailyStockLedgerForPurchase(purchaseEntry, products = null
     );
 
     // ✅ CORRECTED: Recalculate COGS
-    const totalAvailableValue = ledger.openingStock.amount + ledger.totalPurchaseOfTheDay.amount;
-    const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+    const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
 
     ledger.closingStock.quantity = Math.max(0, ledger.openingStock.quantity +
       ledger.totalPurchaseOfTheDay.quantity -
@@ -716,8 +808,7 @@ async function updateDailyStockLedgerForPurchaseUpdate(purchaseEntry, oldProduct
       );
       
       // ✅ CORRECTED: Calculate COGS properly
-      const totalAvailableValue = oldLedger.openingStock.amount + oldLedger.totalPurchaseOfTheDay.amount;
-      const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+     const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
 
       const newClosingQuantity = Math.max(0, oldLedger.openingStock.quantity +
         oldLedger.totalPurchaseOfTheDay.quantity -
@@ -777,8 +868,7 @@ async function updateDailyStockLedgerForPurchaseUpdate(purchaseEntry, oldProduct
     );
     
     // ✅ CORRECTED: Calculate COGS properly
-    const totalAvailableValue = newLedger.openingStock.amount + newLedger.totalPurchaseOfTheDay.amount;
-    const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+   const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
 
     const newClosingQuantity = Math.max(0, newLedger.openingStock.quantity +
       newLedger.totalPurchaseOfTheDay.quantity -
@@ -811,8 +901,7 @@ async function updateDailyStockLedgerForPurchaseUpdate(purchaseEntry, oldProduct
       );
       
       // ✅ CORRECTED: Calculate COGS properly
-      const totalAvailableValue = ledger.openingStock.amount + ledger.totalPurchaseOfTheDay.amount;
-      const totalCOGS = Math.max(0, totalAvailableValue - newClosingAmount);
+     const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
 
       const newClosingQuantity = Math.max(0, ledger.openingStock.quantity +
         ledger.totalPurchaseOfTheDay.quantity -
