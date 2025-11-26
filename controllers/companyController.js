@@ -136,11 +136,11 @@ exports.createCompany = async (req, res) => {
     });
 
     await company.save();
-    await StockCarryForwardService.createInitialDailyLedger({
-    companyId: company._id,
-    clientId: assignedClientId, // or req.user.id in createCompanyByClient
-    date: new Date() // today
-});
+//     await StockCarryForwardService.createInitialDailyLedger({
+//     companyId: company._id,
+//     clientId: assignedClientId, // or req.user.id in createCompanyByClient
+//     date: new Date() // today
+// });
     res.status(201).json({ message: "Company created successfully", company });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -252,11 +252,11 @@ exports.createCompanyByClient = async (req, res) => {
     });
 
     await company.save();
-    await StockCarryForwardService.createInitialDailyLedger({
-    companyId: company._id,
-    clientId: req.user.id,
-    date: new Date()
-});
+//     await StockCarryForwardService.createInitialDailyLedger({
+//     companyId: company._id,
+//     clientId: req.user.id,
+//     date: new Date()
+// });
 
     // Invalidate cache
     // invalidateClient(req.user.id);
