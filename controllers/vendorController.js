@@ -153,8 +153,7 @@ if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       } else if (keyPattern.email && keyPattern.createdByClient) {
         message = "Email already exists for this client";
       } else {
-        // Log the actual duplicate field for debugging
-        console.log("Duplicate key error details:", err.keyValue);
+      
         message = `Duplicate field: ${Object.keys(err.keyValue)[0]}`;
       }
       
@@ -442,176 +441,242 @@ exports.downloadImportTemplate = async (req, res) => {
   }
 };
 
-// Import vendors from Excel/CSV
+// Import vendors from CSV (matching customer import pattern)
 exports.importVendors = async (req, res) => {
+  const file = req.file;
+
+  if (!file) {
+    return res.status(400).json({ message: "No file uploaded." });
+  }
+
   try {
     await ensureAuthCaps(req);
 
-    // permission gate (non-privileged must have explicit capability)
     if (!PRIV_ROLES.has(req.auth.role) && !req.auth.caps?.canCreateVendors) {
-      return res.status(403).json({ message: "Not allowed to import vendors" });
+      return res.status(403).json({ message: "Not allowed to create vendors" });
     }
 
-    if (!req.file) {
-      return res.status(400).json({ message: "No file uploaded" });
+    if (!file.originalname.toLowerCase().endsWith('.csv')) {
+      return res.status(400).json({ message: "Please upload a CSV file." });
     }
 
-    const ExcelJS = require('exceljs');
-    const workbook = new ExcelJS.Workbook();
-    let worksheet;
+    const fileContent = file.buffer.toString('utf8');
+    const records = parseCSV(fileContent);
 
-    // Determine file type and read accordingly
-    if (req.file.originalname.endsWith('.csv')) {
-      // Handle CSV
-      const csv = require('csv-parser');
-      const results = [];
 
-      const buffer = req.file.buffer;
-      const stream = require('stream');
-      const bufferStream = new stream.PassThrough();
-      bufferStream.end(buffer);
-
-      await new Promise((resolve, reject) => {
-        bufferStream
-          .pipe(csv())
-          .on('data', (data) => results.push(data))
-          .on('end', resolve)
-          .on('error', reject);
-      });
-
-      // Convert CSV data to worksheet format
-      worksheet = workbook.addWorksheet('Data');
-      if (results.length > 0) {
-        worksheet.columns = Object.keys(results[0]).map(key => ({ header: key, key }));
-        results.forEach(row => worksheet.addRow(row));
-      }
-    } else {
-      // Handle Excel
-      await workbook.xlsx.load(req.file.buffer);
-      worksheet = workbook.getWorksheet(1);
-      if (!worksheet) {
-        return res.status(400).json({ message: "No worksheet found in Excel file" });
-      }
-    }
-
-    // Check if file is empty or has no data rows
-    if (worksheet.rowCount <= 1) {
-      return res.status(400).json({ message: "File appears to be empty or contains no data rows" });
-    }
-
-    const rows = [];
-    worksheet.eachRow((row, rowNumber) => {
-      if (rowNumber > 1) { // Skip header row
-        const rowData = {};
-        row.eachCell((cell, colNumber) => {
-          const header = worksheet.getRow(1).getCell(colNumber).value;
-          if (header) {
-            // Clean header name to match our mapping
-            const cleanHeader = header.toString().toLowerCase().replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, '').replace(/[^\w]/g, '');
-
-            // Handle hyperlink cells - extract the text value
-            let cellValue = cell.value;
-            if (cell.hyperlink) {
-              // If it's a hyperlink, use the hyperlink address or display text
-              cellValue = cell.hyperlink;
-            } else if (cell.value && typeof cell.value === 'object' && cell.value.text) {
-              // Some hyperlink cells store value as object with text property
-              cellValue = cell.value.text;
-            }
-
-            rowData[cleanHeader] = cellValue;
-          }
-        });
-        rows.push(rowData);
-      }
-    });
-
-    // Limit the number of rows to prevent abuse
-    if (rows.length > 1000) {
-      return res.status(400).json({ message: "File contains too many rows. Maximum allowed is 1000 rows." });
+    if (records.length === 0) {
+      return res.status(400).json({ message: "CSV file is empty or could not be parsed." });
     }
 
     let importedCount = 0;
     const errors = [];
 
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
+    // Define valid GST types
+    const validGstTypes = [
+      "Regular",
+      "Composition", 
+      "Unregistered",
+      "Consumer",
+      "Overseas",
+      "Special Economic Zone",
+      "Unknown"
+    ];
+
+    // Mapping from common terms to your schema terms
+    const gstTypeMapping = {
+      'Registered': 'Regular',
+      'REGISTERED': 'Regular',
+      'registered': 'Regular',
+      'Composition': 'Composition',
+      'COMPOSITION': 'Composition',
+      'composition': 'Composition',
+      'Unregistered': 'Unregistered',
+      'UNREGISTERED': 'Unregistered',
+      'unregistered': 'Unregistered',
+      'Consumer': 'Consumer',
+      'Overseas': 'Overseas',
+      'Special Economic Zone': 'Special Economic Zone',
+      'Unknown': 'Unknown'
+    };
+
+    // Process each record
+    for (let i = 0; i < records.length; i++) {
+      const row = records[i];
+      const rowNumber = i + 2;
+
       try {
+        // Normalize column names to handle variations (like customer import does)
+        const normalizedRow = {};
+        Object.keys(row).forEach(key => {
+          const normalizedKey = key.toLowerCase()
+            .replace(/\s+/g, '')
+            .replace(/[^\w]/g, '')
+            .replace(/\*/g, '');
+          normalizedRow[normalizedKey] = row[key];
+        });
+
+
         // Map columns (handle variations in column names)
         const vendorData = {
-          vendorName: row.vendorname || row['vendorname*'],
-          contactNumber: row.contactnumber,
-          email: row.email,
-          address: row.address,
-          city: row.city,
-          state: row.state,
-          gstin: row.gstin,
-          gstRegistrationType: row.gstregistrationtype,
-          pan: row.pan,
-          isTDSApplicable: (row.istdsapplicable || '').toString().toLowerCase() === 'yes',
-          tdsSection: row.tdssection,
-          company: row.company,
+          vendorName: normalizedRow.vendorname || normalizedRow.name || row['Vendor Name'] || '',
+          contactNumber: normalizedRow.contactnumber || normalizedRow.contact || normalizedRow.phone || '',
+          email: normalizedRow.email || '',
+          address: normalizedRow.address || '',
+          city: normalizedRow.city || '',
+          state: normalizedRow.state || '',
+          gstin: normalizedRow.gstin || '',
+          gstRegistrationType: normalizedRow.gstregistrationtype || normalizedRow.gsttype || 'Unregistered',
+          pan: normalizedRow.pan || '',
+          isTDSApplicable: (normalizedRow.istdsapplicable || normalizedRow.tdsapplicable || 'no').toString().toLowerCase() === 'yes',
+          tdsSection: normalizedRow.tdssection || '',
           createdByClient: req.auth.clientId,
           createdByUser: req.auth.userId,
         };
 
         // Validate required fields
-        if (!vendorData.vendorName || vendorData.vendorName.toString().trim().length < 2) {
-          errors.push(`Row ${i + 2}: Vendor name is required and must be at least 2 characters`);
+        if (!vendorData.vendorName || vendorData.vendorName.trim() === '') {
+          errors.push(`Row ${rowNumber}: Vendor Name is required`);
           continue;
         }
 
-        // Optional validations
-        if (vendorData.contactNumber && !/^[6-9]\d{9}$/.test(vendorData.contactNumber.toString())) {
-          errors.push(`Row ${i + 2}: Invalid mobile number format`);
+        // Normalize GST registration type
+        if (vendorData.gstRegistrationType && gstTypeMapping[vendorData.gstRegistrationType]) {
+          vendorData.gstRegistrationType = gstTypeMapping[vendorData.gstRegistrationType];
+        }
+
+        // Validate GST Registration Type against actual schema enum
+        if (vendorData.gstRegistrationType && !validGstTypes.includes(vendorData.gstRegistrationType)) {
+          errors.push(`Row ${rowNumber}: Invalid GST registration type "${vendorData.gstRegistrationType}". Must be one of: ${validGstTypes.join(', ')}`);
           continue;
         }
 
-        if (vendorData.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(vendorData.email.toString())) {
-          errors.push(`Row ${i + 2}: Invalid email format`);
-          continue;
+        // Clear GSTIN if unregistered
+        if (vendorData.gstRegistrationType === 'Unregistered') {
+          vendorData.gstin = '';
         }
 
-        // Check for duplicate vendor name within the file
-        const duplicateInFile = rows.slice(0, i).some(prevRow => {
-          const prevVendorName = prevRow.vendorname || prevRow['vendorname*'];
-          return prevVendorName?.toString().toLowerCase().trim() === vendorData.vendorName.toString().toLowerCase().trim();
+        // Validate TDS data
+        if (vendorData.isTDSApplicable) {
+          if (!vendorData.tdsSection || vendorData.tdsSection.trim() === '') {
+            errors.push(`Row ${rowNumber}: TDS Section is required when TDS is applicable`);
+            continue;
+          }
+        } else {
+          vendorData.tdsSection = '';
+        }
+
+        // Check for duplicates (vendor name within same client)
+        const existingVendor = await Vendor.findOne({
+          vendorName: vendorData.vendorName.trim(),
+          createdByClient: req.auth.clientId
         });
-        if (duplicateInFile) {
-          errors.push(`Row ${i + 2}: Duplicate vendor name within the file`);
+
+        if (existingVendor) {
+          errors.push(`Row ${rowNumber}: Vendor name '${vendorData.vendorName}' already exists`);
           continue;
         }
 
-        // Create vendor
-        const createdVendor = await Vendor.create(vendorData);
+        // Create new vendor
+        const newVendor = new Vendor(vendorData);
+        const savedVendor = await newVendor.save();
         importedCount++;
 
-        // Notify admin
+        // Notify admin for each imported vendor
         await notifyAdminOnVendorAction({
           req,
           action: "create",
-          vendorName: vendorData.vendorName,
-          entryId: createdVendor._id,
+          vendorName: savedVendor.vendorName,
+          entryId: savedVendor._id,
         });
 
-      } catch (err) {
-        if (err.code === 11000) {
-          const field = Object.keys(err.keyValue)[0];
-          errors.push(`Row ${i + 2}: Duplicate ${field} - ${err.keyValue[field]}`);
+      } catch (error) {
+        console.error(`Error processing row ${rowNumber}:`, error);
+        if (error.code === 11000) {
+          const field = Object.keys(error.keyValue)[0];
+          errors.push(`Row ${rowNumber}: Duplicate ${field} - ${error.keyValue[field]}`);
+        } else if (error.name === 'ValidationError') {
+          // Handle mongoose validation errors
+          const validationErrors = Object.values(error.errors).map(err => err.message);
+          errors.push(`Row ${rowNumber}: ${validationErrors.join(', ')}`);
         } else {
-          errors.push(`Row ${i + 2}: ${err.message}`);
+          errors.push(`Row ${rowNumber}: ${error.message}`);
         }
       }
     }
 
-    res.json({
-      message: "Import completed",
-      importedCount,
+    return res.status(200).json({
+      message: 'Import completed',
+      importedCount: importedCount,
+      totalCount: records.length,
       errors: errors.length > 0 ? errors : undefined
     });
 
-  } catch (err) {
-    console.error('Import error:', err);
-    res.status(500).json({ message: "Server error", error: err.message });
+  } catch (error) {
+    console.error("Error importing vendors:", error);
+    return res.status(500).json({ 
+      message: "Error importing vendors.", 
+      error: error.message 
+    });
   }
 };
+
+// Use the same parseCSV function as customer import
+function parseCSV(content) {
+  const lines = content.split('\n').filter(line => line.trim() !== '');
+  
+  if (lines.length < 2) return []; // Need at least header and one data row
+
+  const headers = lines[0].split(',').map(header => header.trim());
+  const records = [];
+
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue; // Skip empty lines
+
+    // More robust CSV parsing that handles quoted fields with commas
+    const values = [];
+    let current = '';
+    let inQuotes = false;
+    
+    for (let j = 0; j < line.length; j++) {
+      const char = line[j];
+      const nextChar = line[j + 1];
+      
+      if (char === '"') {
+        // Toggle quote state
+        inQuotes = !inQuotes;
+      } else if (char === ',' && !inQuotes) {
+        // End of field
+        values.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    
+    // Push the last field
+    values.push(current.trim());
+
+    // Remove quotes from values if present
+    const cleanValues = values.map(value => {
+      if (value.startsWith('"') && value.endsWith('"')) {
+        return value.slice(1, -1);
+      }
+      return value;
+    });
+
+    const record = {};
+    
+    headers.forEach((header, index) => {
+      record[header] = cleanValues[index] || '';
+    });
+    
+    // Only add non-empty records (at least one field has value)
+    const hasData = Object.values(record).some(value => value !== '');
+    if (hasData) {
+      records.push(record);
+    }
+  }
+
+  return records;
+}
