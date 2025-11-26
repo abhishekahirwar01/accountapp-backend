@@ -48,11 +48,6 @@ const profitLossRoutes = require('./routes/profitLossRoutes');
 const { startSchedulers, testReportImmediately } = require('./services/schedulerService');
 const dailyStockLedgerRoutes = require('./routes/dailyStockLedgerRoutes');
 
-require('./jobs/dailyStockCarryForward');
-
-// const {manualCreateCarryForward} = require("./jobs/manualCreateCarryForward")
-// manualCreateCarryForward();
-
 
 dotenv.config();
 connectDB();

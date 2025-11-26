@@ -165,41 +165,7 @@ async function getSalesFromLedger(clientId, companyId, startDate, endDate) {
   }
 }
 
-// Calculate cost of goods sold from sales entries (fallback method)
-async function calculateCostOfGoodsSold(clientId, companyId, startDate, endDate) {
-  try {
-    const baseFilter = {
-      date: { $gte: startDate, $lte: endDate },
-      client: new mongoose.Types.ObjectId(clientId)
-    };
 
-    if (companyId) {
-      baseFilter.company = new mongoose.Types.ObjectId(companyId);
-    }
-
-    // Get all sales entries in the period
-    const salesEntries = await SalesEntry.find(baseFilter)
-      .populate('products.product', 'sellingPrice')
-      .lean();
-
-    let totalCOGS = 0;
-
-    // Calculate COGS for each sales entry
-    for (const entry of salesEntries) {
-      for (const item of entry.products) {
-        if (item.product && item.product.sellingPrice) {
-          // COGS = quantity sold * cost price (using selling price as approximation)
-          totalCOGS += (item.quantity || 0) * item.product.sellingPrice;
-        }
-      }
-    }
-
-    return totalCOGS;
-  } catch (error) {
-    console.error("Error calculating COGS:", error);
-    return 0;
-  }
-}
 
 // ✅ UPDATED: Main Profit & Loss function with Daily Stock Ledger integration
 exports.getProfitLossStatement = async (req, res) => {

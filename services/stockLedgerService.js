@@ -132,6 +132,95 @@ class DailyStockLedgerService {
       });
     }
   }
+
+
+  static async ensureTodayLedgerExists(companyId, clientId) {
+    try {
+      const today = this.getStandardizedDate(); // Today at IST 00:00
+      
+      // Check if today's ledger already exists
+      let ledger = await DailyStockLedger.findOne({
+        companyId: companyId,
+        clientId: clientId,
+        date: today
+      });
+
+      if (ledger) {
+        console.log('✅ Today\'s ledger already exists');
+        return ledger;
+      }
+
+      console.log('📊 Creating today\'s ledger...');
+      
+      // Get previous day's closing stock
+      const previousDay = new Date(today);
+      previousDay.setDate(previousDay.getDate() - 1);
+      previousDay.setUTCHours(18, 30, 0, 0);
+      
+      const previousLedger = await DailyStockLedger.findOne({
+        companyId: companyId,
+        clientId: clientId,
+        date: previousDay
+      });
+
+      // Check if this is the VERY FIRST ledger for this client+company
+      const existingLedgerCount = await DailyStockLedger.countDocuments({
+        companyId: companyId,
+        clientId: clientId
+      });
+
+      let openingStock, closingStock;
+
+      if (existingLedgerCount === 0) {
+        // 🆕 FIRST TIME SETUP - Calculate from current products
+        const currentProducts = await Product.find({
+          company: companyId,
+          createdByClient: clientId
+        });
+        
+        const totalQuantity = currentProducts.reduce((sum, p) => sum + (p.stocks || 0), 0);
+        const totalAmount = currentProducts.reduce((sum, p) => sum + ((p.stocks || 0) * (p.costPrice || 0)), 0);
+
+        openingStock = { quantity: totalQuantity, amount: totalAmount };
+        closingStock = { quantity: totalQuantity, amount: totalAmount };
+        
+        console.log(`🆕 First ledger created with ${totalQuantity} units worth ₹${totalAmount}`);
+      } else {
+        // 🔄 NORMAL CASE - Use previous day's closing
+        openingStock = previousLedger ? { 
+          quantity: previousLedger.closingStock.quantity, 
+          amount: previousLedger.closingStock.amount 
+        } : { quantity: 0, amount: 0 };
+        
+        closingStock = previousLedger ? { 
+          quantity: previousLedger.closingStock.quantity, 
+          amount: previousLedger.closingStock.amount 
+        } : { quantity: 0, amount: 0 };
+        
+        console.log(`📅 Normal ledger created from previous day: ${closingStock.quantity} units`);
+      }
+
+      // Create the new ledger
+      ledger = new DailyStockLedger({
+        companyId: companyId,
+        clientId: clientId,
+        date: today,
+        openingStock: openingStock,
+        closingStock: closingStock,
+        totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
+        totalSalesOfTheDay: { quantity: 0, amount: 0 },
+        totalCOGS: 0
+      });
+
+      await ledger.save();
+      console.log('✅ Today\'s ledger created successfully');
+      return ledger;
+
+    } catch (error) {
+      console.error('❌ Error ensuring today\'s ledger:', error);
+      throw error;
+    }
+  }
 }
 
 module.exports = DailyStockLedgerService;
