@@ -78,42 +78,41 @@ exports.createService = async (req, res) => {
 
 // Get all
 exports.getServices = async (req, res) => {
-  try {
-    const clientId = req.auth.clientId;
+ try {
+ const requestedClientId = req.query.clientId || req.auth.clientId;
+ const {
+ q,
+ companyId,
+ page = 1,
+ limit = 100,
+ } = req.query;
+ const isPrivileged = ["master", "admin"].includes(req.auth.role);
+ if (!isPrivileged && requestedClientId !== req.auth.clientId) {
+ return res.status(403).json({ message: "Not authorized to view this client's data." });
+ }
+ const where = { createdByClient: requestedClientId };
+if (q) {
+ where.serviceName = { $regex: String(q), $options: "i" };
+ }
+ if (companyId) {
 
-    const {
-      q,
-      companyId,
-      page = 1,
-      limit = 100,
-    } = req.query;
-
-    const where = { createdByClient: clientId };
-
-    if (q) {
-      where.serviceName = { $regex: String(q), $options: "i" };
-    }
-    if (companyId) {
-      where.company = companyId; // only if your schema has a `company` field
-    }
-
-    const perPage = Math.min(Number(limit) || 100, 500);
-    const skip = (Number(page) - 1) * perPage;
-
-    const [items, total] = await Promise.all([
-      Service.find(where).sort({ createdAt: -1 }).skip(skip).limit(perPage).lean(),
-      Service.countDocuments(where),
-    ]);
-
-    return res.json({
-      services: items,
-      total,
-      page: Number(page),
-      limit: perPage,
-    });
-  } catch (err) {
-    return res.status(500).json({ message: "Server error", error: err.message });
-  }
+ where.company = companyId; 
+ }
+ const perPage = Math.min(Number(limit) || 100, 500);
+ const skip = (Number(page) - 1) * perPage;
+ const [items, total] = await Promise.all([
+ Service.find(where).sort({ createdAt: -1 }).skip(skip).limit(perPage).lean(),
+ Service.countDocuments(where),
+ ]);
+ return res.json({
+services: items,
+ total,
+ page: Number(page),
+ limit: perPage,
+ });
+ } catch (err) {
+ return res.status(500).json({ message: "Server error", error: err.message });
+ }
 };
 
 // Update
