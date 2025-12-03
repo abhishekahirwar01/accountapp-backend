@@ -244,27 +244,26 @@ exports.createProduct = async (req, res) => {
 
 // GET /api/products
 exports.getProducts = async (req, res) => {
-  try {
-    const { clientId } = req.auth;
-    const { company } = req.query; // ✅ Get company from query params
+ try {
 
-    // Build filter object
-    const filter = { createdByClient: clientId };
-
-    // ✅ Add company filter if provided
-    if (company) {
-      filter.company = company;
-    }
-
-    const products = await Product.find(filter)
-      .populate('company') // ✅ Optional: populate company details
-      .sort({ createdAt: -1 })
-      .lean();
-
-    return res.json(products);
-  } catch (err) {
-    return res.status(500).json({ message: "Server error", error: err.message });
-  }
+  const requestedClientId = req.query.clientId || req.auth.clientId;
+ const { company } = req.query; 
+ const isPrivileged = ["master", "admin"].includes(req.auth.role);
+ if (!isPrivileged && requestedClientId !== req.auth.clientId) {
+ return res.status(403).json({ message: "Not authorized to view this client's data." });
+ }
+const filter = { createdByClient: requestedClientId };
+ if (company) {
+ filter.company = company;
+ }
+ const products = await Product.find(filter)
+.populate('company') 
+ .sort({ createdAt: -1 })
+ .lean();
+ return res.json(products);
+ } catch (err) {
+ return res.status(500).json({ message: "Server error", error: err.message });
+ }
 };
 // PATCH /api/products/:id
 exports.updateProducts = async (req, res) => {

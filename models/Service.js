@@ -5,7 +5,7 @@ const serviceSchema = new mongoose.Schema(
     serviceName: {
       type: String,
       required: true,
-      lowercase: true,
+     
       trim: true,
     },
     amount: {
