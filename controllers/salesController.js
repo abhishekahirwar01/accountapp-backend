@@ -1556,12 +1556,9 @@ async function notifyAdminOnSalesAction({
   );
 }
 
-
 /**
- * Consume stock from batches for sales (FIFO)
- */
-/**
- * Consume stock from batches for sales (FIFO)
+ * Consume stock from batches for sales (FIFO) with Legacy Stock Fallback
+ * * NOTE: This function relies on Mongoose models: StockBatch, Product
  */
 async function consumeStockForSales(salesEntry, products, session = null) {
   try {
@@ -1573,32 +1570,31 @@ async function consumeStockForSales(salesEntry, products, session = null) {
       const quantityToConsume = Number(item.quantity) || 0;
 
       if (!quantityToConsume) continue;
-
-      const batches = await StockBatch.find({
+      // 1. Attempt to consume from active Stock Batches (FIFO)
+      const activeBatches = await StockBatch.find({
         product: productId,
-        status: { $in: ["active", "partial", "sold"] },
+        companyId: salesEntry.company,
+        clientId: salesEntry.client,
+        status: { $in: ["active", "partial", "sold"] }, // Include sold/partial for remainingQty > 0 logic
         remainingQuantity: { $gt: 0 }
       })
         .sort({ purchaseDate: 1 })
         .session(session);
-
       let remainingQty = quantityToConsume;
       const consumedBatches = [];
       let itemCOGS = 0;
 
-      for (const batch of batches) {
+      // --- Consume from existing batches ---
+      for (const batch of activeBatches) {
         if (remainingQty <= 0) break;
-
-        const consumeQty = Math.min(batch.remainingQuantity, remainingQty);
+        const consumeQty = Math.min(remainingQty, batch.remainingQuantity);
         if (consumeQty <= 0) continue;
 
         batch.remainingQuantity -= consumeQty;
         remainingQty -= consumeQty;
-
         const batchCOGS = consumeQty * batch.costPrice;
         itemCOGS += batchCOGS;
         totalCOGS += batchCOGS;
-
         // push log into batch
         batch.consumedBySales.push({
           salesEntry: salesEntry._id,
@@ -1620,24 +1616,81 @@ async function consumeStockForSales(salesEntry, products, session = null) {
 
         await batch.save({ session });
       }
-
+      // 2.  LEGACY STOCK FALLBACK (CRITICAL FIX) 
       if (remainingQty > 0) {
-        const totalAvailableBefore = batches.reduce(
-          (sum, batch) => sum + batch.remainingQuantity,
-          0
-        );
+        // Get product master stock
+        const productMaster = await Product.findById(productId).session(session);
+        const masterStock = (productMaster && productMaster.stocks) || 0;
+
+        // Calculate the quantity already consumed from *anywhere* (master or batches)
+        const consumedPrior = quantityToConsume - remainingQty;
+        // Calculate stock remaining in Product Master that hasn't been tracked by batches yet
+        const availableInBatches = activeBatches.reduce((sum, batch) => sum + batch.remainingQuantity, 0) + consumedPrior;
+
+        const currentBatchedStock = activeBatches.reduce((sum, batch) => sum + batch.remainingQuantity, 0);
+
+
+
+        if (masterStock >= quantityToConsume) {
+
+          const neededFromLegacy = remainingQty;
+          const costPrice = productMaster.costPrice || 0; 
+
+          const newLegacyBatch = await StockBatch.create([{
+            product: productId,
+            companyId: salesEntry.company,
+            clientId: salesEntry.client,
+            remainingQuantity: 0, 
+            initialQuantity: neededFromLegacy,
+            costPrice: costPrice,
+            purchaseDate: new Date("2000-01-01"),
+            type: 'LEGACY_MIGRATION',
+            status: 'sold',
+            isActive: false
+          }], { session });
+
+          const batchCOGS = neededFromLegacy * costPrice;
+          itemCOGS += batchCOGS;
+          totalCOGS += batchCOGS;
+
+          // Add consumption log
+          newLegacyBatch[0].consumedBySales.push({
+            salesEntry: salesEntry._id,
+            consumedQty: neededFromLegacy,
+            consumedAt: new Date()
+          });
+          await newLegacyBatch[0].save({ session });
+
+          // Mark consumption complete
+          remainingQty = 0;
+
+          consumedBatches.push({
+            batchId: newLegacyBatch[0]._id,
+            consumedQty: neededFromLegacy,
+            costPrice: costPrice,
+            cogs: batchCOGS
+          });
+          console.log(`[SUCCESS LEGACY] Consumed ${neededFromLegacy} units via new LEGACY batch creation. Master Stock was ${masterStock}.`);
+        } else {
+          // Even master stock is insufficient after attempting batches
+          const totalAvailable = masterStock; // Master stock is the final source of truth
+          throw new Error(
+            `Insufficient stock in batches. Available: ${totalAvailable}, Requested: ${quantityToConsume}`
+          );
+        }
+      }
+      // 3. --- Throw error if still remaining ---
+      if (remainingQty > 0) {
         throw new Error(
-          `Insufficient stock in batches. Available: ${totalAvailableBefore}, Requested: ${quantityToConsume}`
+          `Insufficient stock in batches. Available: ${masterStock}, Requested: ${quantityToConsume}`
         );
       }
-
-      // update product stock
+      // 4. --- Update Product Master Stock ---
       const product = await Product.findById(productId).session(session);
       if (product) {
         product.stocks = Math.max(0, (product.stocks || 0) - quantityToConsume);
         await product.save({ session });
       }
-
       consumptionResults.push({
         productId,
         quantity: quantityToConsume,
@@ -1645,8 +1698,6 @@ async function consumeStockForSales(salesEntry, products, session = null) {
         batches: consumedBatches
       });
     }
-
-    // IMPORTANT: caller will store consumptionResults on salesEntry.stockImpact
     return { consumptionResults, totalCOGS };
   } catch (error) {
     console.error("Error consuming stock for sales:", error);
