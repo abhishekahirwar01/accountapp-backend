@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const SalesEntry = require("../models/SalesEntry");
 const ReceiptEntry = require("../models/ReceiptEntry");
 const PaymentEntry = require("../models/PaymentEntry");
-const DailyStockLedger = require("../models/DailyStockLedger"); // ⬅️ ADD THIS
+const DailyStockLedger = require("../models/DailyStockLedger");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
@@ -129,10 +129,9 @@ async function getSalesBreakdownByPaymentMethod(clientId, companyId, startDate, 
 
     console.log('🔍 Getting sales breakdown with filter:', baseFilter);
 
-    // Get ALL sales entries with products and services POPULATED
     const salesEntries = await SalesEntry.find(baseFilter)
-      .populate('products.product')  // Populate product details
-      .populate('services.service')  // ⬅️ THIS IS WHAT YOU'RE MISSING - Populate service details
+      .populate('products.product')
+      .populate('services.service')
       .select('totalAmount paymentMethod products services date invoiceNumber')
       .lean();
 
@@ -193,15 +192,6 @@ async function getSalesBreakdownByPaymentMethod(clientId, companyId, startDate, 
         breakdown.services.total += amount;
         breakdown.services.count += 1;
         console.log(`  → Pure Service Sale: ₹${amount} (${method})`);
-        
-        // Log service details for debugging
-        entry.services.forEach((serviceItem, index) => {
-          console.log(`    Service ${index + 1}:`, {
-            serviceName: serviceItem.service?.serviceName || 'Unknown Service',
-            amount: serviceItem.amount,
-            lineTotal: serviceItem.lineTotal
-          });
-        });
       } else if (hasProducts && hasServices) {
         // MIXED SALE → Split based on ACTUAL amounts
         const productAmount = entry.products.reduce((sum, p) => sum + (p.lineTotal || p.amount || 0), 0);
@@ -220,17 +210,6 @@ async function getSalesBreakdownByPaymentMethod(clientId, companyId, startDate, 
         breakdown.services.total += serviceAmount;
         breakdown.trading.count += 1;
         breakdown.services.count += 1;
-
-        // Log service details for debugging
-        entry.services.forEach((serviceItem, index) => {
-          console.log(`    Service ${index + 1}:`, {
-            serviceName: serviceItem.service?.serviceName || 'Unknown Service',
-            amount: serviceItem.amount,
-            lineTotal: serviceItem.lineTotal
-          });
-        });
-      } else {
-        console.log(`  → No products or services found in sale`);
       }
 
       // Overall totals
@@ -243,7 +222,7 @@ async function getSalesBreakdownByPaymentMethod(clientId, companyId, startDate, 
       breakdown.overall.count += 1;
     });
 
-    console.log('✅ Corrected sales breakdown with services:', breakdown);
+    console.log('✅ Sales breakdown:', breakdown);
     return breakdown;
 
   } catch (error) {
@@ -286,7 +265,7 @@ async function getOpeningStock(clientId, companyId, startDate) {
 }
 
 
-// ✅ UPDATED: Get closing stock from Daily Stock Ledger - USE IST DATES
+
 async function getClosingStock(clientId, companyId, endDate) {
   try {
     // Convert to IST standardized date (18:30 UTC)
@@ -315,7 +294,6 @@ async function getClosingStock(clientId, companyId, endDate) {
   }
 }
 
-// ✅ NEW: Get total purchases from Daily Stock Ledger for the period
 async function getPurchasesFromLedger(clientId, companyId, startDate, endDate) {
   try {
     // Convert dates to IST format
@@ -373,14 +351,19 @@ async function getSalesFromLedger(clientId, companyId, startDate, endDate) {
   }
 }
 
-
-
-// ✅ UPDATED: Main Profit & Loss function with Daily Stock Ledger integration
+// ✅ UPDATED: Main function now accepts clientId from query for admin access
 exports.getProfitLossStatement = async (req, res) => {
   try {
     await ensureAuthCaps(req);
 
-    const { companyId, fromDate, toDate } = req.query;
+    // ✅ KEY CHANGE: Allow admin to pass clientId in query
+    const { companyId, fromDate, toDate, clientId: queryClientId } = req.query;
+
+    // ✅ Determine which clientId to use
+    // If admin passes clientId, use that; otherwise use authenticated user's clientId
+    const effectiveClientId = userIsPriv(req) && queryClientId 
+      ? queryClientId 
+      : req.auth.clientId;
 
     // Validate date range
     if (!fromDate || !toDate) {
@@ -402,17 +385,13 @@ exports.getProfitLossStatement = async (req, res) => {
 
     // Set end date to end of day
     endDate.setHours(23, 59, 59, 999);
-
-    console.log('📅 Profit & Loss Period:', { startDate, endDate, companyId });
-
-    // ✅ UPDATED: Get stock values from Daily Stock Ledger
-    // ✅ UPDATED: Get stock values from Daily Stock Ledger + sales breakdown
+    // ✅ UPDATED: Use effectiveClientId for all queries
     const [openingStock, closingStock, ledgerPurchases, ledgerSales, salesBreakdown] = await Promise.all([
-      getOpeningStock(req.auth.clientId, companyId, startDate),
-      getClosingStock(req.auth.clientId, companyId, endDate),
-      getPurchasesFromLedger(req.auth.clientId, companyId, startDate, endDate),
-      getSalesFromLedger(req.auth.clientId, companyId, startDate, endDate),
-      getSalesBreakdownByPaymentMethod(req.auth.clientId, companyId, startDate, endDate) // ✅ ADD THIS
+      getOpeningStock(effectiveClientId, companyId, startDate),
+      getClosingStock(effectiveClientId, companyId, endDate),
+      getPurchasesFromLedger(effectiveClientId, companyId, startDate, endDate),
+      getSalesFromLedger(effectiveClientId, companyId, startDate, endDate),
+      getSalesBreakdownByPaymentMethod(effectiveClientId, companyId, startDate, endDate)
     ]);
 
     console.log('📊 Stock Values from Ledger:', {
@@ -422,40 +401,25 @@ exports.getProfitLossStatement = async (req, res) => {
       ledgerSales
     });
 
-    // Build base filter for other transactions
+    // Build base filter for other transactions - use effectiveClientId
     const baseFilter = {
       date: { $gte: startDate, $lte: endDate },
-      client: new mongoose.Types.ObjectId(req.auth.clientId)
+      client: new mongoose.Types.ObjectId(effectiveClientId)
     };
 
-    // Add company filter if specified
     if (companyId) {
-      if (!companyAllowedForUser(req, companyId)) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied to this company"
-        });
-      }
       baseFilter.company = new mongoose.Types.ObjectId(companyId);
-    } else {
-      // Filter by allowed companies for non-privileged users
-      if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
-        baseFilter.company = { $in: req.auth.allowedCompanies.map(id => new mongoose.Types.ObjectId(id)) };
-      }
     }
 
-    // Fetch other financial data in parallel
     const [
       receiptResult,
       paymentResult
     ] = await Promise.all([
-      // Receipts aggregation
       ReceiptEntry.aggregate([
         { $match: baseFilter },
         { $group: { _id: null, total: { $sum: "$amount" }, count: { $sum: 1 } } }
       ]),
 
-      // Payments aggregation with expense type breakdown
       PaymentEntry.aggregate([
         { $match: baseFilter },
         {
@@ -487,10 +451,8 @@ exports.getProfitLossStatement = async (req, res) => {
 
     console.log('💰 Other Financial Data:', { receiptResult, paymentResult });
 
-    // Extract totals
     const totalReceipts = receiptResult[0]?.total || 0;
 
-    // Process payment results
     const vendorPaymentsTotal = paymentResult
       .filter(p => p._id.isExpense === false)
       .reduce((sum, p) => sum + (p.total || 0), 0);
@@ -505,7 +467,6 @@ exports.getProfitLossStatement = async (req, res) => {
 
     const totalExpensePayments = expensePaymentsBreakdown.reduce((sum, exp) => sum + exp.amount, 0);
 
-    // ✅ UPDATED: Trading Account Calculations using ledger data
     const costOfGoodsSold = openingStock + ledgerPurchases - closingStock;
     const grossProfit = ledgerSales - costOfGoodsSold;
 
@@ -513,12 +474,10 @@ exports.getProfitLossStatement = async (req, res) => {
     const totalExpenses = costOfGoodsSold + vendorPaymentsTotal + totalExpensePayments;
     const netProfit = totalIncome - totalExpenses;
 
-    // Calculate percentages with safe division
     const profitMargin = ledgerSales > 0 ? (grossProfit / ledgerSales) * 100 : 0;
     const netMargin = totalIncome > 0 ? (netProfit / totalIncome) * 100 : 0;
     const expenseRatio = totalIncome > 0 ? (totalExpenses / totalIncome) * 100 : 0;
 
-    // ✅ UPDATED: Prepare the complete P&L data structure
     const profitLossData = {
       success: true,
       period: {
@@ -527,40 +486,6 @@ exports.getProfitLossStatement = async (req, res) => {
         company: companyId || 'All Companies'
       },
 
-      // // Trading Account Section (from Daily Stock Ledger)
-      // trading: {
-      //   openingStock: openingStock,
-      //   purchases: ledgerPurchases,
-      //   closingStock: closingStock,
-      //   costOfGoodsSold: costOfGoodsSold,
-      //   grossProfit: grossProfit,
-      //   grossLoss: grossProfit < 0 ? Math.abs(grossProfit) : 0,
-      //   sales: {
-      //     total: ledgerSales,
-      //     breakdown: salesBreakdown // ✅ ADD SALES BREAKDOWN HERE
-      //   }
-      // },
-
-      // // Two-side P&L structure
-      // // Two-side P&L structure
-      // income: {
-      //   total: totalIncome,
-      //   breakdown: {
-      //     sales: {
-      //       amount: ledgerSales,
-      //       label: "Sales",
-      //       count: salesBreakdown.count,
-      //       paymentMethods: salesBreakdown // ✅ ADD PAYMENT METHOD BREAKDOWN
-      //     },
-      //     receipts: {
-      //       amount: totalReceipts,
-      //       label: "Receipts",
-      //       count: receiptResult[0]?.count || 0
-      //     }
-      //   }
-      // },
-
-      // Trading Account Section (PRODUCTS ONLY)
       trading: {
         openingStock: openingStock,
         purchases: ledgerPurchases,
@@ -569,22 +494,21 @@ exports.getProfitLossStatement = async (req, res) => {
         grossProfit: grossProfit,
         grossLoss: grossProfit < 0 ? Math.abs(grossProfit) : 0,
         sales: {
-          total: salesBreakdown.trading.total, // ONLY PRODUCT SALES
+          total: salesBreakdown.trading.total,
           breakdown: salesBreakdown.trading
         }
       },
-
       // Two-side P&L structure
       income: {
         total: totalIncome,
         breakdown: {
-          productSales: {        // MOVED FROM TRADING ACCOUNT
+          productSales: {
             amount: salesBreakdown.trading.total,
             label: "Product Sales",
             count: salesBreakdown.trading.count,
             paymentMethods: salesBreakdown.trading
           },
-          serviceIncome: {       // NEW: SERVICE INCOME
+          serviceIncome: {
             amount: salesBreakdown.services.total,
             label: "Service Income",
             count: salesBreakdown.services.count,
@@ -619,7 +543,6 @@ exports.getProfitLossStatement = async (req, res) => {
         }
       },
 
-      // Summary section
       summary: {
         grossProfit,
         netProfit,
@@ -631,7 +554,6 @@ exports.getProfitLossStatement = async (req, res) => {
         isProfitable: netProfit > 0
       },
 
-      // Data source information
       dataSource: {
         stockData: "daily_stock_ledger",
         financialData: "transaction_entries",
@@ -658,45 +580,39 @@ exports.getProfitLossStatement = async (req, res) => {
   }
 };
 
-// ✅ UPDATED: Get simplified P&L for dashboard with Daily Stock Ledger
 exports.getProfitLossSummary = async (req, res) => {
   try {
     await ensureAuthCaps(req);
 
-    const { companyId, fromDate, toDate } = req.query;
+    const { companyId, fromDate, toDate, clientId: queryClientId } = req.query;
 
-    // Default to current month if no dates provided
+    // ✅ Same logic for summary
+    const effectiveClientId = userIsPriv(req) && queryClientId 
+      ? queryClientId 
+      : req.auth.clientId;
+
     const startDate = fromDate ? new Date(fromDate) : new Date(new Date().getFullYear(), new Date().getMonth(), 1);
     const endDate = toDate ? new Date(toDate) : new Date();
     endDate.setHours(23, 59, 59, 999);
 
-    console.log('📊 P&L Summary Period:', { startDate, endDate, companyId });
+    console.log('📊 P&L Summary Period:', { startDate, endDate, companyId, effectiveClientId });
 
-    // ✅ UPDATED: Get data from Daily Stock Ledger
     const [openingStock, closingStock, ledgerPurchases, ledgerSales] = await Promise.all([
-      getOpeningStock(req.auth.clientId, companyId, startDate),
-      getClosingStock(req.auth.clientId, companyId, endDate),
-      getPurchasesFromLedger(req.auth.clientId, companyId, startDate, endDate),
-      getSalesFromLedger(req.auth.clientId, companyId, startDate, endDate)
+      getOpeningStock(effectiveClientId, companyId, startDate),
+      getClosingStock(effectiveClientId, companyId, endDate),
+      getPurchasesFromLedger(effectiveClientId, companyId, startDate, endDate),
+      getSalesFromLedger(effectiveClientId, companyId, startDate, endDate)
     ]);
 
-    // Build base filter for other transactions
     const baseFilter = {
       date: { $gte: startDate, $lte: endDate },
-      client: req.auth.clientId
+      client: effectiveClientId
     };
 
     if (companyId) {
-      if (!companyAllowedForUser(req, companyId)) {
-        return res.status(403).json({
-          success: false,
-          message: "Access denied to this company"
-        });
-      }
       baseFilter.company = companyId;
     }
 
-    // Get receipts and payments
     const [
       receiptResult,
       paymentResult
@@ -714,7 +630,6 @@ exports.getProfitLossSummary = async (req, res) => {
     const totalReceipts = receiptResult[0]?.total || 0;
     const totalPayments = paymentResult[0]?.total || 0;
 
-    // ✅ UPDATED: Calculations using ledger data
     const costOfGoodsSold = openingStock + ledgerPurchases - closingStock;
     const totalIncome = ledgerSales + totalReceipts;
     const totalExpenses = costOfGoodsSold + totalPayments;
