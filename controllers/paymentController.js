@@ -198,16 +198,21 @@ exports.createPayment = async (req, res) => {
     });
 
 
-    if (isExpense) {
-  await updateDailyLedgerForExpense({
-    companyId: companyDoc._id,
-    clientId: req.auth.clientId,
-    date,
-    expenseHeadId: expenseDoc._id,
-    amountDelta: Number(amount)
-  });
+if (isExpense) {
+  try {
+    await updateDailyLedgerForExpense({
+      companyId: companyDoc._id,
+      clientId: req.auth.clientId,
+      date,
+      expenseHeadId: expenseDoc._id,
+      amountDelta: Number(amount)
+    });
+  } catch (ledgerError) {
+    // Log the error but don't fail the payment creation
+    console.error('⚠️ Ledger update failed, but payment created:', ledgerError.message);
+    // Payment will still be created successfully
+  }
 }
-
 
     // Access clientId and companyId after creation
     const clientId = payment.client.toString();
@@ -727,13 +732,18 @@ exports.deletePayment = async (req, res) => {
 
     // ---- DAILY LEDGER REVERSE FOR EXPENSE ----
 if (payment.isExpense) {
-  await updateDailyLedgerForExpense({
-    companyId: payment.company.toString(),
-    clientId: payment.client.toString(),
-    date: payment.date,
-    expenseHeadId: payment.expense.toString(),
-    amountDelta: -Number(payment.amount)
-  });
+  try {
+    await updateDailyLedgerForExpense({
+      companyId: payment.company.toString(),
+      clientId: payment.client.toString(),
+      date: payment.date,
+      expenseHeadId: payment.expense.toString(),
+      amountDelta: -Number(payment.amount)
+    });
+  } catch (ledgerError) {
+    console.error('⚠️ Daily ledger reversal failed (payment still deleted):', ledgerError.message);
+    // Payment deletion continues successfully
+  }
 }
 
 
