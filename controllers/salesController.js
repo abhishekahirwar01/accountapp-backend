@@ -1712,91 +1712,79 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     const salesDate = new Date(salesEntry.date);
     salesDate.setUTCHours(18, 30, 0, 0);
 
-    let ledger = await DailyStockLedger.findOne({
-      companyId: salesEntry.company,
-      clientId: salesEntry.client,
-      date: salesDate
-    }).session(session);
-
-    if (!ledger) {
-      // Create new ledger
-      const previousDay = new Date(salesDate);
-      previousDay.setDate(previousDay.getDate() - 1);
-      previousDay.setUTCHours(18, 30, 0, 0);
-
-      const previousLedger = await DailyStockLedger.findOne({
-        companyId: salesEntry.company,
-        clientId: salesEntry.client,
-        date: previousDay
-      }).session(session);
-
-      ledger = new DailyStockLedger({
-        companyId: salesEntry.company,
-        clientId: salesEntry.client,
-        date: salesDate,
-        openingStock: previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 },
-        closingStock: previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 },
-        totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
-        totalSalesOfTheDay: { quantity: 0, amount: 0 },
-        totalCOGS: 0
-      });
-    }
-
-
-    if (!ledger) {
-      console.log("❌ No ledger for this date. Cron must create it. Skipping ledger update.");
-      return; // important
-    }
-
-
-    // ✅ CRITICAL FIX: Load existing COGS or initialize to 0
-    const existingCOGS = ledger.totalCOGS || 0;
-
-    // Calculate current sale values
+    // 1. Calculate Totals for THIS specific sale
     const salesQuantity = products.reduce((sum, item) => sum + item.quantity, 0);
     const salesAmount = products.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
 
-    console.log('🔴 DEBUG LEDGER UPDATE:');
-    console.log('Current Sale - Quantity:', salesQuantity, 'Revenue: ₹', salesAmount, 'COGS: ₹', currentSaleCOGS);
-    console.log('BEFORE - Opening:', ledger.openingStock, 'Purchases:', ledger.totalPurchaseOfTheDay);
-    console.log('BEFORE - Sales:', ledger.totalSalesOfTheDay, 'Existing COGS:', existingCOGS);
+    // 2. Fetch Previous Day's Ledger (Opening Stock ke liye)
+    const previousDay = new Date(salesDate);
+    previousDay.setDate(previousDay.getDate() - 1);
+    previousDay.setUTCHours(18, 30, 0, 0);
 
-    // Update sales revenue and quantity
-    ledger.totalSalesOfTheDay.quantity += salesQuantity;
-    ledger.totalSalesOfTheDay.amount += salesAmount;
+    const previousLedger = await DailyStockLedger.findOne({
+      companyId: salesEntry.company,
+      // clientId: salesEntry.client,  <-- REMOVED from Previous check too
+      date: previousDay
+    }).session(session);
 
-    // ✅ CORRECTED: Add to existing COGS
-    ledger.totalCOGS = existingCOGS + currentSaleCOGS;
+    const openingStockDefaults = previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 };
 
-    // Calculate closing stock
-    const totalAvailableQuantity = ledger.openingStock.quantity + ledger.totalPurchaseOfTheDay.quantity;
-    const totalAvailableAmount = ledger.openingStock.amount + ledger.totalPurchaseOfTheDay.amount;
+    // ------------------------------------------------------------------
+    // STEP 1: SAFE UPSERT 
+    // IMPORTANT: Remove 'clientId' from the filter query!
+    // ------------------------------------------------------------------
+    let ledger = await DailyStockLedger.findOneAndUpdate(
+      {
+        companyId: salesEntry.company,
+        date: salesDate               
+      },
+      {
+        $inc: {
+          "totalSalesOfTheDay.quantity": salesQuantity,
+          "totalSalesOfTheDay.amount": salesAmount,
+          "totalCOGS": currentSaleCOGS
+        },
+        $setOnInsert: {
+          clientId: salesEntry.client, 
+          openingStock: openingStockDefaults,
+          totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
+        }
+      },
+      { 
+        upsert: true, 
+        new: true, 
+        session: session,
+        setDefaultsOnInsert: true
+      }
+    );
 
-    const closingQuantity = Math.max(0, totalAvailableQuantity - ledger.totalSalesOfTheDay.quantity);
-    const closingAmount = Math.max(0, totalAvailableAmount - ledger.totalCOGS);
+    // ------------------------------------------------------------------
+    // STEP 2: RECALCULATE CLOSING STOCK
+    // ------------------------------------------------------------------
+    
+    const totalOpeningQty = ledger.openingStock.quantity;
+    const totalOpeningAmt = ledger.openingStock.amount;
+    
+    const totalPurchaseQty = ledger.totalPurchaseOfTheDay.quantity;
+    const totalPurchaseAmt = ledger.totalPurchaseOfTheDay.amount;
+    
+    const totalSalesQty = ledger.totalSalesOfTheDay.quantity;
+    const totalCOGS = ledger.totalCOGS; 
 
-    ledger.closingStock.quantity = closingQuantity;
-    ledger.closingStock.amount = closingAmount;
+    // Calculation Formula: (Opening + Purchase) - Sales/COGS
+    const finalClosingQty = (totalOpeningQty + totalPurchaseQty) - totalSalesQty;
+    const finalClosingAmt = (totalOpeningAmt + totalPurchaseAmt) - totalCOGS;
 
-    console.log('🔴 CALCULATIONS:');
-    console.log('  Total Available:', totalAvailableQuantity, 'units, ₹', totalAvailableAmount);
-    console.log('  Total Sales:', ledger.totalSalesOfTheDay.quantity, 'units, ₹', ledger.totalSalesOfTheDay.amount);
-    console.log('  Total COGS: ₹', ledger.totalCOGS, '(Existing:', existingCOGS, '+ Current:', currentSaleCOGS, ')');
-    console.log('  Closing Stock:', closingQuantity, 'units, ₹', closingAmount);
+    // Use Math.max to prevent negative value errors
+    ledger.closingStock.quantity = Math.max(0, finalClosingQty);
+    ledger.closingStock.amount = Math.max(0, finalClosingAmt);
 
-    console.log('AFTER - Closing:', ledger.closingStock);
-
-    // Validation
-    const expectedValue = closingQuantity * 700; // Based on current batch cost
-    if (Math.abs(ledger.closingStock.amount - expectedValue) > 100) {
-      console.log('⚠️ WARNING: Closing stock value may be incorrect');
-      console.log('   Expected based on current batches: ₹', expectedValue);
-      console.log('   Actual in ledger: ₹', ledger.closingStock.amount);
-      console.log('   Difference: ₹', ledger.closingStock.amount - expectedValue);
-    }
-
+    // Save final state
     await ledger.save({ session });
-    console.log('✅ Ledger saved with totalCOGS:', ledger.totalCOGS);
+
+    console.log('✅ Daily Stock Ledger Updated Successfully');
+    console.log('   Closing Stock:', ledger.closingStock.quantity, 'units');
+
     return ledger;
 
   } catch (error) {
