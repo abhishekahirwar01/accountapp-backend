@@ -268,97 +268,96 @@ async function createStockBatches(purchaseEntry, products, session = null) {
 // }
 
 async function updateDailyStockLedgerForPurchase(purchaseEntry, products, session = null) {
-  const purchaseDate = new Date(purchaseEntry.date);
-  purchaseDate.setUTCHours(18, 30, 0, 0); // IST 00:00
+  try {
+    const purchaseDate = new Date(purchaseEntry.date);
+    purchaseDate.setUTCHours(18, 30, 0, 0); // IST logic
 
-  // Find or create daily ledger
-  let ledger = await DailyStockLedger.findOne({
-    companyId: purchaseEntry.company,
-    clientId: purchaseEntry.client,
-    date: purchaseDate
-  }).session(session);
+    // 1. Calculate New Purchase Totals
+    const newPurchaseQuantity = products.reduce((sum, item) => sum + item.quantity, 0);
+    const newPurchaseAmount = products.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
 
-  // ✅ Calculate new purchase values ONCE
-  const newPurchaseQuantity = products.reduce((sum, item) => sum + item.quantity, 0);
-  const newPurchaseAmount = products.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
-
-  console.log('🔴 DEBUG PURCHASE LEDGER UPDATE:');
-  console.log('  New Purchase:', newPurchaseQuantity, 'units, ₹', newPurchaseAmount);
-
-  if (!ledger) {
-    // Get previous day's closing stock
+    // 2. Fetch Previous Day's Ledger (For Opening Stock)
     const previousDay = new Date(purchaseDate);
     previousDay.setDate(previousDay.getDate() - 1);
     previousDay.setUTCHours(18, 30, 0, 0);
 
     const previousLedger = await DailyStockLedger.findOne({
       companyId: purchaseEntry.company,
-      clientId: purchaseEntry.client,
+      // Note: No clientId/vendorId here
       date: previousDay
     }).session(session);
 
-    const openingStock = previousLedger ? {
-      quantity: Math.max(0, previousLedger.closingStock.quantity),
-      amount: Math.max(0, previousLedger.closingStock.amount)
-    } : { quantity: 0, amount: 0 };
+    const openingStockDefaults = previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 };
 
-    // ✅ Create new ledger with initial purchase values
-    ledger = new DailyStockLedger({
-      companyId: purchaseEntry.company,
-      clientId: purchaseEntry.client,
-      date: purchaseDate,
-      openingStock: openingStock,
-      closingStock: {
-        quantity: openingStock.quantity + newPurchaseQuantity,
-        amount: openingStock.amount + newPurchaseAmount
+    // ------------------------------------------------------------------
+    // STEP 1: ATOMIC UPDATE (Safe Upsert)
+    // ------------------------------------------------------------------
+    // Ye step database mein Purchase add karega aur agar ledger nahi hai to banayega.
+    // Hum yahan Closing Stock calculate nahi karenge taaki conflict na ho.
+    let ledger = await DailyStockLedger.findOneAndUpdate(
+      {
+        companyId: purchaseEntry.company, // Only Company
+        date: purchaseDate                // And Date
       },
-      totalPurchaseOfTheDay: { quantity: newPurchaseQuantity, amount: newPurchaseAmount },
-      totalSalesOfTheDay: { quantity: 0, amount: 0 },
-      totalCOGS: 0
-    });
-
-    console.log('🟢 NEW LEDGER CREATED:');
-    console.log('  Opening Stock:', openingStock.quantity, 'units, ₹', openingStock.amount);
-    console.log('  Purchase:', newPurchaseQuantity, 'units, ₹', newPurchaseAmount);
-    console.log('  Closing Stock:', ledger.closingStock.quantity, 'units, ₹', ledger.closingStock.amount);
-
-  } else {
-    // ✅ LEDGER EXISTS: Update purchase values and recalculate closing
-    ledger.totalPurchaseOfTheDay.quantity += newPurchaseQuantity;
-    ledger.totalPurchaseOfTheDay.amount += newPurchaseAmount;
-
-    // ✅ Calculate closing stock quantity
-    const newClosingQuantity = Math.max(0, 
-      ledger.openingStock.quantity +
-      ledger.totalPurchaseOfTheDay.quantity -
-      ledger.totalSalesOfTheDay.quantity
+      {
+        $inc: {
+          "totalPurchaseOfTheDay.quantity": newPurchaseQuantity,
+          "totalPurchaseOfTheDay.amount": newPurchaseAmount
+          // Purchase mein COGS change nahi hota
+        },
+        $setOnInsert: {
+          openingStock: openingStockDefaults,
+          totalSalesOfTheDay: { quantity: 0, amount: 0 },
+          totalCOGS: 0
+          // clientId store kar sakte hain reference ke liye par search mein use na karein
+        }
+      },
+      { 
+        upsert: true, 
+        new: true, 
+        session: session,
+        setDefaultsOnInsert: true
+      }
     );
 
-    // ✅ FIXED: Calculate closing stock THEORETICALLY
-    const newClosingAmount = Math.max(0,
-      ledger.openingStock.amount +
-      ledger.totalPurchaseOfTheDay.amount -
-      ledger.totalSalesOfTheDay.amount
-    );
+    // ------------------------------------------------------------------
+    // STEP 2: RECALCULATE CLOSING STOCK (In Memory)
+    // ------------------------------------------------------------------
+    
+    // Get latest values from the updated ledger
+    const totalOpeningQty = ledger.openingStock.quantity;
+    const totalOpeningAmt = ledger.openingStock.amount;
+    
+    const totalPurchaseQty = ledger.totalPurchaseOfTheDay.quantity;
+    const totalPurchaseAmt = ledger.totalPurchaseOfTheDay.amount;
+    
+    const totalSalesQty = ledger.totalSalesOfTheDay.quantity;
+    const totalCOGS = ledger.totalCOGS; // Use actual COGS, not Sales Amount
 
-    // ✅ Calculate COGS properly
-   const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
+    // ✅ Formula: Opening + Purchase - Sales
+    const finalClosingQty = (totalOpeningQty + totalPurchaseQty) - totalSalesQty;
+    
+    // ✅ Formula: OpeningVal + PurchaseVal - COGS (Cost of goods sold)
+    // Note: Sales Amount minus nahi karte, kyunki usme profit juda hota hai.
+    const finalClosingAmt = (totalOpeningAmt + totalPurchaseAmt) - totalCOGS;
 
-    // ✅ Update ledger with correct values
-    ledger.closingStock.quantity = newClosingQuantity;
-    ledger.closingStock.amount = newClosingAmount;
-    ledger.totalCOGS = totalCOGS;
+    // Apply Math.max to prevent negative values
+    ledger.closingStock.quantity = Math.max(0, finalClosingQty);
+    ledger.closingStock.amount = Math.max(0, finalClosingAmt);
 
-    console.log('🟢 EXISTING LEDGER UPDATED:');
-    console.log('  Opening Stock:', ledger.openingStock.quantity, 'units, ₹', ledger.openingStock.amount);
-    console.log('  Purchases:', ledger.totalPurchaseOfTheDay.quantity, 'units, ₹', ledger.totalPurchaseOfTheDay.amount);
-    console.log('  Sales:', ledger.totalSalesOfTheDay.quantity, 'units, ₹', ledger.totalSalesOfTheDay.amount);
-    console.log('  Closing Stock:', newClosingQuantity, 'units, ₹', newClosingAmount);
-    console.log('  COGS: ₹', totalCOGS);
+    // Final Save
+    await ledger.save({ session });
+
+    console.log('✅ Purchase Ledger Updated Successfully');
+    console.log('  Opening:', totalOpeningQty, '+ Purchase:', totalPurchaseQty, '- Sales:', totalSalesQty);
+    console.log('  New Closing Stock:', ledger.closingStock.quantity, 'units');
+
+    return ledger;
+
+  } catch (error) {
+    console.error('Error updating purchase ledger:', error);
+    throw error;
   }
-
-  await ledger.save({ session });
-  return ledger;
 }
 
 /**

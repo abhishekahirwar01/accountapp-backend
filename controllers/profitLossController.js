@@ -453,6 +453,19 @@ exports.getProfitLossStatement = async (req, res) => {
 
     const totalReceipts = receiptResult[0]?.total || 0;
 
+    // 1. Current Values nikalo
+    const rawCredit = salesBreakdown.trading.credit || 0;
+    const rawCash = salesBreakdown.trading.cash || 0;
+
+    // 2. Adjustment calculate karo
+    const adjustmentAmount = Math.min(rawCredit, totalReceipts);
+
+    // 3. Values update kar do (Memory mein, Database mein nahi)
+    salesBreakdown.trading.credit = rawCredit - adjustmentAmount;
+    salesBreakdown.trading.cash = rawCash + adjustmentAmount;
+
+    console.log(`✅ Logic Applied: Moved ${adjustmentAmount} from Credit to Cash based on Receipts`);
+
     const vendorPaymentsTotal = paymentResult
       .filter(p => p._id.isExpense === false)
       .reduce((sum, p) => sum + (p.total || 0), 0);
