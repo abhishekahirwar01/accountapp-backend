@@ -270,7 +270,7 @@ async function createStockBatches(purchaseEntry, products, session = null) {
 async function updateDailyStockLedgerForPurchase(purchaseEntry, products, session = null) {
   try {
     const purchaseDate = new Date(purchaseEntry.date);
-    purchaseDate.setUTCHours(18, 30, 0, 0); // IST logic
+    purchaseDate.setUTCHours(18, 30, 0, 0); // IST logic for 12:00 AM
 
     // 1. Calculate New Purchase Totals
     const newPurchaseQuantity = products.reduce((sum, item) => sum + item.quantity, 0);
@@ -283,17 +283,13 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
 
     const previousLedger = await DailyStockLedger.findOne({
       companyId: purchaseEntry.company,
-      // Note: No clientId/vendorId here
+      // Note: Hum yahan Client/Vendor ID se search nahi karenge taaki duplicate ledger na bane
       date: previousDay
     }).session(session);
 
     const openingStockDefaults = previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 };
 
-    // ------------------------------------------------------------------
     // STEP 1: ATOMIC UPDATE (Safe Upsert)
-    // ------------------------------------------------------------------
-    // Ye step database mein Purchase add karega aur agar ledger nahi hai to banayega.
-    // Hum yahan Closing Stock calculate nahi karenge taaki conflict na ho.
     let ledger = await DailyStockLedger.findOneAndUpdate(
       {
         companyId: purchaseEntry.company, // Only Company
@@ -306,10 +302,10 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
           // Purchase mein COGS change nahi hota
         },
         $setOnInsert: {
+          clientId: purchaseEntry.client || purchaseEntry.vendor,
           openingStock: openingStockDefaults,
           totalSalesOfTheDay: { quantity: 0, amount: 0 },
           totalCOGS: 0
-          // clientId store kar sakte hain reference ke liye par search mein use na karein
         }
       },
       { 
@@ -319,10 +315,7 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
         setDefaultsOnInsert: true
       }
     );
-
-    // ------------------------------------------------------------------
     // STEP 2: RECALCULATE CLOSING STOCK (In Memory)
-    // ------------------------------------------------------------------
     
     // Get latest values from the updated ledger
     const totalOpeningQty = ledger.openingStock.quantity;
@@ -334,10 +327,10 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
     const totalSalesQty = ledger.totalSalesOfTheDay.quantity;
     const totalCOGS = ledger.totalCOGS; // Use actual COGS, not Sales Amount
 
-    // ✅ Formula: Opening + Purchase - Sales
+    //  Formula: Opening + Purchase - Sales
     const finalClosingQty = (totalOpeningQty + totalPurchaseQty) - totalSalesQty;
     
-    // ✅ Formula: OpeningVal + PurchaseVal - COGS (Cost of goods sold)
+    //  Formula: OpeningVal + PurchaseVal - COGS (Cost of goods sold)
     // Note: Sales Amount minus nahi karte, kyunki usme profit juda hota hai.
     const finalClosingAmt = (totalOpeningAmt + totalPurchaseAmt) - totalCOGS;
 
@@ -348,9 +341,9 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
     // Final Save
     await ledger.save({ session });
 
-    console.log('✅ Purchase Ledger Updated Successfully');
-    console.log('  Opening:', totalOpeningQty, '+ Purchase:', totalPurchaseQty, '- Sales:', totalSalesQty);
-    console.log('  New Closing Stock:', ledger.closingStock.quantity, 'units');
+    // console.log('✅ Purchase Ledger Updated Successfully');
+    // console.log('   Opening:', totalOpeningQty, '+ Purchase:', totalPurchaseQty, '- Sales:', totalSalesQty);
+    // console.log('   New Closing Stock:', ledger.closingStock.quantity, 'units');
 
     return ledger;
 
