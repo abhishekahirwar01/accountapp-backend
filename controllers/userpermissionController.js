@@ -1,8 +1,9 @@
 // controllers/permissionController.js
 const Permission = require("../models/Permission");
 const UserPermission = require("../models/UserPermission");
-const { CAP_KEYS, USER_OVERRIDE_KEYS, getEffectivePermissions, sanitizeAllowedCompanies } =
+const { USER_OVERRIDE_KEYS, getEffectivePermissions, sanitizeAllowedCompanies } =
   require("../services/effectivePermissions");
+const { broadcastToUser, broadcastToClient } = require("../websocketServer");
 
 /**
  * GET /api/permissions/my
@@ -97,6 +98,19 @@ exports.upsertUserOverrides = async (req, res) => {
       },
       { upsert: true, new: true }
     );
+
+    // Emit the updated user permissions to the specific user and their client
+    console.log(`Broadcasting user permission update to user ${userId}`);
+    broadcastToUser(userId, { type: 'USER_PERMISSION_UPDATE', data: doc });
+    
+    console.log(`Broadcasting user permission update to client ${clientId}`);
+    broadcastToClient(clientId, { type: 'USER_PERMISSION_UPDATE', data: doc });
+
+    console.log('User permission update completed successfully:', {
+      userId,
+      clientId,
+      updates: { overrides, allowedCompanies }
+    });
 
     return res.json({ message: "User overrides saved", userPermission: doc });
   } catch (e) {

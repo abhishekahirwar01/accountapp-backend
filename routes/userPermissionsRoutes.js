@@ -8,6 +8,7 @@ const {
 } = require("../services/effectivePermissions");
 const verifyUser = require("../middleware/verifyUser");
 const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
+const { broadcastToUser, broadcastToClient } = require("../websocketServer");
 
 const router = express.Router();
 
@@ -180,6 +181,20 @@ router.patch("/:userId",verifyClientOrAdmin, async (req, res) => {
     );
 
     if (!doc) return res.status(404).json({ message: "Not found" });
+
+    // Broadcast the updated user permissions to the specific user and their client
+    console.log(`Broadcasting user permission update to user ${userId}`);
+    broadcastToUser(userId, { type: 'USER_PERMISSION_UPDATE', data: doc });
+    
+    console.log(`Broadcasting user permission update to client ${clientId}`);
+    broadcastToClient(clientId, { type: 'USER_PERMISSION_UPDATE', data: doc });
+
+    console.log('User permission update completed successfully:', {
+      userId,
+      clientId,
+      updates: update
+    });
+
     res.json(doc);
   } catch (e) {
     res.status(500).json({ message: e.message });
