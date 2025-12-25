@@ -5,6 +5,7 @@ const cors = require("cors");
 const path = require("path");
 const http = require("http");
 const socketIo = require("socket.io");
+const { setupWebSocketServer } = require("./websocketServer");
 const connectDB = require("./config/db");
 const masterAdminRoutes = require("./routes/masterAdminRoutes");
 const clientRoutes = require("./routes/clientRoutes");
@@ -77,12 +78,16 @@ if (process.env.NODE_ENV === 'production') {
 
 const app = express();
 const server = http.createServer(app);
+
 const io = socketIo(server, {
   cors: {
     origin: allowedOrigins,
     methods: ["GET", "POST"]
   }
 });
+
+// Setup WebSocket server using Socket.IO instance
+setupWebSocketServer(io);
 
 // Make io globally available for controllers
 global.io = io;
