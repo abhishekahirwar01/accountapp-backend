@@ -1,9 +1,11 @@
 // controllers/vendor.controller.js
+const mongoose = require("mongoose");
 const Vendor = require("../models/Vendor");
 const { getEffectivePermissions } = require("../services/effectivePermissions");
 const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
-
+const PurchaseEntry = require("../models/PurchaseEntry");
+const PaymentEntry = require("../models/PaymentEntry");
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
 function userIsPriv(req) {
@@ -229,54 +231,89 @@ exports.getVendorBalance = async (req, res) => {
     const { companyId } = req.query;
 
     const vendor = await Vendor.findById(vendorId);
+    if (!vendor) return res.status(404).json({ message: "Vendor not found" });
 
-    if (!vendor) {
-      return res.status(404).json({ message: "Vendor not found" });
-    }
-
-    // Check if vendor belongs to the same client
     const sameTenant = String(vendor.createdByClient) === req.auth.clientId;
     if (!PRIV_ROLES.has(req.auth.role) && !sameTenant) {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    // Calculate company-specific balance if companyId is provided
+    const clientId = new mongoose.Types.ObjectId(req.auth.clientId);
+    const vId = new mongoose.Types.ObjectId(vendorId);
+
+    // Filter Setup
+    const matchFilter = {
+      client: clientId,
+      vendor: vId
+    };
     if (companyId) {
-      // Always calculate from transactions to ensure accuracy
-      // Import required models
-      const PurchaseEntry = require("../models/PurchaseEntry");
-      const PaymentEntry = require("../models/PaymentEntry");
-
-      // Get all purchase entries for this vendor and company
-      const purchaseEntries = await PurchaseEntry.find({
-        client: req.auth.clientId,
-        vendor: vendorId,
-        company: companyId
-      });
-
-      // Get all payment entries for this vendor and company
-      const paymentEntries = await PaymentEntry.find({
-        client: req.auth.clientId,
-        vendor: vendorId,
-        company: companyId,
-        paymentMethod: { $ne: "Credit" } // Exclude credit payments
-      });
-
-      // Calculate balance: payments - purchases (negative = payable, positive = advance)
-      const totalPurchases = purchaseEntries.reduce((sum, entry) => sum + (entry.totalAmount || 0), 0);
-      const totalPayments = paymentEntries.reduce((sum, entry) => sum + (entry.amount || 0), 0);
-      const companyBalance = totalPayments - totalPurchases;
-
-      // Store the calculated balance for future use
-      if (!vendor.balances) vendor.balances = new Map();
-      vendor.balances.set(companyId, companyBalance);
-      await vendor.save();
-
-      res.json({ balance: companyBalance });
-    } else {
-      // Return stored balance for all companies (legacy support)
-      res.json({ balance: vendor.balance || 0 });
+      matchFilter.company = new mongoose.Types.ObjectId(companyId);
     }
+
+    // 1. Calculate Purchases (Total & Cash)
+    const purchaseAgg = await PurchaseEntry.aggregate([
+      { $match: matchFilter },
+      { 
+        $group: { 
+          _id: null, 
+          totalAmount: { $sum: "$totalAmount" },
+         
+          cashAmount: { 
+            $sum: { 
+              $cond: [{ $ne: ["$paymentMethod", "Credit"] }, "$totalAmount", 0] 
+            } 
+          }
+        } 
+      }
+    ]);
+
+    const totalPurchases = purchaseAgg.length > 0 ? purchaseAgg[0].totalAmount : 0;
+    const cashPurchases = purchaseAgg.length > 0 ? purchaseAgg[0].cashAmount : 0;
+
+    // 2. Calculate Actual Payments (Manual Payments)
+    const paymentMatchFilter = { ...matchFilter, paymentMethod: { $ne: "Credit" } };
+    const paymentAgg = await PaymentEntry.aggregate([
+      { $match: paymentMatchFilter },
+      { $group: { _id: null, total: { $sum: "$amount" } } }
+    ]);
+    const manualPayments = paymentAgg.length > 0 ? paymentAgg[0].total : 0;
+
+    // 3. 👇 MAIN FIX: Total Payments = Manual Payments + Cash Purchases
+    const totalPayments = manualPayments + cashPurchases;
+
+    // 4. Final Balance
+    let currentBalance = totalPayments - totalPurchases;
+
+    // "All Companies" Logic: Opening Balance handle karo
+    if (!companyId && vendor.openingBalance) {
+        currentBalance = currentBalance - (vendor.openingBalance || 0);
+    }
+
+    // 5. Database Update (Auto-Fix)
+    if (companyId) {
+       if (!vendor.balances) vendor.balances = new Map();
+       if (vendor.balances.get(companyId) !== currentBalance) {
+           vendor.balances.set(companyId, currentBalance);
+           await vendor.save();
+       }
+    } else {
+       // Global update
+       if (vendor.balance !== currentBalance) {
+           vendor.balance = currentBalance;
+           await vendor.save();
+       }
+    }
+
+    res.json({ 
+      balance: currentBalance,
+      breakdown: {
+        totalPurchases,
+        totalPayments,
+        manualPayments,
+        cashPurchases
+      }
+    });
+
   } catch (err) {
     console.error("Error fetching vendor balance:", err);
     res.status(500).json({ message: "Server error", error: err.message });
