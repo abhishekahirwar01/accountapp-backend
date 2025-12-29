@@ -631,85 +631,172 @@ exports.createPurchaseEntry = async (req, res) => {
   }
 };
 // --- LIST / SEARCH / PAGINATE -----------------------------------
+// exports.getPurchaseEntries = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req);
+
+//     const {
+//       q,
+//       companyId,
+//       dateFrom,
+//       dateTo,
+//       page = 1,
+//       limit = 10000,
+//     } = req.query;
+
+//     const clientId = req.auth.clientId;  // Extract clientId correctly
+
+//     const where = {
+//       client: clientId,
+//       ...(companyAllowedForUser(req, companyId) ? { ...(companyId && { company: companyId }) } : { company: { $in: [] } }),
+//     };
+
+//     if (dateFrom || dateTo) {
+//       where.date = {};
+//       if (dateFrom) where.date.$gte = new Date(dateFrom);
+//       if (dateTo) where.date.$lte = new Date(dateTo);
+//     }
+
+//     if (q) {
+//       where.$or = [
+//         { description: { $regex: String(q), $options: "i" } },
+//         { referenceNumber: { $regex: String(q), $options: "i" } },
+//       ];
+//     }
+
+//     const perPage = Math.min(Number(limit) || 10000, 10000);
+//     const skip = (Number(page) - 1) * perPage;
+
+//     // Construct a cache key based on the query parameters
+//     const cacheKey = `purchaseEntries:${JSON.stringify({ clientId, companyId })}`;
+
+//     // Check if the data is cached in Redis
+//     // const cachedEntries = await getFromCache(cacheKey);
+//     // if (cachedEntries) {
+//     //   // If cached, return the data directly
+//     //   return res.status(200).json({
+//     //     success: true,
+//     //     count: cachedEntries.length,
+//     //     data: cachedEntries,
+//     //   });
+//     // }
+
+//     // If not cached, fetch the data from the database
+//     const query = PurchaseEntry.find(where)
+//       .sort({ date: -1 })
+//       .skip(skip)
+//       .limit(perPage)
+//       .populate({ path: "vendor", select: "vendorName" })
+//       .populate({ path: "products.product", select: "name unitType" })
+//       .populate({ path: "services.serviceName", select: "serviceName" })
+//       .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
+//       .populate({ path: "company", select: "businessName" });
+
+//     const [entries, total] = await Promise.all([
+//       query.lean(),
+//       PurchaseEntry.countDocuments(where),
+//     ]);
+
+//     // Cache the fetched data in Redis for future requests
+//     // await setToCache(cacheKey, entries);
+
+//     res.status(200).json({
+//       success: true,
+//       total,
+//       page: Number(page),
+//       limit: perPage,
+//       data: entries,
+//     });
+//   } catch (err) {
+//     console.error("getPurchaseEntries error:", err);
+//     res.status(500).json({ success: false, error: err.message });
+//   }
+// };
+
+// --- LIST / SEARCH / PAGINATE -----------------------------------
 exports.getPurchaseEntries = async (req, res) => {
   try {
     await ensureAuthCaps(req);
 
-    const {
-      q,
-      companyId,
-      dateFrom,
-      dateTo,
-      page = 1,
-      limit = 10000,
-    } = req.query;
+    const filter = {};
+    const user = req.user; // Use req.user like sales controller
 
-    const clientId = req.auth.clientId;  // Extract clientId correctly
+    console.log("User role:", user.role);
+    console.log("User ID:", user.id);
+    console.log("Query companyId:", req.query.companyId);
 
-    const where = {
-      client: clientId,
-      ...(companyAllowedForUser(req, companyId) ? { ...(companyId && { company: companyId }) } : { company: { $in: [] } }),
-    };
-
-    if (dateFrom || dateTo) {
-      where.date = {};
-      if (dateFrom) where.date.$gte = new Date(dateFrom);
-      if (dateTo) where.date.$lte = new Date(dateTo);
+    // Handle company filtering properly
+    if (req.query.companyId) {
+      // Validate company access
+      if (!companyAllowedForUser(req, req.query.companyId)) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied to this company"
+        });
+      }
+      filter.company = req.query.companyId;
+    } else {
+      // If no specific company requested, filter by user's accessible companies
+      const allowedCompanies = user.allowedCompanies || [];
+      if (allowedCompanies.length > 0) {
+        filter.company = { $in: allowedCompanies };
+      } else if (user.role === "user") {
+        // Regular users should only see data from their assigned companies
+        return res.status(200).json({
+          success: true,
+          count: 0,
+          data: [],
+        });
+      }
+      // For master/admin/client, no company filter = see all data for their client
     }
 
-    if (q) {
-      where.$or = [
-        { description: { $regex: String(q), $options: "i" } },
-        { referenceNumber: { $regex: String(q), $options: "i" } },
+    // For client users, filter by client ID
+    if (user.role === "client") {
+      filter.client = user.id;
+    }
+
+    // Date range filtering
+    if (req.query.dateFrom || req.query.dateTo) {
+      filter.date = {};
+      if (req.query.dateFrom) filter.date.$gte = new Date(req.query.dateFrom);
+      if (req.query.dateTo) filter.date.$lte = new Date(req.query.dateTo);
+    }
+
+    // Search query (q parameter)
+    if (req.query.q) {
+      const searchTerm = String(req.query.q);
+      filter.$or = [
+        { description: { $regex: searchTerm, $options: "i" } },
+        { referenceNumber: { $regex: searchTerm, $options: "i" } },
       ];
     }
 
-    const perPage = Math.min(Number(limit) || 10000, 10000);
-    const skip = (Number(page) - 1) * perPage;
+    console.log("Final filter for purchase entries:", JSON.stringify(filter, null, 2));
 
-    // Construct a cache key based on the query parameters
-    const cacheKey = `purchaseEntries:${JSON.stringify({ clientId, companyId })}`;
-
-    // Check if the data is cached in Redis
-    // const cachedEntries = await getFromCache(cacheKey);
-    // if (cachedEntries) {
-    //   // If cached, return the data directly
-    //   return res.status(200).json({
-    //     success: true,
-    //     count: cachedEntries.length,
-    //     data: cachedEntries,
-    //   });
-    // }
-
-    // If not cached, fetch the data from the database
-    const query = PurchaseEntry.find(where)
+    // Fetch all matching entries without pagination
+    const entries = await PurchaseEntry.find(filter)
       .sort({ date: -1 })
-      .skip(skip)
-      .limit(perPage)
       .populate({ path: "vendor", select: "vendorName" })
       .populate({ path: "products.product", select: "name unitType" })
       .populate({ path: "services.serviceName", select: "serviceName" })
       .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
-      .populate({ path: "company", select: "businessName" });
+      .populate({ path: "company", select: "businessName" })
+      .lean();
 
-    const [entries, total] = await Promise.all([
-      query.lean(),
-      PurchaseEntry.countDocuments(where),
-    ]);
-
-    // Cache the fetched data in Redis for future requests
-    // await setToCache(cacheKey, entries);
+    console.log(`Found ${entries.length} purchase entries for user ${user.role}/${user.id}`);
 
     res.status(200).json({
       success: true,
-      total,
-      page: Number(page),
-      limit: perPage,
+      count: entries.length,
       data: entries,
     });
   } catch (err) {
-    console.error("getPurchaseEntries error:", err);
-    res.status(500).json({ success: false, error: err.message });
+    console.error("Error fetching purchase entries:", err.message);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
   }
 };
 

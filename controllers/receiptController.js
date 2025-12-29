@@ -289,58 +289,185 @@ exports.createReceipt = async (req, res) => {
   }
 };
 
+// exports.getReceipts = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req); // Ensure auth context is loaded
+    
+//     const filter = {};
+
+//     if (!req.auth) return res.status(401).json({ message: "Unauthorized" });
+
+//     // Set the client filter based on the authenticated user
+//     if (req.auth.role === "client") {
+//       filter.client = req.auth.clientId;
+//     }
+
+//     // Add company filter if provided - WITH VALIDATION
+//     if (req.query.companyId) {
+//       const companyId = req.query.companyId;
+      
+//       // Check if user is allowed to access this company
+//       if (!companyAllowedForUser(req, companyId)) {
+//         return res.status(403).json({ 
+//           success: false, 
+//           message: "Access denied to this company" 
+//         });
+//       }
+      
+//       filter.company = companyId;
+//     } else {
+//       // If no companyId specified, show only companies the user is allowed to access
+//       // Use the NEW function that excludes admin from company privilege
+//       if (!userIsPrivForCompanyAccess(req) && Array.isArray(req.auth.allowedCompanies)) {
+//         filter.company = { $in: req.auth.allowedCompanies };
+//       }
+//     }
+
+//     // ... rest of your function remains the same
+//     const perPage = Math.min(Number(req.query.limit) || 100, 500);
+//     const skip = (Number(req.query.page) - 1) * perPage;
+
+//     const query = ReceiptEntry.find(filter)
+//       .sort({ date: -1 })
+//       .skip(skip)
+//       .limit(perPage)
+//       .populate({ path: "party", select: "name" })
+//       .populate({ path: "company", select: "businessName" });
+
+//     const [data, total] = await Promise.all([query.lean(), ReceiptEntry.countDocuments(filter)]);
+
+//     res.status(200).json({
+//       success: true,
+//       total,
+//       page: Number(req.query.page),
+//       limit: perPage,
+//       data,
+//     });
+//   } catch (err) {
+//     console.error("getReceipts error:", err.message);
+//     res.status(500).json({
+//       success: false,
+//       error: err.message,
+//     });
+//   }
+// };
+
 exports.getReceipts = async (req, res) => {
   try {
-    await ensureAuthCaps(req); // Ensure auth context is loaded
+    await ensureAuthCaps(req);
     
     const filter = {};
+    const user = req.user || req.auth;
 
-    if (!req.auth) return res.status(401).json({ message: "Unauthorized" });
+    console.log("User role:", user.role);
+    console.log("User ID:", user.id);
+    console.log("Query companyId:", req.query.companyId);
 
-    // Set the client filter based on the authenticated user
-    if (req.auth.role === "client") {
-      filter.client = req.auth.clientId;
+    // --- Client filtering ---
+    if (user.role === "client") {
+      filter.client = user.id;
     }
 
-    // Add company filter if provided - WITH VALIDATION
+    // --- Company filtering ---
     if (req.query.companyId) {
-      const companyId = req.query.companyId;
-      
-      // Check if user is allowed to access this company
-      if (!companyAllowedForUser(req, companyId)) {
+      if (!companyAllowedForUser(req, req.query.companyId)) {
         return res.status(403).json({ 
           success: false, 
           message: "Access denied to this company" 
         });
       }
-      
-      filter.company = companyId;
+      filter.company = req.query.companyId;
     } else {
-      // If no companyId specified, show only companies the user is allowed to access
-      // Use the NEW function that excludes admin from company privilege
-      if (!userIsPrivForCompanyAccess(req) && Array.isArray(req.auth.allowedCompanies)) {
-        filter.company = { $in: req.auth.allowedCompanies };
+      const allowedCompanies = user.allowedCompanies || [];
+      if (allowedCompanies.length > 0 && user.role === "user") {
+        filter.company = { $in: allowedCompanies };
+      } else if (user.role === "user") {
+        return res.status(200).json({
+          success: true,
+          count: 0,
+          data: [],
+        });
       }
     }
 
-    // ... rest of your function remains the same
-    const perPage = Math.min(Number(req.query.limit) || 100, 500);
-    const skip = (Number(req.query.page) - 1) * perPage;
+    // --- Date range filtering ---
+    if (req.query.dateFrom || req.query.dateTo) {
+      filter.date = {};
+      if (req.query.dateFrom) filter.date.$gte = new Date(req.query.dateFrom);
+      if (req.query.dateTo) filter.date.$lte = new Date(req.query.dateTo);
+    }
 
+    // --- Search filtering ---
+    if (req.query.q) {
+      const searchTerm = String(req.query.q);
+      filter.$or = [
+        { description: { $regex: searchTerm, $options: "i" } },
+        { referenceNumber: { $regex: searchTerm, $options: "i" } },
+      ];
+    }
+
+    console.log("Final filter for receipt entries:", JSON.stringify(filter, null, 2));
+
+    // --- SMART PAGINATION APPROACH ---
+    const page = parseInt(req.query.page) || 1;
+    let limit = parseInt(req.query.limit) || 1000; // Default to 1000, not 500
+    
+    // Calculate total count first
+    const total = await ReceiptEntry.countDocuments(filter);
+    
+    // Auto-detect large datasets and adjust limit
+    if (total > 10000) {
+      console.warn(`Large dataset detected: ${total} receipts. Using pagination.`);
+      
+      // If no explicit limit provided, cap it for large datasets
+      if (!req.query.limit) {
+        limit = Math.min(limit, 2000); // Max 2000 for large datasets without explicit limit
+      } else {
+        // Allow user to set any limit, but warn if too high
+        if (limit > 5000) {
+          console.warn(`High limit requested: ${limit}. Consider using smaller pages.`);
+        }
+      }
+    }
+    
+    const skip = (page - 1) * limit;
+    const totalPages = Math.ceil(total / limit);
+
+    // Build query
     const query = ReceiptEntry.find(filter)
       .sort({ date: -1 })
-      .skip(skip)
-      .limit(perPage)
       .populate({ path: "party", select: "name" })
       .populate({ path: "company", select: "businessName" });
 
-    const [data, total] = await Promise.all([query.lean(), ReceiptEntry.countDocuments(filter)]);
+    // Apply pagination only if dataset is large or page/limit specified
+    let data;
+    if (total <= 10000 && !req.query.page && !req.query.limit) {
+      // Small dataset, no pagination params = return all
+      data = await query.lean();
+    } else {
+      // Large dataset or explicit pagination = use pagination
+      data = await query.skip(skip).limit(limit).lean();
+    }
+
+    // Add performance metadata
+    const performanceData = {
+      totalRecords: total,
+      returnedRecords: data.length,
+      queryTime: Date.now(), // You could measure actual query time
+      hasMore: total > (skip + data.length),
+      recommendation: total > 10000 ? 
+        "Large dataset detected. Consider using date filters or smaller page sizes." : 
+        "Dataset size is optimal"
+    };
 
     res.status(200).json({
       success: true,
+      count: data.length,
       total,
-      page: Number(req.query.page),
-      limit: perPage,
+      page: total <= 10000 && !req.query.page ? 1 : page,
+      limit: total <= 10000 && !req.query.limit ? total : limit,
+      totalPages,
+      performance: performanceData,
       data,
     });
   } catch (err) {
@@ -566,6 +693,65 @@ exports.deleteReceipt = async (req, res) => {
 
 
 /** ADMIN: list by client (with optional company, pagination) */
+// exports.getReceiptsByClient = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req);
+//     if (!userIsPriv(req)) {
+//       return res.status(403).json({ message: "Not authorized" });
+//     }
+
+//     const { clientId } = req.params;
+//     const { companyId, page = 1, limit = 100 } = req.query;
+
+//     const filter = { client: clientId };
+//     if (companyId) filter.company = companyId;
+
+//     const perPage = Math.min(Number(limit) || 100, 500);
+//     const skip = (Number(page) - 1) * perPage;
+
+//     // // Construct a cache key based on the filter
+//     // const cacheKey = `receiptEntriesByClient:${JSON.stringify({ clientId, companyId })}`;
+
+//     // // Check if the data is cached in Redis
+//     // const cachedEntries = await getFromCache(cacheKey);
+//     // if (cachedEntries) {
+//     //   // If cached, return the data directly
+//     //   return res.status(200).json({
+//     //     success: true,
+//     //     count: cachedEntries.length,
+//     //     data: cachedEntries,
+//     //   });
+//     // }
+
+//     // Fetch the data from the database if not cached
+//     const query = ReceiptEntry.find(filter)
+//       .sort({ date: -1 })
+//       .skip(skip)
+//       .limit(perPage)
+//       .populate({ path: "party", select: "name" })
+//       .populate({ path: "company", select: "businessName" });
+
+//     // Fetch data and total count simultaneously
+//     const [data, total] = await Promise.all([query.lean(), ReceiptEntry.countDocuments(filter)]);
+
+//     // Cache the fetched data in Redis for future requests
+//     // await setToCache(cacheKey, data);
+
+//     // Return the data in a consistent format
+//     res.status(200).json({
+//       success: true,
+//       total,
+//       page: Number(page),
+//       limit: perPage,
+//       data,
+//     });
+//   } catch (err) {
+//     console.error("getReceiptsByClient error:", err);
+//     res.status(500).json({ message: "Server error", error: err.message });
+//   }
+// };
+
+/** ADMIN: list by client (with optional company, pagination) */
 exports.getReceiptsByClient = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -574,48 +760,53 @@ exports.getReceiptsByClient = async (req, res) => {
     }
 
     const { clientId } = req.params;
-    const { companyId, page = 1, limit = 100 } = req.query;
+    const { companyId } = req.query;
 
     const filter = { client: clientId };
     if (companyId) filter.company = companyId;
 
-    const perPage = Math.min(Number(limit) || 100, 500);
-    const skip = (Number(page) - 1) * perPage;
+    // --- SMART PAGINATION (same as getReceipts) ---
+    const page = parseInt(req.query.page) || 1;
+    let limit = parseInt(req.query.limit) || 1000;
+    
+    // Calculate total count
+    const total = await ReceiptEntry.countDocuments(filter);
+    
+    // Auto-detect large datasets
+    if (total > 10000) {
+      console.warn(`Large dataset detected in admin view: ${total} receipts for client ${clientId}.`);
+      
+      if (!req.query.limit) {
+        limit = Math.min(limit, 2000);
+      } else if (limit > 5000) {
+        console.warn(`High limit requested in admin view: ${limit}.`);
+      }
+    }
+    
+    const skip = (page - 1) * limit;
+    const totalPages = Math.ceil(total / limit);
 
-    // // Construct a cache key based on the filter
-    // const cacheKey = `receiptEntriesByClient:${JSON.stringify({ clientId, companyId })}`;
-
-    // // Check if the data is cached in Redis
-    // const cachedEntries = await getFromCache(cacheKey);
-    // if (cachedEntries) {
-    //   // If cached, return the data directly
-    //   return res.status(200).json({
-    //     success: true,
-    //     count: cachedEntries.length,
-    //     data: cachedEntries,
-    //   });
-    // }
-
-    // Fetch the data from the database if not cached
-    const query = ReceiptEntry.find(filter)
+    // Build query
+    let query = ReceiptEntry.find(filter)
       .sort({ date: -1 })
-      .skip(skip)
-      .limit(perPage)
       .populate({ path: "party", select: "name" })
       .populate({ path: "company", select: "businessName" });
 
-    // Fetch data and total count simultaneously
-    const [data, total] = await Promise.all([query.lean(), ReceiptEntry.countDocuments(filter)]);
+    // Apply pagination logic
+    let data;
+    if (total <= 10000 && !req.query.page && !req.query.limit) {
+      data = await query.lean();
+    } else {
+      data = await query.skip(skip).limit(limit).lean();
+    }
 
-    // Cache the fetched data in Redis for future requests
-    // await setToCache(cacheKey, data);
-
-    // Return the data in a consistent format
     res.status(200).json({
       success: true,
       total,
-      page: Number(page),
-      limit: perPage,
+      count: data.length,
+      page: total <= 10000 && !req.query.page ? 1 : page,
+      limit: total <= 10000 && !req.query.limit ? total : limit,
+      totalPages,
       data,
     });
   } catch (err) {
@@ -623,4 +814,3 @@ exports.getReceiptsByClient = async (req, res) => {
     res.status(500).json({ message: "Server error", error: err.message });
   }
 };
-
