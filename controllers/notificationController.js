@@ -64,6 +64,25 @@ exports.createNotification = async (message, recipientId, senderId, actionType, 
           createdAt: notification.createdAt,
         });
       }
+
+      // 3️⃣ ⭐ CRITICAL FIX: Emit to ALL master admins
+      // This ensures any master admin logged in gets the notification
+      global.io.to('all-masters').emit('notification', {
+        _id: notification._id,
+        title: notification.title,
+        message: notification.message,
+        type: notification.type,
+        action: notification.action,
+        entityId: notification.entityId,
+        entityType: notification.entityType,
+        recipient: notification.recipient,
+        triggeredBy: notification.triggeredBy,
+        client: notification.client,
+        read: notification.read,
+        createdAt: notification.createdAt,
+        isForMaster: true  // Add flag to identify this is for master admin
+      });
+      
     }
 
     return notification;

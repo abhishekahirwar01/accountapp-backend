@@ -92,7 +92,17 @@ async function findAdminUser(companyId) {
   return adminUser;
 }
 
+// Find master admin users
+async function findMasterAdminUsers() {
+  const masterRole = await Role.findOne({ name: "master" }).select("_id");
+  if (!masterRole) return [];
+
+  const masterUsers = await User.find({ role: masterRole._id }).select("_id");
+  return masterUsers;
+}
+
 module.exports = {
   resolveActor,
   findAdminUser,
+  findMasterAdminUsers,
 };
