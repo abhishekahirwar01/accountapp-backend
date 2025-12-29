@@ -33,7 +33,10 @@ const partySchema = new mongoose.Schema(
       required: true,
     },
     createdByUser: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
-    company: { type: mongoose.Schema.Types.ObjectId, ref: "Company" },
+    company: [{ 
+   type: mongoose.Schema.Types.ObjectId, 
+   ref: "Company" 
+}],
     balances: { type: Map, of: Number, default: {} },
   },
   { timestamps: true }
