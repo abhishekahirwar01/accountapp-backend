@@ -165,18 +165,55 @@ if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
   }
 };
 
+// exports.getVendors = async (req, res) => {
+//   try {
+//     const {
+//       q,
+//       page = 1,
+//       limit,
+//     } = req.query;
+
+//     const where = { createdByClient: req.auth.clientId };
+
+//     if (q) {
+//       // search by name / email / phone
+//       where.$or = [
+//         { vendorName: { $regex: String(q), $options: "i" } },
+//         { email: { $regex: String(q), $options: "i" } },
+//         { contactNumber: { $regex: String(q), $options: "i" } },
+//       ];
+//     }
+
+//     const perPage = limit ? Math.min(Number(limit), 5000) : null; // No limit if not specified
+//     const skip = perPage ? (Number(page) - 1) * perPage : 0;
+
+//     let query = Vendor.find(where).sort({ createdAt: -1 });
+//     if (perPage) {
+//       query = query.skip(skip).limit(perPage);
+//     }
+
+//     const [vendors, total] = await Promise.all([
+//       query.lean(),
+//       Vendor.countDocuments(where),
+//     ]);
+
+//     res.json({ vendors, total, page: Number(page), limit: perPage });
+//   } catch (err) {
+//     res.status(500).json({ message: "Server error", error: err.message });
+//   }
+// };
+
 exports.getVendors = async (req, res) => {
   try {
     const {
       q,
       page = 1,
-      limit,
+      limit = 10000, // Set a higher default for consistency
     } = req.query;
 
     const where = { createdByClient: req.auth.clientId };
 
     if (q) {
-      // search by name / email / phone
       where.$or = [
         { vendorName: { $regex: String(q), $options: "i" } },
         { email: { $regex: String(q), $options: "i" } },
@@ -184,20 +221,34 @@ exports.getVendors = async (req, res) => {
       ];
     }
 
-    const perPage = limit ? Math.min(Number(limit), 5000) : null; // No limit if not specified
-    const skip = perPage ? (Number(page) - 1) * perPage : 0;
-
-    let query = Vendor.find(where).sort({ createdAt: -1 });
-    if (perPage) {
-      query = query.skip(skip).limit(perPage);
+    // ✅ SMART LIMIT HANDLING
+    let perPage = limit ? Number(limit) : 10000; // Default to 10000 if limit not provided
+    
+    // Optional: Add warning for very high limits
+    if (perPage && perPage > 100000) {
+      console.warn(`Very high vendor limit requested: ${perPage}. This may impact performance.`);
     }
+    
+    const skip = (Number(page) - 1) * perPage;
+
+    const query = Vendor.find(where)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(perPage);
 
     const [vendors, total] = await Promise.all([
       query.lean(),
       Vendor.countDocuments(where),
     ]);
 
-    res.json({ vendors, total, page: Number(page), limit: perPage });
+    res.json({ 
+      vendors, 
+      total, 
+      page: Number(page), 
+      limit: perPage,
+      totalPages: Math.ceil(total / perPage),
+      hasMore: total > (skip + vendors.length)
+    });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }

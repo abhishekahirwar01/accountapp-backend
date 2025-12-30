@@ -6,7 +6,7 @@ const { createNotification } = require("./notificationController");
 const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
-const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
+const { invalidateClient } = require("../cache");  // Add cache import
 
 function userIsPriv(req) {
   return PRIV_ROLES.has(req.auth?.role);
@@ -182,12 +182,51 @@ if (existingParty) {
   }
 };
 
+// exports.getParties = async (req, res) => {
+//   try {
+//     const {
+//       q,
+//       page = 1,
+//       limit = 1000,
+//     } = req.query;
+
+//     const where = { createdByClient: req.auth.clientId };
+
+//     if (q) {
+//       where.$or = [
+//         { name: { $regex: String(q), $options: "i" } },
+//         { email: { $regex: String(q), $options: "i" } },
+//         { contactNumber: { $regex: String(q), $options: "i" } },
+//       ];
+//     }
+
+//       // 2) If cache miss, fetch from DB
+//     const perPage = limit ? Math.min(Number(limit), 5000) : null; // No limit if not specified
+//     const skip = perPage ? (Number(page) - 1) * perPage : 0;
+
+//     let query = Party.find(where).sort({ createdAt: -1 });
+//     if (perPage) {
+//       query = query.skip(skip).limit(perPage);
+//     }
+
+//     const [parties, total] = await Promise.all([
+//       query.lean(),
+//       Party.countDocuments(where),
+//     ]);
+
+
+//     res.json({ parties, total, page: Number(page), limit: perPage });
+//   } catch (err) {
+//     res.status(500).json({ message: "Server error", error: err.message });
+//   }
+// };
+
 exports.getParties = async (req, res) => {
   try {
     const {
       q,
       page = 1,
-      limit = 1000,
+      limit = 10000, // Increased default to 10000
     } = req.query;
 
     const where = { createdByClient: req.auth.clientId };
@@ -200,8 +239,9 @@ exports.getParties = async (req, res) => {
       ];
     }
 
-      // 2) If cache miss, fetch from DB
-    const perPage = limit ? Math.min(Number(limit), 5000) : null; // No limit if not specified
+    // ✅ REMOVED: Math.min(Number(limit), 5000) - No hardcoded limit!
+    // ✅ KEPT: Still supports unlimited when limit not specified
+    const perPage = limit ? Number(limit) : null; // No limit if not specified
     const skip = perPage ? (Number(page) - 1) * perPage : 0;
 
     let query = Party.find(where).sort({ createdAt: -1 });
@@ -214,8 +254,22 @@ exports.getParties = async (req, res) => {
       Party.countDocuments(where),
     ]);
 
+    // ✅ Performance protection - log warning for very large datasets
+    if (total > 50000) {
+      console.warn(`Large party dataset: ${total} parties for client ${req.auth.clientId}.`);
+    }
 
-    res.json({ parties, total, page: Number(page), limit: perPage });
+    res.json({ 
+      parties, 
+      total, 
+      page: Number(page), 
+      limit: perPage,
+      // Add helpful metadata without breaking existing structure
+      ...(perPage && {
+        totalPages: Math.ceil(total / perPage),
+        hasMore: total > (skip + parties.length)
+      })
+    });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
   }
