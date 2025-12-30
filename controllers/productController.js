@@ -5,6 +5,7 @@ const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 const XLSX = require("xlsx");
 const DailyStockLedgerService = require("../services/stockLedgerService");
 const StockBatch = require("../models/StockBatch");
+const DailyStockLedger = require("../models/DailyStockLedger");
 
 // Build message text per action
 function buildProductNotificationMessage(action, { actorName, productName }) {
@@ -202,15 +203,40 @@ exports.createProduct = async (req, res) => {
       await product.populate('company');
 
       // ⬇️ UPDATE DAILY STOCK LEDGER ⬇️
-      if (stocks > 0 && costPrice > 0) {
-        await DailyStockLedgerService.handleProductCreation({
-          companyId: company,
-          clientId: req.auth.clientId,
-          stocks: stocks,
-          costPrice: costPrice
-        });
+if (stocks > 0 && costPrice > 0) {
+        
+        // 1. Aaj ki date range nikalein
+        const today = new Date();
+        const startOfDay = new Date(today);
+        startOfDay.setUTCHours(0, 0, 0, 0);
+        const endOfDay = new Date(today);
+        endOfDay.setUTCHours(23, 59, 59, 999);
 
-         await createInitialStockBatch(product, stocks, costPrice);
+        // 2. Upsert Logic: Agar record hai to Update, nahi to Create
+        await DailyStockLedger.findOneAndUpdate(
+          {
+            companyId: company,
+            date: { $gte: startOfDay, $lte: endOfDay } // Aaj ka record dhundo
+          },
+          {
+            $setOnInsert: { // Agar naya ban raha hai to ye fields set karo
+              clientId: req.auth.clientId,
+              companyId: company,
+              date: startOfDay,
+              openingStock: { quantity: 0, amount: 0 }
+            },
+            $inc: { // Agar purana mil gaya to sirf stock add karo (Crash nahi karega)
+              "closingStock.quantity": stocks,
+              "closingStock.amount": stocks * costPrice,
+              "totalPurchaseOfTheDay.quantity": stocks,
+              "totalPurchaseOfTheDay.amount": stocks * costPrice
+            }
+          },
+          { upsert: true, new: true }
+        );
+
+        // Batch creation waise hi rahega
+        await createInitialStockBatch(product, stocks, costPrice);
       }
 
       // console.log('Product created successfully:', product);
