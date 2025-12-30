@@ -229,7 +229,6 @@ if (isExpense) {
 };
 
 
-
 /** LIST (tenant-scoped, supports q/date/company filters + pagination) */
 // exports.getPayments = async (req, res) => {
 //   try {
@@ -241,22 +240,41 @@ if (isExpense) {
 //       dateFrom,
 //       dateTo,
 //       page = 1,
-//       limit = 100,
+//       limit = 10000,
 //     } = req.query;
 
-//     const clientId = req.auth.clientId;  // Extract clientId correctly
+//     const clientId = req.auth.clientId;
 
+//     // Build the filter correctly
 //     const where = {
 //       client: clientId,
-//       ...(companyAllowedForUser(req, companyId) ? { ...(companyId && { company: companyId }) } : { company: { $in: [] } }),
 //     };
 
+//     // Handle company filtering with proper validation
+//     if (companyId) {
+//       // Check if user is allowed to access this company
+//       if (!companyAllowedForUser(req, companyId)) {
+//         return res.status(403).json({ 
+//           success: false, 
+//           message: "Access denied to this company" 
+//         });
+//       }
+//       where.company = companyId;
+//     } else {
+//       // If no companyId specified, show only companies the user is allowed to access
+//       if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
+//         where.company = { $in: req.auth.allowedCompanies };
+//       }
+//     }
+
+//     // Add date range filter if provided
 //     if (dateFrom || dateTo) {
 //       where.date = {};
 //       if (dateFrom) where.date.$gte = new Date(dateFrom);
 //       if (dateTo) where.date.$lte = new Date(dateTo);
 //     }
 
+//     // Add search query filter if provided
 //     if (q) {
 //       where.$or = [
 //         { description: { $regex: String(q), $options: "i" } },
@@ -264,16 +282,15 @@ if (isExpense) {
 //       ];
 //     }
 
-//     const perPage = Math.min(Number(limit) || 100, 500);
+//     const perPage = Math.min(Number(limit) || 10000, 10000);
 //     const skip = (Number(page) - 1) * perPage;
 
-//     // // Construct a cache key based on the query parameters
-//     // const cacheKey = `paymentEntries:${JSON.stringify({ clientId, companyId })}`;
+//     // Construct a SECURE cache key based on user context
+//     // const cacheKey = `paymentEntries:${req.auth.userId}:${JSON.stringify(where)}`;
 
-//     // // Check if the data is cached in Redis
+//     // Check if the data is cached in Redis
 //     // const cachedEntries = await getFromCache(cacheKey);
 //     // if (cachedEntries) {
-//     //   // If cached, return the data directly
 //     //   return res.status(200).json({
 //     //     success: true,
 //     //     count: cachedEntries.length,
@@ -310,6 +327,7 @@ if (isExpense) {
 //     res.status(500).json({ success: false, error: err.message });
 //   }
 // };
+
 /** LIST (tenant-scoped, supports q/date/company filters + pagination) */
 exports.getPayments = async (req, res) => {
   try {
@@ -326,36 +344,30 @@ exports.getPayments = async (req, res) => {
 
     const clientId = req.auth.clientId;
 
-    // Build the filter correctly
+    // --- RESTORE ORIGINAL COMPANY FILTERING LOGIC ---
     const where = {
       client: clientId,
     };
 
-    // Handle company filtering with proper validation
-    if (companyId) {
-      // Check if user is allowed to access this company
-      if (!companyAllowedForUser(req, companyId)) {
-        return res.status(403).json({ 
-          success: false, 
-          message: "Access denied to this company" 
-        });
+    // Apply company filtering EXACTLY as original
+    if (companyAllowedForUser(req, companyId)) {
+      if (companyId) {
+        where.company = companyId;
       }
-      where.company = companyId;
+      // If companyId not provided, don't filter by company (original behavior)
     } else {
-      // If no companyId specified, show only companies the user is allowed to access
-      if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
-        where.company = { $in: req.auth.allowedCompanies };
-      }
+      // User not allowed for this company = return empty
+      where.company = { $in: [] };
     }
 
-    // Add date range filter if provided
+    // --- RESTORE ORIGINAL DATE FILTERING ---
     if (dateFrom || dateTo) {
       where.date = {};
       if (dateFrom) where.date.$gte = new Date(dateFrom);
       if (dateTo) where.date.$lte = new Date(dateTo);
     }
 
-    // Add search query filter if provided
+    // --- RESTORE ORIGINAL SEARCH FILTERING ---
     if (q) {
       where.$or = [
         { description: { $regex: String(q), $options: "i" } },
@@ -363,54 +375,128 @@ exports.getPayments = async (req, res) => {
       ];
     }
 
-    const perPage = Math.min(Number(limit) || 10000, 10000);
-    const skip = (Number(page) - 1) * perPage;
+    console.log("Final filter for payment entries:", JSON.stringify(where, null, 2));
 
-    // Construct a SECURE cache key based on user context
-    // const cacheKey = `paymentEntries:${req.auth.userId}:${JSON.stringify(where)}`;
+    // --- SMART PAGINATION WITH ORIGINAL DEFAULTS ---
+    const pageNum = parseInt(page) || 1;
+    let limitNum = parseInt(limit) || 10000; // Keep original default
+    
+    // Calculate total count first
+    const total = await PaymentEntry.countDocuments(where);
+    
+    // Auto-detect large datasets and adjust
+    if (total > 10000) {
+      console.warn(`Large payment dataset detected: ${total} payments.`);
+      
+      // If no explicit limit provided, use smarter default
+      if (!req.query.limit) {
+        limitNum = Math.min(limitNum, 2000); // Smarter default for large datasets
+      } else if (limitNum > 5000) {
+        console.warn(`High limit requested: ${limitNum}.`);
+      }
+    }
+    
+    const skip = (pageNum - 1) * limitNum;
+    const totalPages = Math.ceil(total / limitNum);
 
-    // Check if the data is cached in Redis
-    // const cachedEntries = await getFromCache(cacheKey);
-    // if (cachedEntries) {
-    //   return res.status(200).json({
-    //     success: true,
-    //     count: cachedEntries.length,
-    //     data: cachedEntries,
-    //   });
-    // }
-
-    // If not cached, fetch the data from the database
+    // Build query (same as original)
     const query = PaymentEntry.find(where)
       .sort({ date: -1 })
-      .skip(skip)
-      .limit(perPage)
       .populate({ path: "vendor", select: "vendorName" })
       .populate({ path: "expense", select: "name" })
       .populate({ path: "company", select: "businessName" });
 
-    const [entries, total] = await Promise.all([
-      query.lean(),
-      PaymentEntry.countDocuments(where),
-    ]);
+    // Apply pagination logic
+    let data;
+    if (total <= 10000 && !req.query.page && !req.query.limit) {
+      // Small dataset, no pagination params = return all (like sales controller)
+      data = await query.lean();
+    } else {
+      // Large dataset or explicit pagination = use pagination
+      data = await query.skip(skip).limit(limitNum).lean();
+    }
 
-    // Cache the fetched data in Redis for future requests
-    // await setToCache(cacheKey, entries);
-
+    // Keep original response structure but add smart metadata
     res.status(200).json({
       success: true,
       total,
-      page: Number(page),
-      limit: perPage,
-      data: entries,
+      page: pageNum,
+      limit: limitNum,
+      totalPages,
+      hasMore: total > (skip + data.length),
+      data,
     });
   } catch (err) {
-    console.error("getPayments error:", err);
-    res.status(500).json({ success: false, error: err.message });
+    console.error("getPayments error:", err.message);
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
   }
 };
 
 
+
 /** ADMIN / MASTER: list by client (optional company + pagination) */
+// exports.getPaymentsByClient = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req);
+//     if (!userIsPriv(req)) {
+//       return res.status(403).json({ message: "Not authorized" });
+//     }
+
+//     const { clientId } = req.params;
+//     const { companyId, page = 1, limit = 100 } = req.query;
+
+//     // only master/admin can query arbitrary clients; client can only query self
+//     if (req.auth.role === "client" && String(clientId) !== String(req.auth.clientId)) {
+//       return res.status(403).json({ message: "Not authorized" });
+//     }
+//     if (!PRIV_ROLES.has(req.auth.role)) {
+//       return res.status(403).json({ message: "Not authorized" });
+//     }
+
+//     const where = { client: clientId };
+//     if (companyId) where.company = companyId;
+
+//     const perPage = Math.min(Number(limit) || 100, 500);
+//     const skip = (Number(page) - 1) * perPage;
+
+//     // // Construct a cache key based on clientId and query parameters
+//     // const cacheKey = `paymentEntriesByClient:${JSON.stringify({ client: clientId, company: companyId })}`;
+
+//     // // Check if the data is cached in Redis
+//     // const cachedEntries = await getFromCache(cacheKey);
+//     // if (cachedEntries) {
+//     //   // If cached, return the data directly
+//     //   return res.status(200).json({
+//     //     success: true,
+//     //     count: cachedEntries.length,
+//     //     data: cachedEntries,
+//     //   });
+//     // }
+
+//     const [entries, total] = await Promise.all([
+//       PaymentEntry.find(where)
+//         .sort({ date: -1 })
+//         .skip(skip)
+//         .limit(perPage)
+//         .populate({ path: "vendor", select: "vendorName" })
+//         .populate({ path: "expense", select: "name" })
+//         .populate({ path: "company", select: "businessName" })
+//         .lean(),
+//       PaymentEntry.countDocuments(where),
+//     ]);
+
+//     // Cache the fetched data in Redis for future requests
+//     // await setToCache(cacheKey, entries);
+
+//     res.status(200).json({ entries, total, page: Number(page), limit: perPage });
+//   } catch (err) {
+//     console.error("getPaymentsByClient error:", err);
+//     res.status(500).json({ error: err.message });
+//   }
+// };
 exports.getPaymentsByClient = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -421,6 +507,7 @@ exports.getPaymentsByClient = async (req, res) => {
     const { clientId } = req.params;
     const { companyId, page = 1, limit = 100 } = req.query;
 
+    // --- RESTORE ORIGINAL AUTHORIZATION CHECKS ---
     // only master/admin can query arbitrary clients; client can only query self
     if (req.auth.role === "client" && String(clientId) !== String(req.auth.clientId)) {
       return res.status(403).json({ message: "Not authorized" });
@@ -432,45 +519,53 @@ exports.getPaymentsByClient = async (req, res) => {
     const where = { client: clientId };
     if (companyId) where.company = companyId;
 
-    const perPage = Math.min(Number(limit) || 100, 500);
-    const skip = (Number(page) - 1) * perPage;
+    // --- SMART PAGINATION WITH ORIGINAL DEFAULTS ---
+    const pageNum = parseInt(page) || 1;
+    let limitNum = parseInt(limit) || 100; // Original default
+    
+    const total = await PaymentEntry.countDocuments(where);
+    
+    // Auto-adjust for large datasets
+    if (total > 10000) {
+      console.warn(`Large admin payment dataset: ${total} payments for client ${clientId}`);
+      
+      if (!req.query.limit) {
+        limitNum = Math.min(limitNum, 2000); // Better default
+      } else if (limitNum > 5000) {
+        console.warn(`High admin limit requested: ${limitNum}`);
+      }
+    }
+    
+    const skip = (pageNum - 1) * limitNum;
+    const totalPages = Math.ceil(total / limitNum);
 
-    // // Construct a cache key based on clientId and query parameters
-    // const cacheKey = `paymentEntriesByClient:${JSON.stringify({ client: clientId, company: companyId })}`;
+    // Build query (same as original)
+    const query = PaymentEntry.find(where)
+      .sort({ date: -1 })
+      .populate({ path: "vendor", select: "vendorName" })
+      .populate({ path: "expense", select: "name" })
+      .populate({ path: "company", select: "businessName" });
 
-    // // Check if the data is cached in Redis
-    // const cachedEntries = await getFromCache(cacheKey);
-    // if (cachedEntries) {
-    //   // If cached, return the data directly
-    //   return res.status(200).json({
-    //     success: true,
-    //     count: cachedEntries.length,
-    //     data: cachedEntries,
-    //   });
-    // }
+    let entries;
+    if (total <= 10000 && !req.query.page && !req.query.limit) {
+      entries = await query.lean();
+    } else {
+      entries = await query.skip(skip).limit(limitNum).lean();
+    }
 
-    const [entries, total] = await Promise.all([
-      PaymentEntry.find(where)
-        .sort({ date: -1 })
-        .skip(skip)
-        .limit(perPage)
-        .populate({ path: "vendor", select: "vendorName" })
-        .populate({ path: "expense", select: "name" })
-        .populate({ path: "company", select: "businessName" })
-        .lean(),
-      PaymentEntry.countDocuments(where),
-    ]);
-
-    // Cache the fetched data in Redis for future requests
-    // await setToCache(cacheKey, entries);
-
-    res.status(200).json({ entries, total, page: Number(page), limit: perPage });
+    // Keep original response structure
+    res.status(200).json({ 
+      entries, 
+      total, 
+      page: pageNum, 
+      limit: limitNum,
+      totalPages 
+    });
   } catch (err) {
     console.error("getPaymentsByClient error:", err);
     res.status(500).json({ error: err.message });
   }
 };
-
 
 
 /** UPDATE */
