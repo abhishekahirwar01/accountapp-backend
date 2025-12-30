@@ -239,7 +239,7 @@ if (stocks > 0 && costPrice > 0) {
         await createInitialStockBatch(product, stocks, costPrice);
       }
 
-      // console.log('Product created successfully:', product);
+      // console.log('Product created successfully:', product);;;
 
       // Notify admin after product created
       await notifyAdminOnProductAction({
