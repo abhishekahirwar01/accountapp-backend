@@ -254,6 +254,7 @@ io.on('connection', (socket) => {
     const { userId, role, clientId } = data;
     if (role === 'master') {
       socket.join(`master-${userId}`);
+      socket.join('all-masters'); // Join the all-masters room for master admin notifications
     } else if (role === 'client' || role === 'user') {
       socket.join(`client-${clientId}`);
       socket.join(`user-${userId}`);
