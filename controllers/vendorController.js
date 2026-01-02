@@ -410,7 +410,9 @@ exports.updateVendor = async (req, res) => {
     if (up.gstRegistrationType != null) doc.gstRegistrationType = up.gstRegistrationType;
     if (up.pan != null) doc.pan = up.pan;
     if (typeof up.isTDSApplicable === "boolean") doc.isTDSApplicable = up.isTDSApplicable;
-
+ if (up.company != null) {
+      doc.company = Array.isArray(up.company) ? up.company : [up.company];
+    }
     await doc.save();
 
     // Notify admin after vendor updated
