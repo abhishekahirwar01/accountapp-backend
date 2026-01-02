@@ -93,15 +93,15 @@
 //   switch (action) {
 //     case "create":
 //       return (
-//         `New sales entry created by ${actorName} for party ${pName}` +
+//         `New sales entry created by ${actorName} for customer ${pName}` +
 //         (amount != null ? ` of ₹${amount}.` : ".")
 //       );
 //     case "update":
-//       return `Sales entry updated by ${actorName} for party ${pName}.`;
+//       return `Sales entry updated by ${actorName} for customer ${pName}.`;
 //     case "delete":
-//       return `Sales entry deleted by ${actorName} for party ${pName}.`;
+//       return `Sales entry deleted by ${actorName} for customer ${pName}.`;
 //     default:
-//       return `Sales entry ${action} by ${actorName} for party ${pName}.`;
+//       return `Sales entry ${action} by ${actorName} for customer ${pName}.`;
 //   }
 // }
 
@@ -1136,7 +1136,7 @@
 //             },
 //             { session }
 //           );
-//           console.log(`✅ Reversed credit balance for party ${entry.party}: -${totalAmount}`);
+//           console.log(`✅ Reversed credit balance for customer ${entry.party}: -${totalAmount}`);
 //         } catch (creditError) {
 //           console.error("❌ Error reversing credit balance:", creditError);
 //         }
@@ -1511,15 +1511,15 @@ function buildSalesNotificationMessage(
   switch (action) {
     case "create":
       return (
-        `New sales entry created by ${actorName} for party ${pName}` +
+        `New sales entry created by ${actorName} for customer ${pName}` +
         (amount != null ? ` of ₹${amount}.` : ".")
       );
     case "update":
-      return `Sales entry updated by ${actorName} for party ${pName}.`;
+      return `Sales entry updated by ${actorName} for customer ${pName}.`;
     case "delete":
-      return `Sales entry deleted by ${actorName} for party ${pName}.`;
+      return `Sales entry deleted by ${actorName} for customer ${pName}.`;
     default:
-      return `Sales entry ${action} by ${actorName} for party ${pName}.`;
+      return `Sales entry ${action} by ${actorName} for customer ${pName}.`;
   }
 }
 
@@ -2975,7 +2975,7 @@ exports.deleteSalesEntry = async (req, res) => {
             },
             { session }
           );
-          console.log(`✅ Reversed credit balance for party ${entry.party}: -${totalAmount}`);
+          console.log(`✅ Reversed credit balance for customer ${entry.party}: -${totalAmount}`);
         } catch (creditError) {
           console.error("❌ Error reversing credit balance:", creditError);
         }
