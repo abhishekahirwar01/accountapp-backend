@@ -16,5 +16,4 @@ router.post("/:userId/reset-password", verifyClientOrAdmin, userController.reset
 // Example endpoints that only logged-in employees/admins can access:
 router.post("/login", userController.loginUser)
 
-
 module.exports = router;
