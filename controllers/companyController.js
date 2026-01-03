@@ -1,6 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const Company = require("../models/Company");
+const User = require("../models/User");
 const Client = require("../models/Client");
 const Permission = require("../models/Permission");
 const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");  // Add cache import
@@ -538,22 +539,23 @@ exports.getCompany = async (req, res) => {
 // controllers/companyController.js (or wherever getMyCompanies lives)
 exports.getMyCompanies = async (req, res) => {
   try {
-    const { role, companies = [], createdByClient } = req.user || {};
+    const { role, id } = req.user || {}; 
     let query;
 
-    // Employees (including admin) → only explicitly assigned companies
     if (["user", "manager", "admin"].includes(role)) {
-      if (!Array.isArray(companies) || companies.length === 0) {
+  
+      const currentUser = await User.findById(id).select("companies");
+      
+      if (!currentUser || !currentUser.companies || currentUser.companies.length === 0) {
         return res.json([]);
       }
-      query = { _id: { $in: companies } };
+      query = { _id: { $in: currentUser.companies } };
     }
-    // Tenant owners
     else if (["client", "customer"].includes(role)) {
-      query = { client: req.user.id };
+      query = { client: id };
     }
-    // Master (optional: constrain to tenant if you want)
     else if (role === "master") {
+      const { createdByClient } = req.user;
       query = createdByClient ? { client: createdByClient } : {};
     }
     else {
