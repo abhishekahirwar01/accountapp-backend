@@ -5,7 +5,6 @@ const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 const XLSX = require("xlsx");
 const DailyStockLedgerService = require("../services/stockLedgerService");
 const StockBatch = require("../models/StockBatch");
-const DailyStockLedger = require("../models/DailyStockLedger");
 
 // Build message text per action
 function buildProductNotificationMessage(action, { actorName, productName }) {
@@ -203,43 +202,18 @@ exports.createProduct = async (req, res) => {
       await product.populate('company');
 
       // ⬇️ UPDATE DAILY STOCK LEDGER ⬇️
-if (stocks > 0 && costPrice > 0) {
-        
-        // 1. Aaj ki date range nikalein
-        const today = new Date();
-        const startOfDay = new Date(today);
-        startOfDay.setUTCHours(0, 0, 0, 0);
-        const endOfDay = new Date(today);
-        endOfDay.setUTCHours(23, 59, 59, 999);
+      if (stocks > 0 && costPrice > 0) {
+        await DailyStockLedgerService.handleProductCreation({
+          companyId: company,
+          clientId: req.auth.clientId,
+          stocks: stocks,
+          costPrice: costPrice
+        });
 
-        // 2. Upsert Logic: Agar record hai to Update, nahi to Create
-        await DailyStockLedger.findOneAndUpdate(
-          {
-            companyId: company,
-            date: { $gte: startOfDay, $lte: endOfDay } // Aaj ka record dhundo
-          },
-          {
-            $setOnInsert: { // Agar naya ban raha hai to ye fields set karo
-              clientId: req.auth.clientId,
-              companyId: company,
-              date: startOfDay,
-              openingStock: { quantity: 0, amount: 0 }
-            },
-            $inc: { // Agar purana mil gaya to sirf stock add karo (Crash nahi karega)
-              "closingStock.quantity": stocks,
-              "closingStock.amount": stocks * costPrice,
-              "totalPurchaseOfTheDay.quantity": stocks,
-              "totalPurchaseOfTheDay.amount": stocks * costPrice
-            }
-          },
-          { upsert: true, new: true }
-        );
-
-        // Batch creation waise hi rahega
-        await createInitialStockBatch(product, stocks, costPrice);
+         await createInitialStockBatch(product, stocks, costPrice);
       }
 
-      // console.log('Product created successfully:', product);;;
+      // console.log('Product created successfully:', product);
 
       // Notify admin after product created
       await notifyAdminOnProductAction({
@@ -270,26 +244,27 @@ if (stocks > 0 && costPrice > 0) {
 
 // GET /api/products
 exports.getProducts = async (req, res) => {
- try {
+  try {
+    const { clientId } = req.auth;
+    const { company } = req.query; // ✅ Get company from query params
 
-  const requestedClientId = req.query.clientId || req.auth.clientId;
- const { company } = req.query; 
- const isPrivileged = ["master", "admin"].includes(req.auth.role);
- if (!isPrivileged && requestedClientId !== req.auth.clientId) {
- return res.status(403).json({ message: "Not authorized to view this client's data." });
- }
-const filter = { createdByClient: requestedClientId };
- if (company) {
- filter.company = company;
- }
- const products = await Product.find(filter)
-.populate('company') 
- .sort({ createdAt: -1 })
- .lean();
- return res.json(products);
- } catch (err) {
- return res.status(500).json({ message: "Server error", error: err.message });
- }
+    // Build filter object
+    const filter = { createdByClient: clientId };
+
+    // ✅ Add company filter if provided
+    if (company) {
+      filter.company = company;
+    }
+
+    const products = await Product.find(filter)
+      .populate('company') // ✅ Optional: populate company details
+      .sort({ createdAt: -1 })
+      .lean();
+
+    return res.json(products);
+  } catch (err) {
+    return res.status(500).json({ message: "Server error", error: err.message });
+  }
 };
 // PATCH /api/products/:id
 exports.updateProducts = async (req, res) => {
