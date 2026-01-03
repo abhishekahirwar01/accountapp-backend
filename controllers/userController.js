@@ -337,6 +337,30 @@ exports.updateUser = async (req, res) => {
     }
 
     await doc.save();
+    
+    // Emit user update event via socket if companies were changed
+    if (global.io && Array.isArray(companies)) {
+      console.log('📡 Emitting user-update event for user:', doc._id);
+      
+      // Emit to the user themselves
+      global.io.to(`user-${doc._id}`).emit('user-update', {
+        message: 'Your company assignments have been updated',
+        userId: doc._id,
+        companies: companies,
+        action: 'company-assignment-update'
+      });
+      
+      // Also emit to the client admin
+      const clientId = req.user.createdByClient || req.user.id;
+      global.io.to(`client-${clientId}`).emit('user-update', {
+        message: 'User company assignments updated',
+        userId: doc._id,
+        updatedBy: req.user._id,
+        companies: companies,
+        action: 'company-assignment-update'
+      });
+    }
+    
     return res.status(200).json({ message: "User updated", user: doc });
   } catch (err) {
     console.error("updateUser error:", err);
@@ -545,3 +569,4 @@ exports.loginUser = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+

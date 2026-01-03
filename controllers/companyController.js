@@ -142,6 +142,27 @@ exports.createCompany = async (req, res) => {
 //     clientId: assignedClientId, // or req.user.id in createCompanyByClient
 //     date: new Date() // today
 // });
+    
+    // Emit company update event via socket
+    if (global.io) {
+      console.log('📡 Emitting company-update event for client:', assignedClientId);
+      global.io.to(`client-${assignedClientId}`).emit('company-update', {
+        message: 'Company created',
+        companyId: company._id,
+        action: 'create'
+      });
+      
+      // Also emit to master admins if this was created by a master
+      if (req.user.role === 'master') {
+        global.io.to('all-masters').emit('company-update', {
+          message: 'Company created by master',
+          companyId: company._id,
+          clientId: assignedClientId,
+          action: 'create'
+        });
+      }
+    }
+    
     res.status(201).json({ message: "Company created successfully", company });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -261,6 +282,16 @@ exports.createCompanyByClient = async (req, res) => {
 
     // Invalidate cache
     // invalidateClient(req.user.id);
+    
+    // Emit company update event via socket
+    if (global.io) {
+      console.log('📡 Emitting company-update event for client:', req.user.id);
+      global.io.to(`client-${req.user.id}`).emit('company-update', {
+        message: 'Company created',
+        companyId: company._id,
+        action: 'create'
+      });
+    }
 
     res.status(201).json({ message: "Company created successfully", company });
   } catch (err) {
@@ -435,6 +466,24 @@ exports.updateCompany = async (req, res) => {
 
     await company.save();
     // invalidateClientsForMaster(req.user.id);
+    
+    // Emit company update event via socket
+    if (global.io) {
+      console.log('📡 Emitting company-update event for client:', company.client);
+      global.io.to(`client-${company.client}`).emit('company-update', {
+        message: 'Company updated',
+        companyId: company._id,
+        action: 'update'
+      });
+      
+      // Also emit to the user who made the update
+      global.io.to(`user-${req.user.id}`).emit('company-update', {
+        message: 'Company updated by you',
+        companyId: company._id,
+        action: 'update'
+      });
+    }
+    
     res.status(200).json({ message: "Company updated", company });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -472,6 +521,23 @@ exports.deleteCompany = async (req, res) => {
     // myCache.del(cacheKey);  // Invalidate the cache for this company
 
     // invalidateClientsForMaster(req.user.id);  // Invalidate cache for client companies
+    
+    // Emit company update event via socket
+    if (global.io) {
+      console.log('📡 Emitting company-update event for client:', company.client);
+      global.io.to(`client-${company.client}`).emit('company-update', {
+        message: 'Company deleted',
+        companyId: companyId,
+        action: 'delete'
+      });
+      
+      // Also emit to the user who made the deletion
+      global.io.to(`user-${req.user.id}`).emit('company-update', {
+        message: 'Company deleted by you',
+        companyId: companyId,
+        action: 'delete'
+      });
+    }
 
     res.status(200).json({ message: "Company deleted successfully" });
   } catch (err) {
