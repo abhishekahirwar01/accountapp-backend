@@ -345,21 +345,23 @@ exports.getPayments = async (req, res) => {
     const clientId = req.auth.clientId;
 
     // --- RESTORE ORIGINAL COMPANY FILTERING LOGIC ---
-    const where = {
-      client: clientId,
-    };
-
-    // Apply company filtering EXACTLY as original
-    if (companyAllowedForUser(req, companyId)) {
-      if (companyId) {
-        where.company = companyId;
+   const where = {
+   client: clientId,
+  };
+    if (companyId) {
+      if (!companyAllowedForUser(req, companyId)) {
+         return res.status(403).json({ success: false, message: "Access denied to this company" });
       }
-      // If companyId not provided, don't filter by company (original behavior)
-    } else {
-      // User not allowed for this company = return empty
-      where.company = { $in: [] };
+      where.company = companyId;
+    } 
+    else if (!userIsPriv(req)) {
+       const allowed = req.auth.allowedCompanies || [];
+       if (allowed.length > 0) {
+          where.company = { $in: allowed };
+       } else {
+          where.company = { $in: [] }; 
+       }
     }
-
     // --- RESTORE ORIGINAL DATE FILTERING ---
     if (dateFrom || dateTo) {
       where.date = {};

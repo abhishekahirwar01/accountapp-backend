@@ -357,16 +357,14 @@ exports.getReceipts = async (req, res) => {
     await ensureAuthCaps(req);
     
     const filter = {};
-    const user = req.user || req.auth;
+   const user = req.auth;
 
     console.log("User role:", user.role);
     console.log("User ID:", user.id);
     console.log("Query companyId:", req.query.companyId);
 
     // --- Client filtering ---
-    if (user.role === "client") {
-      filter.client = user.id;
-    }
+   filter.client = req.auth.clientId;
 
     // --- Company filtering ---
     if (req.query.companyId) {
@@ -377,16 +375,11 @@ exports.getReceipts = async (req, res) => {
         });
       }
       filter.company = req.query.companyId;
-    } else {
-      const allowedCompanies = user.allowedCompanies || [];
-      if (allowedCompanies.length > 0 && user.role === "user") {
-        filter.company = { $in: allowedCompanies };
-      } else if (user.role === "user") {
-        return res.status(200).json({
-          success: true,
-          count: 0,
-          data: [],
-        });
+} else {
+      // "All Companies" View
+      if (!userIsPriv(req)) {
+        const allowed = user.allowedCompanies || [];
+        filter.company = { $in: allowed.length > 0 ? allowed : [] };
       }
     }
 

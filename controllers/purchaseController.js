@@ -711,7 +711,7 @@ exports.getPurchaseEntries = async (req, res) => {
     await ensureAuthCaps(req);
 
     const filter = {};
-    const user = req.user; // Use req.user like sales controller
+ const user = req.auth; // ✅ Isme allowedCompanies hoti hain
 
     console.log("User role:", user.role);
     console.log("User ID:", user.id);
@@ -727,27 +727,16 @@ exports.getPurchaseEntries = async (req, res) => {
         });
       }
       filter.company = req.query.companyId;
-    } else {
-      // If no specific company requested, filter by user's accessible companies
-      const allowedCompanies = user.allowedCompanies || [];
-      if (allowedCompanies.length > 0) {
-        filter.company = { $in: allowedCompanies };
-      } else if (user.role === "user") {
-        // Regular users should only see data from their assigned companies
-        return res.status(200).json({
-          success: true,
-          count: 0,
-          data: [],
-        });
+} else {
+      // "All Companies" View
+      if (!userIsPriv(req)) {
+        const allowed = user.allowedCompanies || [];
+        filter.company = { $in: allowed.length > 0 ? allowed : [] };
       }
-      // For master/admin/client, no company filter = see all data for their client
     }
 
     // For client users, filter by client ID
-    if (user.role === "client") {
-      filter.client = user.id;
-    }
-
+    filter.client = user.clientId; 
     // Date range filtering
     if (req.query.dateFrom || req.query.dateTo) {
       filter.date = {};
