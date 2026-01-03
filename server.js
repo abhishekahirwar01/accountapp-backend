@@ -56,6 +56,7 @@ connectDB();
 
 
 
+
 // Enhanced CORS configuration
 const allowedOrigins = [
   'https://accountapp-theta.vercel.app',
@@ -66,12 +67,13 @@ const allowedOrigins = [
 ];
 
 
+
 if (process.env.NODE_ENV === 'production') {
   startSchedulers();
 }else {
   // For development/testing, you can run immediately
   console.log('Development mode - Reports will run immediately');
- 
+  
   // testReportImmediately();
   startSchedulers();
 }
@@ -91,6 +93,7 @@ setupWebSocketServer(io);
 
 // Make io globally available for controllers
 global.io = io;
+
 
 
 
@@ -172,11 +175,13 @@ app.use("/api/shipping-addresses", shippingAddressRoutes);
 app.use("/api/update-notifications", updateNotificationRoutes);
 
 
+
 // app.use("/", whatsappRoutes);
 
 app.use('/api', templateRouter);
 
 app.use('./api', reportRoutes)
+
 
 
 app.use("/api/units", unitRoutes);
@@ -194,11 +199,12 @@ app.get('/', (req, res) => {
 });
 
 
+
 app.get('/api/db-status', async (req, res) => {
   try {
     const db = mongoose.connection.db;
     if (!db) throw new Error('Database not initialized');
-
+  
     const status = {
       readyState: mongoose.connection.readyState,
       state: ['disconnected', 'connected', 'connecting', 'disconnecting'][mongoose.connection.readyState],
@@ -207,7 +213,7 @@ app.get('/api/db-status', async (req, res) => {
       models: mongoose.modelNames(),
       ping: await db.command({ ping: 1 })
     };
-
+  
     res.json(status);
   } catch (error) {
     res.status(500).json({
@@ -220,6 +226,8 @@ app.get('/api/db-status', async (req, res) => {
     });
   }
 });
+
+
 
 
 
@@ -255,7 +263,7 @@ io.on('connection', (socket) => {
     if (role === 'master') {
       socket.join(`master-${userId}`);
       socket.join('all-masters'); // Join the all-masters room for master admin notifications
-    } else if (role === 'client' || role === 'user') {
+    } else if (role === 'admin' || role === 'client' || role === 'user') {
       socket.join(`client-${clientId}`);
       socket.join(`user-${userId}`);
     }
@@ -266,4 +274,3 @@ io.on('connection', (socket) => {
     console.log('🔌 User disconnected:', socket.id);
   });
 });
-
