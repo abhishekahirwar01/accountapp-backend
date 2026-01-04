@@ -174,7 +174,10 @@ app.use("/api/shipping-addresses", shippingAddressRoutes);
 
 app.use("/api/update-notifications", updateNotificationRoutes);
 
-
+// 💤 Ping route to keep Render backend awake
+app.get("/ping", (req, res) => {
+  res.status(200).send("Server is awake 🚀");
+});
 
 // app.use("/", whatsappRoutes);
 

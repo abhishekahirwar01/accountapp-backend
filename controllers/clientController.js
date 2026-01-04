@@ -201,19 +201,13 @@ exports.loginClient = async (req, res) => {
     console.log("Params:", req.params);
     console.log("Body:", req.body);
 
-    const { clientUsername, password , captchaToken } = req.body;
+    const { clientUsername, password } = req.body;
 
-    // Verify reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
-    }
-
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
-
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
+    // Validate input
+    if (!clientUsername || !password) {
+      return res
+        .status(400)
+        .json({ message: "Client username and password are required" });
     }
 
     const normalizedUsername = String(clientUsername).trim().toLowerCase();
@@ -221,6 +215,7 @@ exports.loginClient = async (req, res) => {
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
+
     // 🔒 Account validity gate
     const validity = await AccountValidity.findOne({ client: client._id });
     if (!validity) {
@@ -238,17 +233,19 @@ exports.loginClient = async (req, res) => {
       AccountValidity.updateOne(
         { _id: validity._id },
         { $set: { status: "expired" } }
-      ).catch(() => { });
+      ).catch(() => {});
       return res
         .status(403)
         .json({ message: "Account validity expired. Contact support." });
     }
 
+    // Password check
     const isMatch = await bcrypt.compare(password, client.password);
     if (!isMatch) {
       return res.status(401).json({ message: "Invalid password" });
     }
 
+    // Generate JWT token
     const token = jwt.sign(
       { id: client._id, role: "client", slug: client.slug },
       process.env.JWT_SECRET,
@@ -269,9 +266,12 @@ exports.loginClient = async (req, res) => {
       },
     });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("LoginClient error:", err);
+    res.status(500).json({ error: "Internal server error" });
   }
 };
+
+
 
 // Update Client (Only Master Admin)
 exports.updateClient = async (req, res) => {

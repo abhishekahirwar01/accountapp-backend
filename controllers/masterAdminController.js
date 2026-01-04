@@ -32,28 +32,19 @@ exports.registerMasterAdmin = async (req, res) => {
 // Login
 exports.loginMasterAdmin = async (req, res) => {
   try {
-    const { username, password, captchaToken } = req.body;
-    // const { username, password } = req.body;
+    const { username, password } = req.body;
 
     // Validate input
     if (!username || !password) {
-      return res.status(400).json({ message: "Username and password are required" });
+      return res
+        .status(400)
+        .json({ message: "Username and password are required" });
     }
 
-    // Verify reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
-    }
-
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
-
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
-    }
-
-    const admin = await MasterAdmin.findOne({ username: username.toLowerCase() });
+    // Find admin by username
+    const admin = await MasterAdmin.findOne({
+      username: username.toLowerCase(),
+    });
 
     if (!admin) {
       return res.status(401).json({ message: "Invalid credentials" });
@@ -61,7 +52,9 @@ exports.loginMasterAdmin = async (req, res) => {
 
     // Check if password exists for the admin
     if (!admin.password) {
-      return res.status(401).json({ message: "Account not properly configured" });
+      return res
+        .status(401)
+        .json({ message: "Account not properly configured" });
     }
 
     const isMatch = await bcrypt.compare(password, admin.password);
@@ -69,6 +62,7 @@ exports.loginMasterAdmin = async (req, res) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    // Generate JWT token
     const token = jwt.sign(
       { id: admin._id, role: "master" },
       process.env.JWT_SECRET,
@@ -83,10 +77,9 @@ exports.loginMasterAdmin = async (req, res) => {
         username: admin.username,
         name: admin.name,
         email: admin.email,
-        role: "master"
-      }
+        role: "master",
+      },
     });
-
   } catch (err) {
     console.error("Login error:", err);
     res.status(500).json({ error: "Internal server error" });

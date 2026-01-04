@@ -4,19 +4,12 @@ const Redis = require('ioredis');
 
 
 // Create a new Redis instance with default settings (localhost, port 6379)
-const redis = new Redis({
-  host: '127.0.0.1',  // Redis server hostname (default: 127.0.0.1)
-  port: 6379,         // Redis server port (default: 6379)
-  // password: 'yourpassword',  // Uncomment this if your Redis server requires authentication
-  db: 0,              // Redis database to use (default is 0)
-});
+const redis = new Redis(process.env.REDIS_URL || 'redis://127.0.0.1:6379');
 
-// Connect to Redis
 redis.on('connect', () => {
   console.log('Connected to Redis');
 });
 
-// Handle Redis errors
 redis.on('error', (err) => {
   console.error('Redis error:', err);
 });
