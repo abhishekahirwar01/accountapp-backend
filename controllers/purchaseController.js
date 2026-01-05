@@ -729,11 +729,19 @@ exports.getPurchaseEntries = async (req, res) => {
         });
       }
       filter.company = req.query.companyId;
-    } else {
-      // "All Companies" View
-      if (!userIsPriv(req)) {
+} else {
+      if (user.role === 'user' || user.role === 'admin') {
         const allowed = user.allowedCompanies || [];
-        filter.company = { $in: allowed.length > 0 ? allowed : [] };
+        
+        if (allowed.length > 0) {
+            filter.company = { $in: allowed };
+        } else {
+            return res.status(200).json({ 
+                success: true, 
+                count: 0, 
+                data: [] 
+            });
+        }
       }
     }
 
