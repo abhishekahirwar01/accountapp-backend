@@ -86,18 +86,22 @@ const dailyStockLedgerSchema = new mongoose.Schema({
     },
   ],
 
-totalExpenses: {
+  totalExpenses: {
     type: Number,
     default: 0,
     min: 0,
   },
+  ledgerDate: {
+  type: String, // "YYYY-MM-DD" (IST)
+},
+
 
 }, {
   timestamps: true
 });
 
 dailyStockLedgerSchema.index(
-  { clientId: 1, companyId: 1, date: 1 },
+  { clientId: 1, companyId: 1, ledgerDate: 1 },
   { unique: true }
 );
 
