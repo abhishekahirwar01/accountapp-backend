@@ -602,6 +602,22 @@ exports.createPurchaseEntry = async (req, res) => {
         // Invalidate cache
         // await deletePurchaseEntryCache(clientId, companyIdStr);
 
+        // Emit socket event for real-time inventory updates
+        if (req.io) {
+          req.io.to(`company-${companyIdStr}`).emit('inventory-update', {
+            message: 'Purchase entry created',
+            entryId: entry._id,
+            companyId: companyIdStr,
+            clientId: clientId
+          });
+          req.io.to(`all-inventory-updates`).emit('inventory-update', {
+            message: 'Purchase entry created',
+            entryId: entry._id,
+            companyId: companyIdStr,
+            clientId: clientId
+          });
+        }
+
         return res.status(201).json({ message: "Purchase entry created successfully", entry });
 
 
