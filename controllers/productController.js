@@ -214,7 +214,25 @@ exports.createProduct = async (req, res) => {
       }
 
       // console.log('Product created successfully:', product);
-
+  
+      // Emit product update event via socket
+      if (global.io) {
+        console.log('📡 Emitting product-update event for client:', req.auth.clientId);
+        global.io.to(`client-${req.auth.clientId}`).emit('product-update', {
+          message: 'Product created',
+          productId: product._id,
+          action: 'create'
+        });
+        
+        // 👇 NEW: Also emit to all-inventory-updates room for admins and users
+        global.io.to('all-inventory-updates').emit('product-update', {
+          message: 'Product created',
+          productId: product._id,
+          action: 'create',
+          clientId: req.auth.clientId
+        });
+      }
+  
       // Notify admin after product created
       await notifyAdminOnProductAction({
         req,
@@ -222,7 +240,7 @@ exports.createProduct = async (req, res) => {
         productName: product.name,
         entryId: product._id,
       });
-
+  
       return res.status(201).json({ message: "Product created", product });
     } catch (productErr) {
       console.error('Error creating product:', productErr);
@@ -345,6 +363,24 @@ exports.updateProducts = async (req, res) => {
 
        await updateStockBatchForManualAdjustment(product, oldStocks, stocks, currentCostPrice);
     }
+    // Emit product update event via socket
+    if (global.io) {
+      console.log('📡 Emitting product-update event for client:', req.auth.clientId);
+      global.io.to(`client-${req.auth.clientId}`).emit('product-update', {
+        message: 'Product updated',
+        productId: product._id,
+        action: 'update'
+      });
+      
+      // 👇 NEW: Also emit to all-inventory-updates room for admins and users
+      global.io.to('all-inventory-updates').emit('product-update', {
+        message: 'Product updated',
+        productId: product._id,
+        action: 'update',
+        clientId: req.auth.clientId
+      });
+    }
+
     // Notify admin after product updated
     await notifyAdminOnProductAction({
       req,
@@ -393,6 +429,24 @@ exports.deleteProducts = async (req, res) => {
       clientId: req.auth.clientId
     });
     console.log(`✅ Deleted stock batches for product: ${product.name}`);
+
+    // Emit product update event via socket
+    if (global.io) {
+      console.log('📡 Emitting product-update event for client:', req.auth.clientId);
+      global.io.to(`client-${req.auth.clientId}`).emit('product-update', {
+        message: 'Product deleted',
+        productId: product._id,
+        action: 'delete'
+      });
+      
+      // 👇 NEW: Also emit to all-inventory-updates room for admins and users
+      global.io.to('all-inventory-updates').emit('product-update', {
+        message: 'Product deleted',
+        productId: product._id,
+        action: 'delete',
+        clientId: req.auth.clientId
+      });
+    }
 
     // Notify admin before deleting
     await notifyAdminOnProductAction({

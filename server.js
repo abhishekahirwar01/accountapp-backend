@@ -6,6 +6,7 @@ const path = require("path");
 const http = require("http");
 const socketIo = require("socket.io");
 const { setupWebSocketServer } = require("./websocketServer");
+const { setupSocketHandlers } = require("./socketHandler");
 const connectDB = require("./config/db");
 const masterAdminRoutes = require("./routes/masterAdminRoutes");
 const clientRoutes = require("./routes/clientRoutes");
@@ -91,9 +92,11 @@ const io = socketIo(server, {
 // Setup WebSocket server using Socket.IO instance
 setupWebSocketServer(io);
 
+// Setup Socket.IO handlers
+setupSocketHandlers(io);
+
 // Make io globally available for controllers
 global.io = io;
-
 
 
 
@@ -253,24 +256,3 @@ app.use((err, req, res, next) => {
   res.status(500).json({ message: "Something went wrong", error: err.message });
 });
 
-// Socket.io connection handling
-io.on('connection', (socket) => {
-  console.log('🔌 User connected:', socket.id);
-
-  // Join user-specific rooms for targeted notifications
-  socket.on('joinRoom', (data) => {
-    const { userId, role, clientId } = data;
-    if (role === 'master') {
-      socket.join(`master-${userId}`);
-      socket.join('all-masters'); // Join the all-masters room for master admin notifications
-    } else if (role === 'admin' || role === 'client' || role === 'user') {
-      socket.join(`client-${clientId}`);
-      socket.join(`user-${userId}`);
-    }
-    console.log(`👤 User ${userId} joined room(s)`);
-  });
-
-  socket.on('disconnect', () => {
-    console.log('🔌 User disconnected:', socket.id);
-  });
-});

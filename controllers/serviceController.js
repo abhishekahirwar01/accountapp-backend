@@ -59,6 +59,26 @@ exports.createService = async (req, res) => {
 
     await service.save();
 
+    // Emit service update event via socket
+    if (global.io) {
+      console.log('📡 Emitting service-update event for client:', req.auth.clientId);
+      global.io.to(`client-${req.auth.clientId}`).emit('service-update', {
+        message: 'Service created',
+        serviceId: service._id,
+        serviceName: service.serviceName,  // 👇 NEW: Include service name
+        action: 'create'
+      });
+      
+      // 👇 NEW: Also emit to all-inventory-updates room for admins and users
+      global.io.to('all-inventory-updates').emit('service-update', {
+        message: 'Service created',
+        serviceId: service._id,
+        serviceName: service.serviceName,  // 👇 NEW: Include service name
+        action: 'create',
+        clientId: req.auth.clientId
+      });
+    }
+
     // Notify admin after service created
     await notifyAdminOnServiceAction({
       req,
@@ -135,6 +155,26 @@ exports.updateService = async (req, res) => {
 
     await service.save();
 
+    // Emit service update event via socket
+    if (global.io) {
+      console.log('📡 Emitting service-update event for client:', req.auth.clientId);
+      global.io.to(`client-${req.auth.clientId}`).emit('service-update', {
+        message: 'Service updated',
+        serviceId: service._id,
+        serviceName: service.serviceName,  // 👇 NEW: Include service name
+        action: 'update'
+      });
+      
+      // 👇 NEW: Also emit to all-inventory-updates room for admins and users
+      global.io.to('all-inventory-updates').emit('service-update', {
+        message: 'Service updated',
+        serviceId: service._id,
+        serviceName: service.serviceName,  // 👇 NEW: Include service name
+        action: 'update',
+        clientId: req.auth.clientId
+      });
+    }
+
     // Notify admin after service updated
     await notifyAdminOnServiceAction({
       req,
@@ -164,15 +204,40 @@ exports.deleteService = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
+    // Store service name before deletion for socket emission
+    const serviceName = service.serviceName;
+    const serviceId = service._id;
+
     // Notify admin before deleting
     await notifyAdminOnServiceAction({
       req,
       action: "delete",
-      serviceName: service.serviceName,
-      entryId: service._id,
+      serviceName: serviceName,
+      entryId: serviceId,
     });
 
     await service.deleteOne();
+
+    // 👇 FIXED: Emit service update event via socket AFTER deletion
+    if (global.io) {
+      console.log('📡 Emitting service-update event for client:', req.auth.clientId);
+      global.io.to(`client-${req.auth.clientId}`).emit('service-update', {
+        message: 'Service deleted',
+        serviceId: serviceId,
+        serviceName: serviceName,  // 👇 NEW: Include service name for better tracking
+        action: 'delete'
+      });
+      
+      // 👇 NEW: Also emit to all-inventory-updates room for admins and users
+      global.io.to('all-inventory-updates').emit('service-update', {
+        message: 'Service deleted',
+        serviceId: serviceId,
+        serviceName: serviceName,  // 👇 NEW: Include service name for better tracking
+        action: 'delete',
+        clientId: req.auth.clientId
+      });
+    }
+
     res.json({ message: "Service deleted successfully" });
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
