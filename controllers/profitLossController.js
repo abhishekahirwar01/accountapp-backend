@@ -244,6 +244,7 @@ async function getOpeningStock(clientId, companyId, startDate) {
 
     console.log('🔍 Looking for opening stock on IST date:', standardizedDate.toISOString());
 
+    // First try to find document for the exact date
     const openingStockLedger = await DailyStockLedger.findOne({
       clientId: new mongoose.Types.ObjectId(clientId),
       companyId: companyId ? new mongoose.Types.ObjectId(companyId) : { $exists: true },
@@ -255,7 +256,20 @@ async function getOpeningStock(clientId, companyId, startDate) {
       return openingStockLedger.openingStock.amount || 0;
     }
 
-    console.log('❌ No opening stock found for IST date, using 0');
+    // If no document found for exact date, find the most recent document before the requested date
+    console.log('❌ No opening stock found for exact IST date, looking for previous document');
+    const previousStockLedger = await DailyStockLedger.findOne({
+      clientId: new mongoose.Types.ObjectId(clientId),
+      companyId: companyId ? new mongoose.Types.ObjectId(companyId) : { $exists: true },
+      date: { $lt: standardizedDate }
+    }).sort({ date: -1 }); // Sort by date descending to get the most recent
+
+    if (previousStockLedger && previousStockLedger.closingStock) {
+      console.log('✅ Found previous document, using its closing stock as opening stock:', previousStockLedger.closingStock.amount);
+      return previousStockLedger.closingStock.amount || 0;
+    }
+
+    console.log('❌ No previous document found, using 0');
     return 0;
 
   } catch (error) {
@@ -274,6 +288,7 @@ async function getClosingStock(clientId, companyId, endDate) {
 
     console.log('🔍 Looking for closing stock on IST date:', standardizedDate.toISOString());
 
+    // First try to find document for the exact date
     const closingStockLedger = await DailyStockLedger.findOne({
       clientId: new mongoose.Types.ObjectId(clientId),
       companyId: companyId ? new mongoose.Types.ObjectId(companyId) : { $exists: true },
@@ -285,7 +300,20 @@ async function getClosingStock(clientId, companyId, endDate) {
       return closingStockLedger.closingStock.amount || 0;
     }
 
-    console.log('❌ No closing stock found for IST date, using 0');
+    // If no document found for exact date, find the most recent document before the requested date
+    console.log('❌ No closing stock found for exact IST date, looking for previous document');
+    const previousStockLedger = await DailyStockLedger.findOne({
+      clientId: new mongoose.Types.ObjectId(clientId),
+      companyId: companyId ? new mongoose.Types.ObjectId(companyId) : { $exists: true },
+      date: { $lt: standardizedDate }
+    }).sort({ date: -1 }); // Sort by date descending to get the most recent
+
+    if (previousStockLedger && previousStockLedger.closingStock) {
+      console.log('✅ Found previous document, using its closing stock:', previousStockLedger.closingStock.amount);
+      return previousStockLedger.closingStock.amount || 0;
+    }
+
+    console.log('❌ No previous document found, using 0');
     return 0;
 
   } catch (error) {

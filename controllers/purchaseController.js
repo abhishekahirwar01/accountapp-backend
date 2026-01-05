@@ -283,9 +283,11 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
 
     const previousLedger = await DailyStockLedger.findOne({
       companyId: purchaseEntry.company,
-      // Note: Hum yahan Client/Vendor ID se search nahi karenge taaki duplicate ledger na bane
-      date: previousDay
-    }).session(session);
+      date: { $lt: purchaseDate }   // 🔑 ANY earlier date
+    })
+      .sort({ date: -1 })             // 🔑 get latest one
+      .session(session);
+
 
     const openingStockDefaults = previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 };
 
@@ -308,28 +310,28 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
           totalCOGS: 0
         }
       },
-      { 
-        upsert: true, 
-        new: true, 
+      {
+        upsert: true,
+        new: true,
         session: session,
         setDefaultsOnInsert: true
       }
     );
     // STEP 2: RECALCULATE CLOSING STOCK (In Memory)
-    
+
     // Get latest values from the updated ledger
     const totalOpeningQty = ledger.openingStock.quantity;
     const totalOpeningAmt = ledger.openingStock.amount;
-    
+
     const totalPurchaseQty = ledger.totalPurchaseOfTheDay.quantity;
     const totalPurchaseAmt = ledger.totalPurchaseOfTheDay.amount;
-    
+
     const totalSalesQty = ledger.totalSalesOfTheDay.quantity;
     const totalCOGS = ledger.totalCOGS; // Use actual COGS, not Sales Amount
 
     //  Formula: Opening + Purchase - Sales
     const finalClosingQty = (totalOpeningQty + totalPurchaseQty) - totalSalesQty;
-    
+
     //  Formula: OpeningVal + PurchaseVal - COGS (Cost of goods sold)
     // Note: Sales Amount minus nahi karte, kyunki usme profit juda hota hai.
     const finalClosingAmt = (totalOpeningAmt + totalPurchaseAmt) - totalCOGS;
@@ -711,7 +713,7 @@ exports.getPurchaseEntries = async (req, res) => {
     await ensureAuthCaps(req);
 
     const filter = {};
- const user = req.auth; // ✅ Isme allowedCompanies hoti hain
+    const user = req.auth; // ✅ Isme allowedCompanies hoti hain
 
     console.log("User role:", user.role);
     console.log("User ID:", user.id);
@@ -744,7 +746,7 @@ exports.getPurchaseEntries = async (req, res) => {
     }
 
     // For client users, filter by client ID
-    filter.client = user.clientId; 
+    filter.client = user.clientId;
     // Date range filtering
     if (req.query.dateFrom || req.query.dateTo) {
       filter.date = {};
@@ -882,9 +884,9 @@ async function updateDailyStockLedgerForPurchaseUpdate(purchaseEntry, oldProduct
         purchaseEntry.client,
         session
       );
-      
+
       // ✅ CORRECTED: Calculate COGS properly
-     const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
+      const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
 
       const newClosingQuantity = Math.max(0, oldLedger.openingStock.quantity +
         oldLedger.totalPurchaseOfTheDay.quantity -
@@ -911,9 +913,11 @@ async function updateDailyStockLedgerForPurchaseUpdate(purchaseEntry, oldProduct
 
       const previousLedger = await DailyStockLedger.findOne({
         companyId: purchaseEntry.company,
-        clientId: purchaseEntry.client,
-        date: previousDay
-      }).session(session);
+        date: { $lt: purchaseDate }   // 🔑 ANY earlier date
+      })
+        .sort({ date: -1 })             // 🔑 get latest one
+        .session(session);
+
 
       newLedger = new DailyStockLedger({
         companyId: purchaseEntry.company,
@@ -942,9 +946,9 @@ async function updateDailyStockLedgerForPurchaseUpdate(purchaseEntry, oldProduct
       purchaseEntry.client,
       session
     );
-    
+
     // ✅ CORRECTED: Calculate COGS properly
-   const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
+    const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
 
     const newClosingQuantity = Math.max(0, newLedger.openingStock.quantity +
       newLedger.totalPurchaseOfTheDay.quantity -
@@ -975,9 +979,9 @@ async function updateDailyStockLedgerForPurchaseUpdate(purchaseEntry, oldProduct
         purchaseEntry.client,
         session
       );
-      
+
       // ✅ CORRECTED: Calculate COGS properly
-     const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
+      const totalCOGS = ledger.totalSalesOfTheDay.amount; // Or calculate from actual sales transactions
 
       const newClosingQuantity = Math.max(0, ledger.openingStock.quantity +
         ledger.totalPurchaseOfTheDay.quantity -

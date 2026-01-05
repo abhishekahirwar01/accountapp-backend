@@ -43,32 +43,30 @@ class DailyStockLedgerService {
       });
 
       if (!ledger) {
-        // Get previous day's closing stock
-        const previousDay = new Date(standardizedDate);
-        previousDay.setDate(previousDay.getDate() - 1);
-        previousDay.setUTCHours(18, 30, 0, 0); // IST 00:00
-        
+        // 🔍 Find the most recent ledger before today (not just previous day)
         const previousLedger = await DailyStockLedger.findOne({
           companyId: companyId,
           clientId: clientId,
-          date: previousDay
-        });
-
+          date: { $lt: standardizedDate }
+        }).sort({ date: -1 }); // Sort by date descending to get most recent
+ 
         ledger = new DailyStockLedger({
           companyId: companyId,
           clientId: clientId,
           date: standardizedDate,
-          openingStock: previousLedger ? { 
-            quantity: previousLedger.closingStock.quantity, 
-            amount: previousLedger.closingStock.amount 
+          openingStock: previousLedger ? {
+            quantity: previousLedger.closingStock.quantity,
+            amount: previousLedger.closingStock.amount
           } : { quantity: 0, amount: 0 },
-          closingStock: previousLedger ? { 
-            quantity: previousLedger.closingStock.quantity, 
-            amount: previousLedger.closingStock.amount 
+          closingStock: previousLedger ? {
+            quantity: previousLedger.closingStock.quantity,
+            amount: previousLedger.closingStock.amount
           } : { quantity: 0, amount: 0 },
           totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
           totalSalesOfTheDay: { quantity: 0, amount: 0 }
         });
+        
+        console.log(`📊 Created new ledger using ${previousLedger ? 'previous ledger' : 'zero values'}`);
       }
 
       // Update opening stock (for direct product edits)
@@ -153,16 +151,12 @@ class DailyStockLedgerService {
 
       console.log('📊 Creating today\'s ledger...');
       
-      // Get previous day's closing stock
-      const previousDay = new Date(today);
-      previousDay.setDate(previousDay.getDate() - 1);
-      previousDay.setUTCHours(18, 30, 0, 0);
-      
+      // 🔍 Find the most recent ledger before today (not just previous day)
       const previousLedger = await DailyStockLedger.findOne({
         companyId: companyId,
         clientId: clientId,
-        date: previousDay
-      });
+        date: { $lt: today }
+      }).sort({ date: -1 }); // Sort by date descending to get most recent
 
       // Check if this is the VERY FIRST ledger for this client+company
       const existingLedgerCount = await DailyStockLedger.countDocuments({
