@@ -292,6 +292,7 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
     const openingStockDefaults = previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 };
 
     // STEP 1: ATOMIC UPDATE (Safe Upsert)
+    const ledgerDateStr = purchaseDate.toISOString().split('T')[0]; // Format as YYYY-MM-DD
     let ledger = await DailyStockLedger.findOneAndUpdate(
       {
         companyId: purchaseEntry.company, // Only Company
@@ -307,7 +308,8 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
           clientId: purchaseEntry.client || purchaseEntry.vendor,
           openingStock: openingStockDefaults,
           totalSalesOfTheDay: { quantity: 0, amount: 0 },
-          totalCOGS: 0
+          totalCOGS: 0,
+          ledgerDate: ledgerDateStr
         }
       },
       {
@@ -339,6 +341,11 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
     // Apply Math.max to prevent negative values
     ledger.closingStock.quantity = Math.max(0, finalClosingQty);
     ledger.closingStock.amount = Math.max(0, finalClosingAmt);
+
+    // Ensure ledgerDate is set
+    if (!ledger.ledgerDate) {
+      ledger.ledgerDate = purchaseDate.toISOString().split('T')[0];
+    }
 
     // Final Save
     await ledger.save({ session });
@@ -939,6 +946,7 @@ async function updateDailyStockLedgerForPurchaseUpdate(purchaseEntry, oldProduct
         companyId: purchaseEntry.company,
         clientId: purchaseEntry.client,
         date: newDate,
+        ledgerDate: newDate.toISOString().split('T')[0],
         openingStock: previousLedger ? {
           quantity: Math.max(0, previousLedger.closingStock.quantity),
           amount: Math.max(0, previousLedger.closingStock.amount)
