@@ -24,7 +24,10 @@ const journalRoutes = require("./routes/journalRoutes");
 const permissionRoutes = require('./routes/permission.routes')
 const serviceRoutes = require('./routes/serviceRoutes')
 const { loginClient , requestClientOtp, loginClientWithOtp} = require("./controllers/clientController");
+
+// for app otp
 const authRoutes = require('./routes/authRoutes');
+
 const integrationsRoutes = require("./routes/integrationsRoutes");
 const invoiceNumberRoutes = require("./routes/invoiceNumberRoutes")
 const AccountValidityRoutes = require("./routes/accountValidityRoutes");

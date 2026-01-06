@@ -19,25 +19,37 @@ function generateOtp(digits = 6) {
 }
 
 // Development-only hardcoded accounts (safe by NODE_ENV / explicit flag)
-const DEV_HARDCODE_OTP = process.env.DEV_HARDCODE_OTP === 'true' || process.env.NODE_ENV !== 'production';
+const DEV_HARDCODE_OTP =
+  process.env.DEV_HARDCODE_OTP === "true" ||
+  process.env.NODE_ENV !== "production";
 const DEV_USERS = {
-  'master01@gmail.com': {
-    otp: '111111',
-    accountType: 'client',
-    role: 'master',
-    user: { id: 'dev-master', clientUsername: 'master01', contactName: 'Master Dev', email: 'master01@gmail.com' },
+  "master01@gmail.com": {
+    otp: "111111",
+    accountType: "client",
+    role: "master",
+    user: {
+      id: "dev-master",
+      clientUsername: "master01",
+      contactName: "Master Dev",
+      email: "master01@gmail.com",
+    },
   },
-  'client01@gmail.com': {
-    otp: '222222',
-    accountType: 'client',
-    role: 'client',
-    user: { id: 'dev-client', clientUsername: 'client01', contactName: 'Client Dev', email: 'client01@gmail.com' },
+  "client01@gmail.com": {
+    otp: "222222",
+    accountType: "client",
+    role: "client",
+    user: {
+      id: "dev-client",
+      clientUsername: "client01",
+      contactName: "Client Dev",
+      email: "client01@gmail.com",
+    },
   },
-  'user01@gmail.com': {
-    otp: '333333',
-    accountType: 'user',
-    role: 'user',
-    user: { id: 'dev-user', userName: 'user01', email: 'user01@gmail.com' },
+  "user01@gmail.com": {
+    otp: "333333",
+    accountType: "user",
+    role: "user",
+    user: { id: "dev-user", userName: "user01", email: "user01@gmail.com" },
   },
 };
 
@@ -45,26 +57,44 @@ const DEV_USERS = {
 exports.verifyOtp = async (req, res) => {
   try {
     const { identifier, otp, type } = req.body;
-    console.log(`[verifyOtp] received identifier=${identifier} otp=${otp ? '***' : ''} type=${type}`);
+    console.log(
+      `[verifyOtp] received identifier=${identifier} otp=${
+        otp ? "***" : ""
+      } type=${type}`
+    );
 
-    if (!identifier || !otp) return res.status(400).json({ message: "Missing identifier or otp" });
+    if (!identifier || !otp)
+      return res.status(400).json({ message: "Missing identifier or otp" });
 
     const normalized = String(identifier).trim();
     // Try Client first (by clientUsername)
     if (!type || type === "client") {
       // Accept either clientUsername or email when identifying a client (matching requestUserOtp)
-      const client = await Client.findOne({ $or: [{ clientUsername: normalized }, { email: normalized }] });
+      const client = await Client.findOne({
+        $or: [{ clientUsername: normalized }, { email: normalized }],
+      });
       if (client) {
-        console.log('[verifyOtp] matched client by', client.clientUsername || client.email);
+        console.log(
+          "[verifyOtp] matched client by",
+          client.clientUsername || client.email
+        );
         // validity check
         const validity = await AccountValidity.findOne({ client: client._id });
-        if (!validity) return res.status(403).json({ message: "Account validity not found" });
-        if (validity.status === "disabled") return res.status(403).json({ message: "Account disabled" });
-        if (new Date() >= new Date(validity.expiresAt)) return res.status(403).json({ message: "Account expired" });
+        if (!validity)
+          return res
+            .status(403)
+            .json({ message: "Account validity not found" });
+        if (validity.status === "disabled")
+          return res.status(403).json({ message: "Account disabled" });
+        if (new Date() >= new Date(validity.expiresAt))
+          return res.status(403).json({ message: "Account expired" });
 
-        if (!client.otpHash || !client.otpExpiresAt) return res.status(400).json({ message: "No OTP requested" });
-        if (client.otpAttempts >= OTP_MAX_ATTEMPTS) return res.status(429).json({ message: "Too many attempts" });
-        if (client.otpExpiresAt.getTime() < Date.now()) return res.status(400).json({ message: "OTP expired" });
+        if (!client.otpHash || !client.otpExpiresAt)
+          return res.status(400).json({ message: "No OTP requested" });
+        if (client.otpAttempts >= OTP_MAX_ATTEMPTS)
+          return res.status(429).json({ message: "Too many attempts" });
+        if (client.otpExpiresAt.getTime() < Date.now())
+          return res.status(400).json({ message: "OTP expired" });
 
         const ok = await bcrypt.compare(String(otp), client.otpHash);
         client.otpAttempts = (client.otpAttempts || 0) + 1;
@@ -113,9 +143,12 @@ exports.verifyOtp = async (req, res) => {
       }).populate("role");
 
       if (user) {
-        if (!user.otpHash || !user.otpExpiresAt) return res.status(400).json({ message: "No OTP requested for user" });
-        if (user.otpAttempts >= OTP_MAX_ATTEMPTS) return res.status(429).json({ message: "Too many attempts" });
-        if (user.otpExpiresAt.getTime() < Date.now()) return res.status(400).json({ message: "OTP expired" });
+        if (!user.otpHash || !user.otpExpiresAt)
+          return res.status(400).json({ message: "No OTP requested for user" });
+        if (user.otpAttempts >= OTP_MAX_ATTEMPTS)
+          return res.status(429).json({ message: "Too many attempts" });
+        if (user.otpExpiresAt.getTime() < Date.now())
+          return res.status(400).json({ message: "OTP expired" });
 
         const ok = await bcrypt.compare(String(otp), user.otpHash);
         user.otpAttempts = (user.otpAttempts || 0) + 1;
@@ -129,7 +162,12 @@ exports.verifyOtp = async (req, res) => {
         user.otpAttempts = 0;
         await user.save();
 
-        const perms = Array.from(new Set([...(user.role?.permissions || []), ...(user.permissions || [])]));
+        const perms = Array.from(
+          new Set([
+            ...(user.role?.permissions || []),
+            ...(user.permissions || []),
+          ])
+        );
 
         const token = jwt.sign(
           {
@@ -161,17 +199,22 @@ exports.verifyOtp = async (req, res) => {
     // DEV fallback: accept hardcoded OTPs when enabled even if no DB account was matched
     const devEntry = DEV_USERS[String(normalized).toLowerCase()];
     if (devEntry && DEV_HARDCODE_OTP) {
-      console.log('[verifyOtp] DEV entry found for', normalized, 'devOtp=', devEntry.otp);
+      console.log(
+        "[verifyOtp] DEV entry found for",
+        normalized,
+        "devOtp=",
+        devEntry.otp
+      );
     }
     if (devEntry && DEV_HARDCODE_OTP && String(otp) === devEntry.otp) {
       const token = jwt.sign(
         { id: `dev-${devEntry.role}`, role: devEntry.role },
-        process.env.JWT_SECRET || 'dev-secret',
-        { expiresIn: devEntry.accountType === 'client' ? '1d' : '8h' }
+        process.env.JWT_SECRET || "dev-secret",
+        { expiresIn: devEntry.accountType === "client" ? "1d" : "8h" }
       );
 
       return res.status(200).json({
-        message: 'Login successful (dev)',
+        message: "Login successful (dev)",
         token,
         accountType: devEntry.accountType,
         user: devEntry.user,
@@ -188,22 +231,45 @@ exports.verifyOtp = async (req, res) => {
 exports.requestUserOtp = async (req, res) => {
   try {
     const { identifier } = req.body;
-    console.log('[requestUserOtp] received identifier=', identifier, 'DEV_HARDCODE_OTP=', DEV_HARDCODE_OTP);
+    console.log(
+      "[requestUserOtp] received identifier=",
+      identifier,
+      "DEV_HARDCODE_OTP=",
+      DEV_HARDCODE_OTP
+    );
 
-    if (!identifier) return res.status(400).json({ message: "Missing identifier" });
+    if (!identifier)
+      return res.status(400).json({ message: "Missing identifier" });
 
     const normalized = String(identifier).trim().toLowerCase();
 
     // DEV shortcut: return hardcoded OTPs for known dev users (only in dev or when flag set)
     const devEntry = DEV_USERS[normalized];
     if (devEntry && DEV_HARDCODE_OTP) {
-      console.log('[requestUserOtp] DEV entry matched for', normalized, 'will use dev OTP=', devEntry.otp);
+      console.log(
+        "[requestUserOtp] DEV entry matched for",
+        normalized,
+        "will use dev OTP=",
+        devEntry.otp
+      );
       // try to persist to DB if account exists, otherwise just return dev OTP in response
-      const client = await Client.findOne({ $or: [{ clientUsername: normalized }, { email: normalized }] });
+      const client = await Client.findOne({
+        $or: [{ clientUsername: normalized }, { email: normalized }],
+      });
       if (client) {
-        if (client.otpLastSentAt && Date.now() - client.otpLastSentAt.getTime() < OTP_RESEND_SECONDS * 1000) {
-          const retryAfter = Math.ceil((OTP_RESEND_SECONDS * 1000 - (Date.now() - client.otpLastSentAt.getTime())) / 1000);
-          return res.status(429).json({ message: `Wait ${retryAfter}s before requesting OTP again` });
+        if (
+          client.otpLastSentAt &&
+          Date.now() - client.otpLastSentAt.getTime() <
+            OTP_RESEND_SECONDS * 1000
+        ) {
+          const retryAfter = Math.ceil(
+            (OTP_RESEND_SECONDS * 1000 -
+              (Date.now() - client.otpLastSentAt.getTime())) /
+              1000
+          );
+          return res.status(429).json({
+            message: `Wait ${retryAfter}s before requesting OTP again`,
+          });
         }
         const otp = devEntry.otp;
         client.otpHash = await bcrypt.hash(otp, 10);
@@ -214,11 +280,26 @@ exports.requestUserOtp = async (req, res) => {
         return res.json({ message: "OTP sent (dev)", dev: true, otp: otp });
       }
 
-      const user = await User.findOne({ $or: [{ email: normalized }, { userId: normalized }, { contactNumber: normalized }] });
+      const user = await User.findOne({
+        $or: [
+          { email: normalized },
+          { userId: normalized },
+          { contactNumber: normalized },
+        ],
+      });
       if (user) {
-        if (user.otpLastSentAt && Date.now() - user.otpLastSentAt.getTime() < OTP_RESEND_SECONDS * 1000) {
-          const retryAfter = Math.ceil((OTP_RESEND_SECONDS * 1000 - (Date.now() - user.otpLastSentAt.getTime())) / 1000);
-          return res.status(429).json({ message: `Wait ${retryAfter}s before requesting OTP again` });
+        if (
+          user.otpLastSentAt &&
+          Date.now() - user.otpLastSentAt.getTime() < OTP_RESEND_SECONDS * 1000
+        ) {
+          const retryAfter = Math.ceil(
+            (OTP_RESEND_SECONDS * 1000 -
+              (Date.now() - user.otpLastSentAt.getTime())) /
+              1000
+          );
+          return res.status(429).json({
+            message: `Wait ${retryAfter}s before requesting OTP again`,
+          });
         }
         const otp = devEntry.otp;
         user.otpHash = await bcrypt.hash(otp, 10);
@@ -234,12 +315,23 @@ exports.requestUserOtp = async (req, res) => {
     }
 
     // Try client by username or email
-    let client = await Client.findOne({ $or: [{ clientUsername: normalized }, { email: normalized }] });
+    let client = await Client.findOne({
+      $or: [{ clientUsername: normalized }, { email: normalized }],
+    });
     if (client) {
       // throttle resend
-      if (client.otpLastSentAt && Date.now() - client.otpLastSentAt.getTime() < OTP_RESEND_SECONDS * 1000) {
-        const retryAfter = Math.ceil((OTP_RESEND_SECONDS * 1000 - (Date.now() - client.otpLastSentAt.getTime())) / 1000);
-        return res.status(429).json({ message: `Wait ${retryAfter}s before requesting OTP again` });
+      if (
+        client.otpLastSentAt &&
+        Date.now() - client.otpLastSentAt.getTime() < OTP_RESEND_SECONDS * 1000
+      ) {
+        const retryAfter = Math.ceil(
+          (OTP_RESEND_SECONDS * 1000 -
+            (Date.now() - client.otpLastSentAt.getTime())) /
+            1000
+        );
+        return res
+          .status(429)
+          .json({ message: `Wait ${retryAfter}s before requesting OTP again` });
       }
 
       const otp = generateOtp();
@@ -266,18 +358,38 @@ exports.requestUserOtp = async (req, res) => {
         html: `<p>Your OTP is <b>${otp}</b>. It expires in ${OTP_TTL_MIN} minutes.</p>`,
       });
 
-      return res.json({ message: "OTP sent to registered email" });
+      return res.json({
+        message: "OTP sent to registered email",
+        email: client.email,
+        clientUsername: client.clientUsername,
+      });
     }
 
     // Try user by email or userId
-    const user = await User.findOne({ $or: [{ email: normalized }, { userId: normalized }, { contactNumber: normalized }] });
+    const user = await User.findOne({
+      $or: [
+        { email: normalized },
+        { userId: normalized },
+        { contactNumber: normalized },
+      ],
+    });
     if (!user) return res.status(404).json({ message: "Account not found" });
 
-    if (!user.email) return res.status(400).json({ message: "User has no email to send OTP" });
+    if (!user.email)
+      return res.status(400).json({ message: "User has no email to send OTP" });
 
-    if (user.otpLastSentAt && Date.now() - user.otpLastSentAt.getTime() < OTP_RESEND_SECONDS * 1000) {
-      const retryAfter = Math.ceil((OTP_RESEND_SECONDS * 1000 - (Date.now() - user.otpLastSentAt.getTime())) / 1000);
-      return res.status(429).json({ message: `Wait ${retryAfter}s before requesting OTP again` });
+    if (
+      user.otpLastSentAt &&
+      Date.now() - user.otpLastSentAt.getTime() < OTP_RESEND_SECONDS * 1000
+    ) {
+      const retryAfter = Math.ceil(
+        (OTP_RESEND_SECONDS * 1000 -
+          (Date.now() - user.otpLastSentAt.getTime())) /
+          1000
+      );
+      return res
+        .status(429)
+        .json({ message: `Wait ${retryAfter}s before requesting OTP again` });
     }
 
     const otp = generateOtp();
@@ -304,7 +416,11 @@ exports.requestUserOtp = async (req, res) => {
       html: `<p>Your OTP is <b>${otp}</b>. It expires in ${OTP_TTL_MIN} minutes.</p>`,
     });
 
-    return res.json({ message: "OTP sent to registered email" });
+    return res.json({
+      message: "OTP sent to registered email",
+      email: user.email,
+      userName: user.userName,
+    });
   } catch (err) {
     console.error("requestUserOtp error:", err);
     return res.status(500).json({ message: "Failed to send OTP" });
