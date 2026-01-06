@@ -1719,7 +1719,7 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     // 2. Fetch Previous Day's Ledger (Opening Stock ke liye)
     const previousDay = new Date(salesDate);
     previousDay.setDate(previousDay.getDate() - 1);
-    previousDay.setUTCHours(18, 30, 0, 0);a
+    previousDay.setUTCHours(18, 30, 0, 0);
 
     const previousLedger = await DailyStockLedger.findOne({
       companyId: salesEntry.company,
