@@ -1719,7 +1719,7 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     // 2. Fetch Previous Day's Ledger (Opening Stock ke liye)
     const previousDay = new Date(salesDate);
     previousDay.setDate(previousDay.getDate() - 1);
-    previousDay.setUTCHours(18, 30, 0, 0);a
+    previousDay.setUTCHours(18, 30, 0, 0);
 
     const previousLedger = await DailyStockLedger.findOne({
       companyId: salesEntry.company,
@@ -1730,13 +1730,14 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     const openingStockDefaults = previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 };
 
     // ------------------------------------------------------------------
-    // STEP 1: SAFE UPSERT 
+    // STEP 1: SAFE UPSERT
     // IMPORTANT: Remove 'clientId' from the filter query!
     // ------------------------------------------------------------------
+    const ledgerDateStr = salesDate.toISOString().split('T')[0]; // Format as YYYY-MM-DD
     let ledger = await DailyStockLedger.findOneAndUpdate(
       {
         companyId: salesEntry.company,
-        date: salesDate               
+        date: salesDate
       },
       {
         $inc: {
@@ -1745,14 +1746,15 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
           "totalCOGS": currentSaleCOGS
         },
         $setOnInsert: {
-          clientId: salesEntry.client, 
+          clientId: salesEntry.client,
+          ledgerDate: ledgerDateStr,
           openingStock: openingStockDefaults,
           totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
         }
       },
-      { 
-        upsert: true, 
-        new: true, 
+      {
+        upsert: true,
+        new: true,
         session: session,
         setDefaultsOnInsert: true
       }
@@ -1778,6 +1780,11 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     // Use Math.max to prevent negative value errors
     ledger.closingStock.quantity = Math.max(0, finalClosingQty);
     ledger.closingStock.amount = Math.max(0, finalClosingAmt);
+
+    // Ensure ledgerDate is set
+    if (!ledger.ledgerDate) {
+      ledger.ledgerDate = salesDate.toISOString().split('T')[0];
+    }
 
     // Save final state
     await ledger.save({ session });
