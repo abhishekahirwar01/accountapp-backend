@@ -295,8 +295,9 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
     const ledgerDateStr = purchaseDate.toISOString().split('T')[0]; // Format as YYYY-MM-DD
     let ledger = await DailyStockLedger.findOneAndUpdate(
       {
+        clientId: purchaseEntry.client || purchaseEntry.vendor,
         companyId: purchaseEntry.company, // Only Company
-        date: purchaseDate                // And Date
+        ledgerDate: ledgerDateStr                // And Date
       },
       {
         $inc: {
@@ -306,6 +307,7 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
         },
         $setOnInsert: {
           clientId: purchaseEntry.client || purchaseEntry.vendor,
+          date: purchaseDate,
           openingStock: openingStockDefaults,
           totalSalesOfTheDay: { quantity: 0, amount: 0 },
           totalCOGS: 0,
