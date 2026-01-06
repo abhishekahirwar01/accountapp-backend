@@ -1731,13 +1731,14 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
 
     // ------------------------------------------------------------------
     // STEP 1: SAFE UPSERT
-    // IMPORTANT: Remove 'clientId' from the filter query!
+    // IMPORTANT: Include 'clientId' in the filter query to match the unique index!
     // ------------------------------------------------------------------
     const ledgerDateStr = salesDate.toISOString().split('T')[0]; // Format as YYYY-MM-DD
     let ledger = await DailyStockLedger.findOneAndUpdate(
       {
+        clientId: salesEntry.client,
         companyId: salesEntry.company,
-        date: salesDate
+        ledgerDate: ledgerDateStr
       },
       {
         $inc: {
@@ -1747,6 +1748,7 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
         },
         $setOnInsert: {
           clientId: salesEntry.client,
+          date: salesDate,
           ledgerDate: ledgerDateStr,
           openingStock: openingStockDefaults,
           totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
