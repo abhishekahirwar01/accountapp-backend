@@ -271,6 +271,32 @@ exports.createReceipt = async (req, res) => {
       newAmount: amt,
     });
 
+    try {
+      if (global.io) {
+        console.log('📡 Emitting transaction-update (create receipt)...');
+        
+        const socketPayload = {
+          message: 'New Receipt Created',
+          type: 'receipt', // Frontend is type ko check karega
+          action: 'create',
+          entryId: receipt._id,
+          amount: amt,
+          partyName: partyDoc?.name || "Unknown Party"
+        };
+
+        // 1. Emit to Client Room
+        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+        // 2. Emit to Global/Admin Room
+        global.io.to('all-transactions-updates').emit('transaction-update', {
+          ...socketPayload,
+          clientId: req.auth.clientId
+        });
+      }
+    } catch (socketError) {
+      console.error("⚠️ Socket Emit Failed (Receipt Create):", socketError.message);
+    }
+
     // After successful receipt creation, add:
     // await deleteReceiptEntryCache(req.auth.clientId, companyId);
     // Send response
@@ -558,6 +584,32 @@ exports.updateReceipt = async (req, res) => {
         newAmount: finalAmount,
       });
 
+      try {
+        if (global.io) {
+          console.log('📡 Emitting transaction-update (update receipt)...');
+
+          const socketPayload = {
+            message: 'Receipt Updated',
+            type: 'receipt',
+            action: 'update',
+            entryId: receipt._id,
+            amount: finalAmount,
+            partyName: partyDoc?.name
+          };
+
+          // 1. Emit to Client Room
+          global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+          // 2. Emit to Global Room
+          global.io.to('all-transactions-updates').emit('transaction-update', {
+            ...socketPayload,
+            clientId: req.auth.clientId
+          });
+        }
+      } catch (socketError) {
+        console.error("⚠️ Socket Emit Failed (Receipt Update):", socketError.message);
+      }
+
       await session.commitTransaction();
       session.endSession();
 
@@ -633,6 +685,22 @@ exports.deleteReceipt = async (req, res) => {
         oldAmount: amt,
       });
 
+      try {
+        if (global.io) {
+          console.log('📡 Emitting transaction-update (delete receipt)...');
+          const socketPayload = {
+            message: 'Receipt Deleted',
+            type: 'receipt',
+            action: 'delete',
+            entryId: receipt._id
+          };
+          global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+          global.io.to('all-transactions-updates').emit('transaction-update', {
+            ...socketPayload,
+            clientId: req.auth.clientId
+          });
+        }
+      } catch (socketError) { console.error("⚠️ Socket Emit Failed:", socketError.message); }
 
       await session.commitTransaction();
       session.endSession();

@@ -177,6 +177,31 @@ exports.createJournal = async (req, res) => {
       newAmount: amount,
     });
 
+    try {
+      if (global.io) {
+        console.log('📡 Emitting transaction-update (create journal)...');
+        
+        const socketPayload = {
+          message: 'New Journal Entry',
+          type: 'journal', // Frontend is type ko check karega
+          action: 'create',
+          entryId: journal._id,
+          amount: amount,
+          companyName: companyName
+        };
+
+        // 1. Emit to Client Room
+        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+        // 2. Emit to Global/Admin Room
+        global.io.to('all-transactions-updates').emit('transaction-update', {
+          ...socketPayload,
+          clientId: req.auth.clientId
+        });
+      }
+    } catch (socketError) {
+      console.error("⚠️ Socket Emit Failed (Journal Create):", socketError.message);
+    }
 
     // Access clientId and companyId after creation
     const clientId = journal.client.toString();
@@ -324,6 +349,31 @@ exports.updateJournal = async (req, res) => {
       companyId,
     });
 
+    try {
+      if (global.io) {
+        console.log('📡 Emitting transaction-update (update journal)...');
+
+        const socketPayload = {
+          message: 'Journal Updated',
+          type: 'journal',
+          action: 'update',
+          entryId: journal._id,
+          amount: journal.amount,
+          companyName: companyName
+        };
+
+        // Emit to Client Room
+        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+        // Emit to Global Room
+        global.io.to('all-transactions-updates').emit('transaction-update', {
+          ...socketPayload,
+          clientId: req.auth.clientId
+        });
+      }
+    } catch (socketError) {
+      console.error("⚠️ Socket Emit Failed (Journal Update):", socketError.message);
+    }
 
     // Call the cache deletion function
     // await deleteJournalEntryCache(clientId, companyId);
@@ -366,6 +416,31 @@ exports.deleteJournal = async (req, res) => {
       oldAmount: isNaN(oldAmount) ? undefined : oldAmount,
     });
 
+    try {
+      if (global.io) {
+        console.log('📡 Emitting transaction-update (delete journal)...');
+
+        const socketPayload = {
+          message: 'Journal Deleted',
+          type: 'journal',
+          action: 'delete',
+          entryId: journal._id,
+          companyName: companyName
+        };
+
+        // Emit to Client Room
+        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+        // Emit to Global Room
+        global.io.to('all-transactions-updates').emit('transaction-update', {
+          ...socketPayload,
+          clientId: req.auth.clientId
+        });
+      }
+    } catch (socketError) {
+      console.error("⚠️ Socket Emit Failed (Journal Delete):", socketError.message);
+    }
+    
     // Access clientId and companyId after creation
     const companyId = journal.company ? (journal.company._id || journal.company).toString() : null;
     const clientId = journal.client.toString();

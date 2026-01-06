@@ -505,7 +505,31 @@ exports.createProformaEntry = async (req, res) => {
               ],
               { session }
             );
+            try {
+                if (global.io) {
+                  console.log('📡 Emitting transaction-update (create proforma)...');
+                  
+                  const socketPayload = {
+                    message: 'New Proforma Entry',
+                    type: 'proforma', // Frontend is type ko check karega
+                    action: 'create',
+                    entryId: entry._id,
+                    amount: entry.totalAmount,
+                    partyName: partyDoc?.name
+                  };
 
+                  // 1. Emit to Client Room
+                  global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+                  // 2. Emit to Global/Admin Room
+                  global.io.to('all-transactions-updates').emit('transaction-update', {
+                    ...socketPayload,
+                    clientId: req.auth.clientId
+                  });
+                }
+            } catch (socketError) {
+                console.error("⚠️ Socket Emit Failed (Proforma Create):", socketError.message);
+            }
             // Send response after notification creation
             return res
               .status(201)
@@ -672,6 +696,32 @@ exports.updateProformaEntry = async (req, res) => {
     // Call the reusable cache deletion function
     await deleteSalesEntryCache(clientId, companyId);
 
+    try {
+      if (global.io) {
+        console.log('📡 Emitting transaction-update (update proforma)...');
+
+        const socketPayload = {
+          message: 'Proforma Entry Updated',
+          type: 'proforma',
+          action: 'update',
+          entryId: entry._id,
+          amount: entry.totalAmount,
+          partyName: (partyDoc ? partyDoc.name : null) || (entry?.party?.name) || "Unknown Party"
+        };
+
+        // Emit to Client Room
+        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+        // Emit to Global Room
+        global.io.to('all-transactions-updates').emit('transaction-update', {
+          ...socketPayload,
+          clientId: req.auth.clientId
+        });
+      }
+    } catch (socketError) {
+      console.error("⚠️ Socket Emit Failed (Proforma Update):", socketError.message);
+    }
+
     res.json({ message: "Proforma entry updated successfully", entry });
   } catch (err) {
     console.error("Error updating proforma entry:", err);
@@ -787,7 +837,30 @@ exports.deleteProformaEntry = async (req, res) => {
       const companyId = entry.company.toString();
       const clientId = entry.client.toString();
       await deleteSalesEntryCache(clientId, companyId);
+try {
+        if (global.io) {
+          console.log('📡 Emitting transaction-update (delete proforma)...');
 
+          const socketPayload = {
+            message: 'Proforma Entry Deleted',
+            type: 'proforma',
+            action: 'delete',
+            entryId: entry._id,
+            partyName: partyDoc?.name
+          };
+
+          // Emit to Client Room
+          global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+          // Emit to Global Room
+          global.io.to('all-transactions-updates').emit('transaction-update', {
+            ...socketPayload,
+            clientId: req.auth.clientId
+          });
+        }
+      } catch (socketError) {
+        console.error("⚠️ Socket Emit Failed (Proforma Delete):", socketError.message);
+      }
       // Respond
       res.status(200).json({ 
         success: true,
