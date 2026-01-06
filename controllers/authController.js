@@ -45,14 +45,17 @@ const DEV_USERS = {
 exports.verifyOtp = async (req, res) => {
   try {
     const { identifier, otp, type } = req.body;
+    console.log(`[verifyOtp] received identifier=${identifier} otp=${otp ? '***' : ''} type=${type}`);
 
     if (!identifier || !otp) return res.status(400).json({ message: "Missing identifier or otp" });
 
     const normalized = String(identifier).trim();
     // Try Client first (by clientUsername)
     if (!type || type === "client") {
-      const client = await Client.findOne({ clientUsername: normalized });
+      // Accept either clientUsername or email when identifying a client (matching requestUserOtp)
+      const client = await Client.findOne({ $or: [{ clientUsername: normalized }, { email: normalized }] });
       if (client) {
+        console.log('[verifyOtp] matched client by', client.clientUsername || client.email);
         // validity check
         const validity = await AccountValidity.findOne({ client: client._id });
         if (!validity) return res.status(403).json({ message: "Account validity not found" });
@@ -157,6 +160,9 @@ exports.verifyOtp = async (req, res) => {
 
     // DEV fallback: accept hardcoded OTPs when enabled even if no DB account was matched
     const devEntry = DEV_USERS[String(normalized).toLowerCase()];
+    if (devEntry && DEV_HARDCODE_OTP) {
+      console.log('[verifyOtp] DEV entry found for', normalized, 'devOtp=', devEntry.otp);
+    }
     if (devEntry && DEV_HARDCODE_OTP && String(otp) === devEntry.otp) {
       const token = jwt.sign(
         { id: `dev-${devEntry.role}`, role: devEntry.role },
@@ -182,6 +188,8 @@ exports.verifyOtp = async (req, res) => {
 exports.requestUserOtp = async (req, res) => {
   try {
     const { identifier } = req.body;
+    console.log('[requestUserOtp] received identifier=', identifier, 'DEV_HARDCODE_OTP=', DEV_HARDCODE_OTP);
+
     if (!identifier) return res.status(400).json({ message: "Missing identifier" });
 
     const normalized = String(identifier).trim().toLowerCase();
@@ -189,6 +197,7 @@ exports.requestUserOtp = async (req, res) => {
     // DEV shortcut: return hardcoded OTPs for known dev users (only in dev or when flag set)
     const devEntry = DEV_USERS[normalized];
     if (devEntry && DEV_HARDCODE_OTP) {
+      console.log('[requestUserOtp] DEV entry matched for', normalized, 'will use dev OTP=', devEntry.otp);
       // try to persist to DB if account exists, otherwise just return dev OTP in response
       const client = await Client.findOne({ $or: [{ clientUsername: normalized }, { email: normalized }] });
       if (client) {
