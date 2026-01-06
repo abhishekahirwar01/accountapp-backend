@@ -34,7 +34,7 @@ function setupSocketHandlers(io) {
           socket.join('all-inventory-updates');
           socket.join('all-transactions-updates'); // 👇 NEW: Masters get transaction updates
           console.log(`👤 Master ${userId} joined: master-${userId}, all-masters, all-inventory-updates, all-transactions-updates`);
-        } else if (role === 'admin' || role === 'client' || role === 'user') {
+        } else if (['admin', 'client', 'user', 'customer'].includes(role)) {
           socket.join(`client-${clientId}`);
           socket.join(`user-${userId}`);
           socket.join('all-inventory-updates');

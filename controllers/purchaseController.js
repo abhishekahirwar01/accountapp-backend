@@ -607,6 +607,31 @@ exports.createPurchaseEntry = async (req, res) => {
           companyId: companyIdStr,
           amount: entry?.totalAmount,
         });
+        try {
+          if (global.io) {
+            console.log('📡 Emitting transaction-update (create purchase)...');
+            
+            const socketPayload = {
+              message: 'New Purchase Entry',
+              type: 'purchase', // Frontend is type ko check karke refresh karega
+              action: 'create',
+              entryId: entry._id,
+              amount: entry.totalAmount,
+              vendorName: vendorName
+            };
+
+            // 1. Emit to Client Room
+            global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+            // 2. Emit to Global/Admin Room
+            global.io.to('all-transactions-updates').emit('transaction-update', {
+              ...socketPayload,
+              clientId: req.auth.clientId
+            });
+          }
+        } catch (socketError) {
+          console.error("⚠️ Socket Emit Failed (Purchase Create):", socketError.message);
+        }
 
         // Invalidate cache
         // await deletePurchaseEntryCache(clientId, companyIdStr);
@@ -1218,6 +1243,32 @@ exports.updatePurchaseEntry = async (req, res) => {
       companyId,
     });
 
+    try {
+      if (global.io) {
+        console.log('📡 Emitting transaction-update (update purchase)...');
+
+        const socketPayload = {
+          message: 'Purchase Entry Updated',
+          type: 'purchase',
+          action: 'update',
+          entryId: entry._id,
+          amount: entry.totalAmount,
+          vendorName: vendorName
+        };
+
+        // 1. Emit to Client Room
+        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+        // 2. Emit to Global Room
+        global.io.to('all-transactions-updates').emit('transaction-update', {
+          ...socketPayload,
+          clientId: req.auth.clientId
+        });
+      }
+    } catch (socketError) {
+      console.error("⚠️ Socket Emit Failed (Purchase Update):", socketError.message);
+    }
+
     // clear cache
     // await deletePurchaseEntryCache(clientId, companyId);
     return res.json({ message: "Purchase entry updated successfully", entry });
@@ -1325,6 +1376,31 @@ exports.deletePurchaseEntry = async (req, res) => {
       entryId: entry._id,
       companyId,
     });
+    // 👇👇 NEW: SOCKET LOGIC (SAFE MODE) 👇👇
+    try {
+      if (global.io) {
+        console.log('📡 Emitting transaction-update (delete purchase)...');
+
+        const socketPayload = {
+          message: 'Purchase Entry Deleted',
+          type: 'purchase',
+          action: 'delete',
+          entryId: entry._id,
+          vendorName: vendorName
+        };
+
+        // 1. Emit to Client Room
+        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+        // 2. Emit to Global Room
+        global.io.to('all-transactions-updates').emit('transaction-update', {
+          ...socketPayload,
+          clientId: req.auth.clientId
+        });
+      }
+    } catch (socketError) {
+      console.error("⚠️ Socket Emit Failed (Purchase Delete):", socketError.message);
+    }
 
     // Invalidate cache
     // await deletePurchaseEntryCache(clientId, companyId);

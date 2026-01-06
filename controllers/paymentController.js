@@ -214,6 +214,32 @@ if (isExpense) {
   }
 }
 
+try {
+      if (global.io) {
+        console.log('📡 Emitting transaction-update (create payment)...');
+        
+        const socketPayload = {
+          message: 'New Payment Created',
+          type: 'payment', // Frontend is type ko check karega
+          action: 'create',
+          entryId: payment._id,
+          amount: amount,
+          vendorName: entityName // Payment ka naam (Vendor ya Expense)
+        };
+
+        // 1. Emit to Client Room
+        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+        // 2. Emit to Global/Admin Room
+        global.io.to('all-transactions-updates').emit('transaction-update', {
+          ...socketPayload,
+          clientId: req.auth.clientId
+        });
+      }
+    } catch (socketError) {
+      console.error("⚠️ Socket Emit Failed (Payment Create):", socketError.message);
+    }
+
     // Access clientId and companyId after creation
     const clientId = payment.client.toString();
 
@@ -762,6 +788,32 @@ else if (oldIsExpense && newIsExpense) {
       companyId,
     });
 
+    try {
+      if (global.io) {
+        console.log('📡 Emitting transaction-update (update payment)...');
+
+        const socketPayload = {
+          message: 'Payment Updated',
+          type: 'payment',
+          action: 'update',
+          entryId: payment._id,
+          amount: newAmount,
+          vendorName: entityName
+        };
+
+        // Emit to Client Room
+        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+        // Emit to Global Room
+        global.io.to('all-transactions-updates').emit('transaction-update', {
+          ...socketPayload,
+          clientId: req.auth.clientId
+        });
+      }
+    } catch (socketError) {
+      console.error("⚠️ Socket Emit Failed (Payment Update):", socketError.message);
+    }
+
     // Invalidate cache
     // await deletePaymentEntryCache(payment.client.toString(), companyId);
 
@@ -856,6 +908,31 @@ if (payment.isExpense) {
       companyId: payment.company.toString(),
     });
 
+    try {
+      if (global.io) {
+        console.log('📡 Emitting transaction-update (delete payment)...');
+
+        const socketPayload = {
+          message: 'Payment Deleted',
+          type: 'payment',
+          action: 'delete',
+          entryId: payment._id,
+          vendorName: entityName
+        };
+
+        // Emit to Client Room
+        global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+
+        // Emit to Global Room
+        global.io.to('all-transactions-updates').emit('transaction-update', {
+          ...socketPayload,
+          clientId: req.auth.clientId
+        });
+      }
+    } catch (socketError) {
+      console.error("⚠️ Socket Emit Failed (Payment Delete):", socketError.message);
+    }
+    
     // Invalidate cache
     const companyId = payment.company.toString();
     // await deletePaymentEntryCache(payment.client.toString(), companyId);
