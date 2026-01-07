@@ -101,7 +101,7 @@ const dailyStockLedgerSchema = new mongoose.Schema({
 });
 
 dailyStockLedgerSchema.index(
-  { clientId: 1, companyId: 1, ledgerDate: 1 },
+  { clientId: 1, companyId: 1, date: 1 },
   { unique: true }
 );
 
