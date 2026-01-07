@@ -1723,43 +1723,49 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
 
     const previousLedger = await DailyStockLedger.findOne({
       companyId: salesEntry.company,
-      // clientId: salesEntry.client,  <-- REMOVED from Previous check too
+      clientId: salesEntry.client,
       date: previousDay
     }).session(session);
 
     const openingStockDefaults = previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 };
 
     // ------------------------------------------------------------------
-    // STEP 1: SAFE UPSERT 
-    // IMPORTANT: Remove 'clientId' from the filter query!
+    // STEP 1: FIND OR CREATE LEDGER (FIXED FOR UNIQUE INDEX)
     // ------------------------------------------------------------------
-    let ledger = await DailyStockLedger.findOneAndUpdate(
-      {
+    
+    // First, try to find existing ledger using the unique index fields
+    let ledger = await DailyStockLedger.findOne({
+      companyId: salesEntry.company,
+      clientId: salesEntry.client,
+      date: salesDate
+    }).session(session);
+
+    if (!ledger) {
+      // Create new ledger document
+      ledger = new DailyStockLedger({
+        clientId: salesEntry.client,
         companyId: salesEntry.company,
-        date: salesDate               
-      },
-      {
-        $inc: {
-          "totalSalesOfTheDay.quantity": salesQuantity,
-          "totalSalesOfTheDay.amount": salesAmount,
-          "totalCOGS": currentSaleCOGS
-        },
-        $setOnInsert: {
-          clientId: salesEntry.client, 
-          openingStock: openingStockDefaults,
-          totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
-        }
-      },
-      { 
-        upsert: true, 
-        new: true, 
-        session: session,
-        setDefaultsOnInsert: true
-      }
-    );
+        date: salesDate,
+        openingStock: openingStockDefaults,
+        totalPurchaseOfTheDay: { quantity: 0, amount: 0 },
+        totalSalesOfTheDay: { quantity: 0, amount: 0 },
+        totalCOGS: 0,
+        closingStock: { quantity: 0, amount: 0 }
+      });
+      await ledger.save({ session });
+    }
 
     // ------------------------------------------------------------------
-    // STEP 2: RECALCULATE CLOSING STOCK
+    // STEP 2: UPDATE THE LEDGER VALUES
+    // ------------------------------------------------------------------
+    
+    // Update with simple increments
+    ledger.totalSalesOfTheDay.quantity += salesQuantity;
+    ledger.totalSalesOfTheDay.amount += salesAmount;
+    ledger.totalCOGS += currentSaleCOGS;
+
+    // ------------------------------------------------------------------
+    // STEP 3: RECALCULATE CLOSING STOCK
     // ------------------------------------------------------------------
     
     const totalOpeningQty = ledger.openingStock.quantity;
@@ -1769,7 +1775,7 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     const totalPurchaseAmt = ledger.totalPurchaseOfTheDay.amount;
     
     const totalSalesQty = ledger.totalSalesOfTheDay.quantity;
-    const totalCOGS = ledger.totalCOGS; 
+    const totalCOGS = ledger.totalCOGS;
 
     // Calculation Formula: (Opening + Purchase) - Sales/COGS
     const finalClosingQty = (totalOpeningQty + totalPurchaseQty) - totalSalesQty;
