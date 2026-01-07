@@ -1946,6 +1946,79 @@ async function reverseDailyStockLedgerForSales(
 
 
 
+// exports.getSalesEntries = async (req, res) => {
+//   try {
+//     await ensureAuthCaps(req);
+
+//     const filter = {};
+//     const user = req.user;
+
+//     console.log("User role:", user.role);
+//     console.log("User ID:", user.id);
+//     console.log("Query companyId:", req.query.companyId);
+
+//     // Handle company filtering properly
+//     if (req.query.companyId) {
+//       // Validate company access
+//       if (!companyAllowedForUser(req, req.query.companyId)) {
+//         return res.status(403).json({
+//           success: false,
+//           message: "Access denied to this company"
+//         });
+//       }
+//       filter.company = req.query.companyId;
+//     } else {
+//       // If no specific company requested, filter by user's accessible companies
+//       if (req.auth.allowedCompanies && req.auth.allowedCompanies.length > 0) {
+//         filter.company = { $in: req.auth.allowedCompanies };
+//       } else if (user.role === "user") {
+//         // Regular users should only see data from their assigned companies
+//         return res.status(200).json({
+//           success: true,
+//           count: 0,
+//           data: [],
+//         });
+//       }
+//       // For master/admin, no company filter = see all data
+//     }
+
+//     // For client users, also filter by client ID
+//     if (user.role === "client") {
+//       filter.client = user.id;
+//     }
+
+//     console.log("Final filter for sales entries:", JSON.stringify(filter, null, 2));
+
+//     const entries = await SalesEntry.find(filter)
+//       .populate("party", "name")
+//       .populate("products.product", "name")
+//       .populate({
+//         path: "services.service",
+//         select: "serviceName",
+//         strictPopulate: false,
+//       })
+//       .populate("company", "businessName")
+//       .populate("shippingAddress")
+//       .populate("bank")
+//       .sort({ date: -1 });
+
+//     console.log(`Found ${entries.length} sales entries for user ${user.role}/${user.id}`);
+
+//     res.status(200).json({
+//       success: true,
+//       count: entries.length,
+//       data: entries,
+//     });
+//   } catch (err) {
+//     console.error("Error fetching sales entries:", err.message);
+//     res.status(500).json({
+//       success: false,
+//       error: err.message,
+//     });
+//   }
+// };
+
+
 exports.getSalesEntries = async (req, res) => {
   try {
     await ensureAuthCaps(req);
@@ -1989,7 +2062,19 @@ exports.getSalesEntries = async (req, res) => {
 
     console.log("Final filter for sales entries:", JSON.stringify(filter, null, 2));
 
+    // ==================== ADD PAGINATION HERE ====================
+    // Get pagination parameters from query
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20; // Default 20 per page
+    const skip = (page - 1) * limit;
+
+    // Get total count
+    const totalCount = await SalesEntry.countDocuments(filter);
+
+    // Get paginated data
     const entries = await SalesEntry.find(filter)
+      .skip(skip)
+      .limit(limit)
       .populate("party", "name")
       .populate("products.product", "name")
       .populate({
@@ -2002,13 +2087,27 @@ exports.getSalesEntries = async (req, res) => {
       .populate("bank")
       .sort({ date: -1 });
 
-    console.log(`Found ${entries.length} sales entries for user ${user.role}/${user.id}`);
+    console.log(`Found ${entries.length} sales entries for user ${user.role}/${user.id}, page ${page}`);
 
+    // Calculate total pages
+    const totalPages = Math.ceil(totalCount / limit);
+
+    // Return paginated response
     res.status(200).json({
       success: true,
       count: entries.length,
+      total: totalCount,
       data: entries,
+      pagination: {
+        page,
+        limit,
+        totalPages,
+        hasNextPage: page < totalPages,
+        hasPrevPage: page > 1,
+      }
     });
+    // ==================== END PAGINATION ====================
+    
   } catch (err) {
     console.error("Error fetching sales entries:", err.message);
     res.status(500).json({
@@ -2017,6 +2116,7 @@ exports.getSalesEntries = async (req, res) => {
     });
   }
 };
+
 
 // GET Sales Entries by clientId (for master admin)
 exports.getSalesEntriesByClient = async (req, res) => {

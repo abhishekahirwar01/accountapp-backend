@@ -136,26 +136,49 @@ async function notifyAdminOnProformaAction({
   );
 }
 
-// In your getProformaEntries controller
+
+
 // exports.getProformaEntries = async (req, res) => {
 //   try {
+
+//     await ensureAuthCaps(req); // Ensure auth context is loaded
+    
 //     const filter = {};
 
-//     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
-//     if (req.user.role === "client") {
-//       filter.client = req.user.id;
+//     if (!req.auth) return res.status(401).json({ message: "Unauthorized" });
+    
+//     // For client users, restrict to their client ID AND allowed companies
+//     if (req.auth.role === "client") {
+//       filter.client = req.auth.clientId;
 //     }
+    
+//     // If companyId is provided, validate the user has access to it
 //     if (req.query.companyId) {
-//       filter.company = req.query.companyId;
+//       const companyId = req.query.companyId;
+      
+//       // Check if user is allowed to access this company
+//       if (!companyAllowedForUser(req, companyId)) {
+//         return res.status(403).json({ 
+//           success: false, 
+//           message: "Access denied to this company" 
+//         });
+//       }
+      
+//       filter.company = companyId;
+//     } else {
+//       // If no companyId specified, show only companies the user is allowed to access
+//       if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
+//         filter.company = { $in: req.auth.allowedCompanies };
+
+//       }
 //     }
 
-//     // Construct a cache key based on the filter
-//     const cacheKey = `proformaEntries:${JSON.stringify(filter)}`;
+//     // Construct a SECURE cache key based on user context
+//     const cacheKey = `proformaEntries:${req.auth.userId}:${JSON.stringify(filter)}`;
 
 //     // Check if the data is cached in Redis
 //     // const cachedEntries = await getFromCache(cacheKey);
 //     // if (cachedEntries) {
-//     //   // If cached, return the data directly
 //     //   return res.status(200).json({
 //     //     success: true,
 //     //     count: cachedEntries.length,
@@ -171,12 +194,11 @@ async function notifyAdminOnProformaAction({
 //         path: "services.service",
 //         select: "serviceName",
 //         strictPopulate: false,
-//       }) // ✅
+//       })
 //       .populate("company", "businessName")
 //       .populate("shippingAddress")
 //       .populate("bank")
 //       .sort({ date: -1 });
-//     // Return consistent format
 
 //     // Cache the fetched data in Redis for future requests
 //     // await setToCache(cacheKey, entries);
@@ -184,7 +206,7 @@ async function notifyAdminOnProformaAction({
 //     res.status(200).json({
 //       success: true,
 //       count: entries.length,
-//       data: entries, // Use consistent key
+//       data: entries,
 //     });
 //   } catch (err) {
 //     console.error("Error fetching proforma entries:", err.message);
@@ -195,9 +217,10 @@ async function notifyAdminOnProformaAction({
 //   }
 // };
 
+// controllers/proformaController.js
+// controllers/proformaController.js - WORKING VERSION WITH PAGINATION
 exports.getProformaEntries = async (req, res) => {
   try {
-
     await ensureAuthCaps(req); // Ensure auth context is loaded
     
     const filter = {};
@@ -226,47 +249,112 @@ exports.getProformaEntries = async (req, res) => {
       // If no companyId specified, show only companies the user is allowed to access
       if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
         filter.company = { $in: req.auth.allowedCompanies };
-
       }
     }
 
-    // Construct a SECURE cache key based on user context
-    const cacheKey = `proformaEntries:${req.auth.userId}:${JSON.stringify(filter)}`;
+    // Date range filtering (if needed)
+    if (req.query.dateFrom || req.query.dateTo) {
+      filter.date = {};
+      if (req.query.dateFrom) filter.date.$gte = new Date(req.query.dateFrom);
+      if (req.query.dateTo) filter.date.$lte = new Date(req.query.dateTo);
+    }
 
-    // Check if the data is cached in Redis
-    // const cachedEntries = await getFromCache(cacheKey);
-    // if (cachedEntries) {
-    //   return res.status(200).json({
-    //     success: true,
-    //     count: cachedEntries.length,
-    //     data: cachedEntries,
-    //   });
-    // }
+    // Search filtering (if needed)
+    if (req.query.q) {
+      const searchTerm = String(req.query.q);
+      filter.$or = [
+        { description: { $regex: searchTerm, $options: "i" } },
+        { proformaNumber: { $regex: searchTerm, $options: "i" } },
+        { 'party.name': { $regex: searchTerm, $options: "i" } }
+      ];
+    }
 
-    // If not cached, fetch the data from the database
-    const entries = await ProformaEntry.find(filter)
-      .populate("party", "name")
-      .populate("products.product", "name")
+    console.log("Proforma filter:", JSON.stringify(filter, null, 2));
+
+    // --- SERVER-SIDE PAGINATION ---
+    const page = parseInt(req.query.page) || 1;
+    let limit = parseInt(req.query.limit) || 20; // Default to 20 for pagination
+    
+    // Validate pagination parameters
+    if (page < 1) page = 1;
+    if (limit < 1 || limit > 5000) limit = 20;
+    
+    // Calculate total count
+    const total = await ProformaEntry.countDocuments(filter);
+    
+    // Smart limit adjustment for large datasets
+    let effectiveLimit = limit;
+    if (total > 10000 && !req.query.limit) {
+      console.log(`Large proforma dataset detected: ${total} entries. Auto-adjusting limit to 200.`);
+      effectiveLimit = Math.min(200, limit);
+    }
+    
+    const skip = (page - 1) * effectiveLimit;
+    const totalPages = Math.ceil(total / effectiveLimit);
+    
+    // Adjust page if it exceeds total pages
+    let effectivePage = page;
+    if (totalPages > 0 && page > totalPages) {
+      effectivePage = totalPages;
+    }
+
+    // Build query with pagination
+    const query = ProformaEntry.find(filter)
+      .populate("party", "name email phoneNumber")
+      .populate("products.product", "name unitType hsn pricePerUnit")
       .populate({
         path: "services.service",
-        select: "serviceName",
+        select: "serviceName sac pricePerUnit",
         strictPopulate: false,
       })
-      .populate("company", "businessName")
-      .populate("shippingAddress")
-      .populate("bank")
+      .populate({
+        path: "services.serviceName", // Support both field names
+        select: "serviceName sac pricePerUnit",
+        strictPopulate: false,
+      })
+      .populate("company", "businessName address gstin")
+      .populate("shippingAddress", "addressLine1 city state postalCode")
+      .populate("bank", "bankName accountNumber ifsc")
       .sort({ date: -1 });
 
-    // Cache the fetched data in Redis for future requests
-    // await setToCache(cacheKey, entries);
+    // Apply pagination
+    let entries;
+    if (total <= 10000 && !req.query.page && !req.query.limit) {
+      // Small dataset without pagination parameters - return all (backward compatible)
+      entries = await query.lean();
+      effectivePage = 1;
+      effectiveLimit = total;
+    } else {
+      // Apply pagination
+      entries = await query.skip(skip).limit(effectiveLimit).lean();
+    }
 
-    res.status(200).json({
+    // Add type field for frontend
+    const typedEntries = entries.map(entry => ({ 
+      ...entry, 
+      type: "proforma" 
+    }));
+
+    // Construct response (similar to sales controller)
+    const response = {
       success: true,
-      count: entries.length,
-      data: entries,
-    });
+      total,
+      count: typedEntries.length,
+      page: effectivePage,
+      limit: effectiveLimit,
+      totalPages,
+      data: typedEntries,
+    };
+
+    // Add cache logic if needed (commented out in your original)
+    // const cacheKey = `proformaEntries:${req.auth.userId}:${JSON.stringify(filter)}:page${page}:limit${limit}`;
+    // await setToCache(cacheKey, response, 300); // Cache for 5 minutes
+
+    res.status(200).json(response);
+
   } catch (err) {
     console.error("Error fetching proforma entries:", err.message);
+    console.error("Error stack:", err.stack);
     res.status(500).json({
       success: false,
       error: err.message,
