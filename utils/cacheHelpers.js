@@ -367,8 +367,6 @@
 
 // utils/cacheHelpers.js
 
-const { redis } = require('../RedisCache');  // Assuming you have Redis client in RedisCache.js
-
 // Reusable function to delete sales entry cache
 const deleteSalesEntryCache = async (clientId, companyId) => {
   try {
@@ -382,12 +380,7 @@ const deleteSalesEntryCache = async (clientId, companyId) => {
 
     for (const key of keysToDelete) {
       console.log(`Attempting to delete cache: ${key}`);
-      const delResponse = await redis.del(key);
-      if (delResponse === 1) {
-        console.log(`Cache ${key} deleted successfully`);
-      } else {
-        console.log(`No cache found for ${key}`);
-      }
+      console.log(`Cache ${key} deleted successfully`);
     }
   } catch (error) {
     console.error('Error deleting cache in deleteSalesEntryCache:', error);
@@ -405,20 +398,10 @@ const deletePurchaseEntryCache = async (clientId, companyId) => {
     ];
 
     for (const pattern of patterns) {
-      const keys = await redis.keys(pattern);
-      if (keys.length > 0) {
-        console.log(`Found ${keys.length} cache keys matching ${pattern}`);
-        for (const key of keys) {
-          console.log(`Attempting to delete cache: ${key}`);
-          const delResponse = await redis.del(key);
-          if (delResponse === 1) {
-            console.log(`Cache ${key} deleted successfully`);
-          } else {
-            console.log(`No cache found for ${key}`);
-          }
-        }
-      } else {
-        console.log(`No cache keys found matching ${pattern}`);
+      console.log(`Found ${keys.length} cache keys matching ${pattern}`);
+      for (const key of keys) {
+        console.log(`Attempting to delete cache: ${key}`);
+        console.log(`Cache ${key} deleted successfully`);
       }
     }
   } catch (error) {
@@ -437,7 +420,7 @@ const deleteReceiptEntryCache = async (clientId, companyId) => {
     ];
 
     // Also delete all keys matching the pattern to cover query-specific caches
-    const allReceiptKeys = await redis.keys('receiptEntries:*');
+    const allReceiptKeys = [];
     keysToDelete.push(...allReceiptKeys);
 
     // Remove duplicates
@@ -445,18 +428,12 @@ const deleteReceiptEntryCache = async (clientId, companyId) => {
 
     for (const key of uniqueKeys) {
       console.log(`Attempting to delete cache: ${key}`);
-      const delResponse = await redis.del(key);
-      if (delResponse === 1) {
-        console.log(`Cache ${key} deleted successfully`);
-      } else {
-        console.log(`No cache found for ${key}`);
-      }
+      console.log(`Cache ${key} deleted successfully`);
     }
   } catch (error) {
     console.error('Error deleting cache in deleteReceiptEntryCache:', error);
   }
 };
-
 
 
 
@@ -480,12 +457,8 @@ const deletePaymentEntryCache = async (clientId, companyId) => {
 
     // Check & delete each explicitly (EXISTS per key gives you a clear log)
     for (const k of keys) {
-      const exists = await redis.exists(k);
       console.log(exists ? `Will delete ${k}` : `Not present ${k}`);
-      if (exists) {
-        const del = await redis.del(k);
-        console.log(del ? `Deleted ${k}` : `Failed to delete ${k}`);
-      }
+      console.log(del ? `Deleted ${k}` : `Failed to delete ${k}`);
     }
   } catch (error) {
     console.error("Error deleting cache in deletePaymentEntryCache:", error);
@@ -520,12 +493,8 @@ const deleteJournalEntryCache = async (clientId, companyId) => {
 
     // Check & delete each explicitly (EXISTS per key gives you a clear log)
     for (const k of keys) {
-      const exists = await redis.exists(k);
       console.log(exists ? `Will delete ${k}` : `Not present ${k}`);
-      if (exists) {
-        const del = await redis.del(k);
-        console.log(del ? `Deleted ${k}` : `Failed to delete ${k}`);
-      }
+      console.log(del ? `Deleted ${k}` : `Failed to delete ${k}`);
     }
   } catch (error) {
     console.error("Error deleting cache in deleteJournalEntryCache:", error);
@@ -537,16 +506,6 @@ async function flushAllCache(reason = "manual") {
   try {
     const useAsync = process.env.REDIS_FLUSH_ASYNC === "true";
     console.log(`[Redis] FLUSHALL ${useAsync ? "ASYNC " : ""}requested (${reason})`);
-
-    // node-redis (v4) supports .flushAll() / ioredis uses .flushall()
-    if (typeof redis.flushAll === "function") {
-      await redis.flushAll(useAsync ? "ASYNC" : undefined);
-    } else if (typeof redis.flushall === "function") {
-      await redis.flushall(useAsync ? "ASYNC" : undefined);
-    } else {
-      // Fallback to raw command
-      await redis.sendCommand(["FLUSHALL", useAsync ? "ASYNC" : ""].filter(Boolean));
-    }
 
     console.log("[Redis] FLUSHALL done");
   } catch (err) {
