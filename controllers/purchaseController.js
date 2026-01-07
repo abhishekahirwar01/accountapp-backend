@@ -300,6 +300,7 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
 
     // 1. Try to find existing ledger first
     let ledger = await DailyStockLedger.findOne({
+      clientId: purchaseEntry.client,
       companyId: purchaseEntry.company,
       date: purchaseDate // Use the exact date (with 18:30:00 UTC)
     }).session(session);
@@ -311,6 +312,7 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
       previousDay.setUTCHours(18, 30, 0, 0);
 
       const previousLedger = await DailyStockLedger.findOne({
+        clientId: purchaseEntry.client,
         companyId: purchaseEntry.company,
         date: { $lt: purchaseDate }
       })
@@ -324,6 +326,7 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
       // 3. Create new ledger with upsert
       ledger = await DailyStockLedger.findOneAndUpdate(
         {
+          clientId: purchaseEntry.client,
           companyId: purchaseEntry.company,
           date: purchaseDate // Exact match
         },
