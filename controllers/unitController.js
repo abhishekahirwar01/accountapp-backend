@@ -1,5 +1,5 @@
 const Unit = require("../models/Unit");
-const { getFromCache, setToCache, deleteFromCache } = require('../RedisCache');
+
 
 // POST /api/units
 exports.createUnit = async (req, res) => {
@@ -14,9 +14,9 @@ exports.createUnit = async (req, res) => {
       createdByUser: req.auth.userId,   // who created it
     });
 
-    // Invalidate cache for units list
-    const unitsCacheKey = `units:client:${req.auth.clientId}`;
-    await deleteFromCache(unitsCacheKey);
+
+
+
 
     return res.status(201).json({ message: "Unit created", unit });
   } catch (err) {
@@ -35,22 +35,20 @@ exports.getUnits = async (req, res) => {
     const clientId = req.auth.clientId;
     const cacheKey = `units:client:${clientId}`;
 
-    // Check cache first
-    const cached = await getFromCache(cacheKey);
-    if (cached) {
-      res.set('X-Cache', 'HIT');
-      res.set('X-Cache-Key', cacheKey);
-      return res.json(cached);
-    }
+
+
+
+
+
+
 
     const units = await Unit.find({ createdByClient: clientId })
       .sort({ createdAt: -1 })
       .lean();
 
-    // Cache the result
-    await setToCache(cacheKey, units);
-    res.set('X-Cache', 'MISS');
-    res.set('X-Cache-Key', cacheKey);
+
+
+
 
     return res.json(units);
   } catch (err) {
@@ -82,9 +80,9 @@ exports.deleteUnit = async (req, res) => {
 
     await unit.deleteOne();
 
-    // Invalidate cache for units list
-    const unitsCacheKey = `units:client:${req.auth.clientId}`;
-    await deleteFromCache(unitsCacheKey);
+
+
+
 
     return res.status(200).json({ message: "Unit deleted successfully" });
   } catch (err) {
