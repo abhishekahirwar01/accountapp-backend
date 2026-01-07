@@ -229,6 +229,7 @@ if (isExpense) {
 };
 
 
+
 /** LIST (tenant-scoped, supports q/date/company filters + pagination) */
 // exports.getPayments = async (req, res) => {
 //   try {
@@ -245,36 +246,30 @@ if (isExpense) {
 
 //     const clientId = req.auth.clientId;
 
-//     // Build the filter correctly
+//     // --- RESTORE ORIGINAL COMPANY FILTERING LOGIC ---
 //     const where = {
 //       client: clientId,
 //     };
 
-//     // Handle company filtering with proper validation
-//     if (companyId) {
-//       // Check if user is allowed to access this company
-//       if (!companyAllowedForUser(req, companyId)) {
-//         return res.status(403).json({ 
-//           success: false, 
-//           message: "Access denied to this company" 
-//         });
+//     // Apply company filtering EXACTLY as original
+//     if (companyAllowedForUser(req, companyId)) {
+//       if (companyId) {
+//         where.company = companyId;
 //       }
-//       where.company = companyId;
+//       // If companyId not provided, don't filter by company (original behavior)
 //     } else {
-//       // If no companyId specified, show only companies the user is allowed to access
-//       if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
-//         where.company = { $in: req.auth.allowedCompanies };
-//       }
+//       // User not allowed for this company = return empty
+//       where.company = { $in: [] };
 //     }
 
-//     // Add date range filter if provided
+//     // --- RESTORE ORIGINAL DATE FILTERING ---
 //     if (dateFrom || dateTo) {
 //       where.date = {};
 //       if (dateFrom) where.date.$gte = new Date(dateFrom);
 //       if (dateTo) where.date.$lte = new Date(dateTo);
 //     }
 
-//     // Add search query filter if provided
+//     // --- RESTORE ORIGINAL SEARCH FILTERING ---
 //     if (q) {
 //       where.$or = [
 //         { description: { $regex: String(q), $options: "i" } },
@@ -282,149 +277,220 @@ if (isExpense) {
 //       ];
 //     }
 
-//     const perPage = Math.min(Number(limit) || 10000, 10000);
-//     const skip = (Number(page) - 1) * perPage;
+//     console.log("Final filter for payment entries:", JSON.stringify(where, null, 2));
 
-//     // Construct a SECURE cache key based on user context
-//     // const cacheKey = `paymentEntries:${req.auth.userId}:${JSON.stringify(where)}`;
+//     // --- SMART PAGINATION WITH ORIGINAL DEFAULTS ---
+//     const pageNum = parseInt(page) || 1;
+//     let limitNum = parseInt(limit) || 10000; // Keep original default
+    
+//     // Calculate total count first
+//     const total = await PaymentEntry.countDocuments(where);
+    
+//     // Auto-detect large datasets and adjust
+//     if (total > 10000) {
+//       console.warn(`Large payment dataset detected: ${total} payments.`);
+      
+//       // If no explicit limit provided, use smarter default
+//       if (!req.query.limit) {
+//         limitNum = Math.min(limitNum, 2000); // Smarter default for large datasets
+//       } else if (limitNum > 5000) {
+//         console.warn(`High limit requested: ${limitNum}.`);
+//       }
+//     }
+    
+//     const skip = (pageNum - 1) * limitNum;
+//     const totalPages = Math.ceil(total / limitNum);
 
-//     // Check if the data is cached in Redis
-//     // const cachedEntries = await getFromCache(cacheKey);
-//     // if (cachedEntries) {
-//     //   return res.status(200).json({
-//     //     success: true,
-//     //     count: cachedEntries.length,
-//     //     data: cachedEntries,
-//     //   });
-//     // }
-
-//     // If not cached, fetch the data from the database
+//     // Build query (same as original)
 //     const query = PaymentEntry.find(where)
 //       .sort({ date: -1 })
-//       .skip(skip)
-//       .limit(perPage)
 //       .populate({ path: "vendor", select: "vendorName" })
 //       .populate({ path: "expense", select: "name" })
 //       .populate({ path: "company", select: "businessName" });
 
-//     const [entries, total] = await Promise.all([
-//       query.lean(),
-//       PaymentEntry.countDocuments(where),
-//     ]);
+//     // Apply pagination logic
+//     let data;
+//     if (total <= 10000 && !req.query.page && !req.query.limit) {
+//       // Small dataset, no pagination params = return all (like sales controller)
+//       data = await query.lean();
+//     } else {
+//       // Large dataset or explicit pagination = use pagination
+//       data = await query.skip(skip).limit(limitNum).lean();
+//     }
 
-//     // Cache the fetched data in Redis for future requests
-//     // await setToCache(cacheKey, entries);
-
+//     // Keep original response structure but add smart metadata
 //     res.status(200).json({
 //       success: true,
 //       total,
-//       page: Number(page),
-//       limit: perPage,
-//       data: entries,
+//       page: pageNum,
+//       limit: limitNum,
+//       totalPages,
+//       hasMore: total > (skip + data.length),
+//       data,
 //     });
 //   } catch (err) {
-//     console.error("getPayments error:", err);
-//     res.status(500).json({ success: false, error: err.message });
+//     console.error("getPayments error:", err.message);
+//     res.status(500).json({
+//       success: false,
+//       error: err.message,
+//     });
 //   }
 // };
 
-/** LIST (tenant-scoped, supports q/date/company filters + pagination) */
 exports.getPayments = async (req, res) => {
   try {
     await ensureAuthCaps(req);
 
-    const {
-      q,
-      companyId,
-      dateFrom,
-      dateTo,
-      page = 1,
-      limit = 10000,
-    } = req.query;
+    const filter = {};
+    const user = req.user || req.auth;
 
-    const clientId = req.auth.clientId;
+    console.log("User role:", user.role);
+    console.log("User ID:", user.id);
+    console.log("Query companyId:", req.query.companyId);
 
-    // --- RESTORE ORIGINAL COMPANY FILTERING LOGIC ---
-    const where = {
-      client: clientId,
-    };
+    // --- Client filtering ---
+    if (user.role === "client") {
+      filter.client = user.id;
+    }
 
-    // Apply company filtering EXACTLY as original
-    if (companyAllowedForUser(req, companyId)) {
-      if (companyId) {
-        where.company = companyId;
+    // --- Company filtering ---
+    if (req.query.companyId) {
+      if (!companyAllowedForUser(req, req.query.companyId)) {
+        return res.status(403).json({ 
+          success: false, 
+          message: "Access denied to this company" 
+        });
       }
-      // If companyId not provided, don't filter by company (original behavior)
+      filter.company = req.query.companyId;
     } else {
-      // User not allowed for this company = return empty
-      where.company = { $in: [] };
+      const allowedCompanies = user.allowedCompanies || [];
+      if (allowedCompanies.length > 0 && user.role === "user") {
+        filter.company = { $in: allowedCompanies };
+      } else if (user.role === "user") {
+        // Regular user with no company access
+        return res.status(200).json({
+          success: true,
+          total: 0,
+          count: 0,
+          page: 1,
+          limit: 20,
+          totalPages: 0,
+          data: [],
+        });
+      }
     }
 
-    // --- RESTORE ORIGINAL DATE FILTERING ---
-    if (dateFrom || dateTo) {
-      where.date = {};
-      if (dateFrom) where.date.$gte = new Date(dateFrom);
-      if (dateTo) where.date.$lte = new Date(dateTo);
+    // --- Date range filtering ---
+    if (req.query.dateFrom || req.query.dateTo) {
+      filter.date = {};
+      if (req.query.dateFrom) filter.date.$gte = new Date(req.query.dateFrom);
+      if (req.query.dateTo) filter.date.$lte = new Date(req.query.dateTo);
     }
 
-    // --- RESTORE ORIGINAL SEARCH FILTERING ---
-    if (q) {
-      where.$or = [
-        { description: { $regex: String(q), $options: "i" } },
-        { referenceNumber: { $regex: String(q), $options: "i" } },
+    // --- Search filtering ---
+    if (req.query.q) {
+      const searchTerm = String(req.query.q);
+      filter.$or = [
+        { description: { $regex: searchTerm, $options: "i" } },
+        { referenceNumber: { $regex: searchTerm, $options: "i" } },
+        { paymentNumber: { $regex: searchTerm, $options: "i" } },
+        { 'vendor.vendorName': { $regex: searchTerm, $options: "i" } }
       ];
     }
 
-    console.log("Final filter for payment entries:", JSON.stringify(where, null, 2));
+    console.log("Final filter for payment entries:", JSON.stringify(filter, null, 2));
 
-    // --- SMART PAGINATION WITH ORIGINAL DEFAULTS ---
-    const pageNum = parseInt(page) || 1;
-    let limitNum = parseInt(limit) || 10000; // Keep original default
+    // --- ENHANCED PAGINATION ---
+    const page = parseInt(req.query.page) || 1;
+    let limit = parseInt(req.query.limit) || 20; // Default to 20 for frontend pagination
     
-    // Calculate total count first
-    const total = await PaymentEntry.countDocuments(where);
-    
-    // Auto-detect large datasets and adjust
-    if (total > 10000) {
-      console.warn(`Large payment dataset detected: ${total} payments.`);
-      
-      // If no explicit limit provided, use smarter default
-      if (!req.query.limit) {
-        limitNum = Math.min(limitNum, 2000); // Smarter default for large datasets
-      } else if (limitNum > 5000) {
-        console.warn(`High limit requested: ${limitNum}.`);
-      }
+    // Validate pagination parameters
+    if (page < 1) {
+      return res.status(400).json({
+        success: false,
+        message: "Page must be at least 1"
+      });
     }
     
-    const skip = (pageNum - 1) * limitNum;
-    const totalPages = Math.ceil(total / limitNum);
+    if (limit < 1 || limit > 5000) {
+      return res.status(400).json({
+        success: false,
+        message: "Limit must be between 1 and 5000"
+      });
+    }
+    
+    // Calculate total count
+    const total = await PaymentEntry.countDocuments(filter);
+    
+    // Auto-adjust limit for large datasets
+    let effectiveLimit = limit;
+    if (total > 10000 && !req.query.limit) {
+      console.log(`Large dataset detected: ${total} payments. Auto-adjusting limit to 200.`);
+      effectiveLimit = Math.min(200, limit);
+    }
+    
+    const skip = (page - 1) * effectiveLimit;
+    const totalPages = Math.ceil(total / effectiveLimit);
+    
+    // Ensure page doesn't exceed total pages
+    if (page > totalPages && totalPages > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Page ${page} exceeds total pages (${totalPages})`
+      });
+    }
 
-    // Build query (same as original)
-    const query = PaymentEntry.find(where)
-      .sort({ date: -1 })
-      .populate({ path: "vendor", select: "vendorName" })
-      .populate({ path: "expense", select: "name" })
-      .populate({ path: "company", select: "businessName" });
+    // Build query with proper population
+    const query = PaymentEntry.find(filter)
+      .sort({ date: -1, createdAt: -1 })
+      .populate({ 
+        path: "vendor", 
+        select: "vendorName contactPerson phoneNumber email address" 
+      })
+      .populate({ 
+        path: "expense", 
+        select: "name category description",
+        strictPopulate: false 
+      })
+      .populate({ 
+        path: "company", 
+        select: "businessName address gstin phoneNumber email" 
+      });
 
-    // Apply pagination logic
+    // Execute query with pagination
     let data;
     if (total <= 10000 && !req.query.page && !req.query.limit) {
-      // Small dataset, no pagination params = return all (like sales controller)
+      // Small dataset without explicit pagination - return all
       data = await query.lean();
     } else {
-      // Large dataset or explicit pagination = use pagination
-      data = await query.skip(skip).limit(limitNum).lean();
+      // Apply pagination
+      data = await query.skip(skip).limit(effectiveLimit).lean();
     }
 
-    // Keep original response structure but add smart metadata
+    // Add transaction type for frontend
+    const typedData = data.map(entry => ({ 
+      ...entry, 
+      type: "payment"
+    }));
+
     res.status(200).json({
       success: true,
       total,
-      page: pageNum,
-      limit: limitNum,
+      count: typedData.length,
+      page,
+      limit: effectiveLimit,
       totalPages,
-      hasMore: total > (skip + data.length),
-      data,
+      hasMore: skip + typedData.length < total,
+      data: typedData,
+      metadata: {
+        datasetSize: total,
+        filtered: Object.keys(filter).length > 0,
+        includes: {
+          vendor: true,
+          expense: true,
+          company: true
+        }
+      }
     });
   } catch (err) {
     console.error("getPayments error:", err.message);
@@ -434,7 +500,6 @@ exports.getPayments = async (req, res) => {
     });
   }
 };
-
 
 
 /** ADMIN / MASTER: list by client (optional company + pagination) */
