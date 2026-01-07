@@ -9,7 +9,6 @@ const normalizeProducts = require("../utils/normalizeProducts");
 const normalizeServices = require("../utils/normalizeServices");
 const IssuedInvoiceNumber = require("../models/IssuedInvoiceNumber");
 const { issueProformaInvoiceNumber } = require("../services/proformaInvoiceIssuer");
-const { getFromCache, setToCache } = require("../RedisCache");
 const {
   deleteSalesEntryCache,
   deleteSalesEntryCacheByUser,

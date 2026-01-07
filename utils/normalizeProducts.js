@@ -1,7 +1,7 @@
 // utils/normalizeProducts.js
 const Product = require("../models/Product");
 const Unit = require("../models/Unit");
-const { deleteFromCache } = require("../RedisCache");
+
 
 // Map to normalize unitType case
 const unitTypeMap = {
@@ -78,9 +78,6 @@ module.exports = async (rawProducts = [], clientId, userId) => {
               createdByUser: userId,
             });
             existingUnitNames.add(customUnitLower);
-            // Invalidate cache
-            const unitsCacheKey = `units:client:${clientId}`;
-            await deleteFromCache(unitsCacheKey);
           }
         }
       } else {

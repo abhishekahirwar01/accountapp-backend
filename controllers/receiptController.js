@@ -5,7 +5,6 @@ const Company = require("../models/Company");
 const Party = require("../models/Party");
 const User = require("../models/User")
 const { getEffectivePermissions } = require("../services/effectivePermissions");
-const { getFromCache, setToCache } = require('../RedisCache');
 const { deleteReceiptEntryCache, deleteReceiptEntryCacheByUser, flushAllCache } = require("../utils/cacheHelpers");
 
 const { createNotification } = require("./notificationController");
