@@ -146,22 +146,21 @@ exports.createProduct = async (req, res) => {
   try {
     const { name, stocks, unit, hsn, sellingPrice, costPrice, company } = req.body;
 
-    if (!company || company.trim() === "") {
+  if (Array.isArray(company)) {
+      company = company.length > 0 ? company[0] : "";
+    }
+    // Basic Validation
+    if (!company || typeof company !== 'string' || company.trim() === "") {
       return res.status(400).json({ message: "Company is required" });
     }
-
-    // console.log('Creating product:', { name, stocks, unit, clientId: req.auth.clientId });
-
-    // Check if product already exists for this client
     const existingProduct = await Product.findOne({
-      name: name.trim(),
+      name: { $regex: new RegExp(`^${name.trim()}$`, "i") }, // Case-insensitive name
       createdByClient: req.auth.clientId,
       company: company
     });
 
     if (existingProduct) {
-      console.log('Product already exists:', existingProduct);
-      return res.status(400).json({ message: "Product already exists for this client" });
+      return res.status(400).json({ message: "Product with this name already exists in this company" });
     }
 
     let normalizedUnit = null;
@@ -659,6 +658,7 @@ exports.importProductsFromFile = async (req, res) => {
           stocks: product.stocks,
           costPrice: product.costPrice
         });
+        await createInitialStockBatch(product, product.stocks, product.costPrice);
       }
     }
 
