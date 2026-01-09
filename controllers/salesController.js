@@ -2057,6 +2057,17 @@ exports.getSalesEntries = async (req, res) => {
       filter.client = user.id;
     }
 
+  const { startDate, endDate } = req.query;
+
+    if (startDate || endDate) {
+      filter.date = {};
+      if (startDate) {
+        filter.date.$gte = new Date(`${startDate}T00:00:00`);
+      }
+      if (endDate) {
+        filter.date.$lte = new Date(`${endDate}T23:59:59`);
+      }
+    }
     console.log("Final filter for sales entries:", JSON.stringify(filter, null, 2));
 
     // ==================== ADD PAGINATION HERE ====================
