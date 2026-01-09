@@ -834,11 +834,18 @@ exports.getPurchaseEntries = async (req, res) => {
     }
 
     // Date range
+const { startDate, endDate, dateFrom, dateTo } = req.query;
+    const finalStart = startDate || dateFrom;
+    const finalEnd = endDate || dateTo;
 
-    if (req.query.dateFrom || req.query.dateTo) {
+    if (finalStart || finalEnd) {
       filter.date = {};
-      if (req.query.dateFrom) filter.date.$gte = new Date(req.query.dateFrom);
-      if (req.query.dateTo) filter.date.$lte = new Date(req.query.dateTo);
+      if (finalStart) {
+        filter.date.$gte = new Date(`${finalStart}T00:00:00`);
+      }
+      if (finalEnd) {
+        filter.date.$lte = new Date(`${finalEnd}T23:59:59`);
+      }
     }
 
     // Search

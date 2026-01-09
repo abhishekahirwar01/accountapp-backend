@@ -408,11 +408,18 @@ exports.getPayments = async (req, res) => {
     }
 
     // --- Date range filtering ---
-    if (req.query.dateFrom || req.query.dateTo) {
-      filter.date = {};
-      if (req.query.dateFrom) filter.date.$gte = new Date(req.query.dateFrom);
-      if (req.query.dateTo) filter.date.$lte = new Date(req.query.dateTo);
+ const { startDate, endDate, dateFrom, dateTo } = req.query;
+    const finalStart = startDate || dateFrom;
+    const finalEnd = endDate || dateTo;
 
+    if (finalStart || finalEnd) {
+      filter.date = {};
+      if (finalStart) {
+        filter.date.$gte = new Date(`${finalStart}T00:00:00`);
+      }
+      if (finalEnd) {
+        filter.date.$lte = new Date(`${finalEnd}T23:59:59`);
+      }
     }
 
     // --- Search filtering ---

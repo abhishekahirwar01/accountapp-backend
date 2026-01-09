@@ -240,10 +240,18 @@ exports.getJournals = async (req, res) => {
       ...companyFilterForUser(req, companyId),
     };
 
-    if (dateFrom || dateTo) {
+   const { startDate, endDate } = req.query;
+    const finalStart = startDate || dateFrom;
+    const finalEnd = endDate || dateTo;
+
+    if (finalStart || finalEnd) {
       where.date = {};
-      if (dateFrom) where.date.$gte = new Date(dateFrom);
-      if (dateTo) where.date.$lte = new Date(dateTo);
+      if (finalStart) {
+        where.date.$gte = new Date(`${finalStart}T00:00:00`);
+      }
+      if (finalEnd) {
+        where.date.$lte = new Date(`${finalEnd}T23:59:59`);
+      }
     }
 
     if (q) {
