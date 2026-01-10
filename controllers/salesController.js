@@ -1631,64 +1631,56 @@ async function consumeStockForSales(salesEntry, products, session = null) {
 
 
 
-        if (masterStock >= quantityToConsume) {
+        // Allow negative stock - consume even if masterStock is less than quantityToConsume
+        const neededFromLegacy = remainingQty;
+        const costPrice = productMaster.costPrice || 0;
 
-          const neededFromLegacy = remainingQty;
-          const costPrice = productMaster.costPrice || 0; 
+        const newLegacyBatch = await StockBatch.create([{
+          product: productId,
+          companyId: salesEntry.company,
+          clientId: salesEntry.client,
+          remainingQuantity: 0,
+          initialQuantity: neededFromLegacy,
+          costPrice: costPrice,
+          purchaseDate: new Date("2000-01-01"),
+          type: 'LEGACY_MIGRATION',
+          status: 'sold',
+          isActive: false
+        }], { session });
 
-          const newLegacyBatch = await StockBatch.create([{
-            product: productId,
-            companyId: salesEntry.company,
-            clientId: salesEntry.client,
-            remainingQuantity: 0, 
-            initialQuantity: neededFromLegacy,
-            costPrice: costPrice,
-            purchaseDate: new Date("2000-01-01"),
-            type: 'LEGACY_MIGRATION',
-            status: 'sold',
-            isActive: false
-          }], { session });
+        const batchCOGS = neededFromLegacy * costPrice;
+        itemCOGS += batchCOGS;
+        totalCOGS += batchCOGS;
 
-          const batchCOGS = neededFromLegacy * costPrice;
-          itemCOGS += batchCOGS;
-          totalCOGS += batchCOGS;
+        // Add consumption log
+        newLegacyBatch[0].consumedBySales.push({
+          salesEntry: salesEntry._id,
+          consumedQty: neededFromLegacy,
+          consumedAt: new Date()
+        });
+        await newLegacyBatch[0].save({ session });
 
-          // Add consumption log
-          newLegacyBatch[0].consumedBySales.push({
-            salesEntry: salesEntry._id,
-            consumedQty: neededFromLegacy,
-            consumedAt: new Date()
-          });
-          await newLegacyBatch[0].save({ session });
+        // Mark consumption complete
+        remainingQty = 0;
 
-          // Mark consumption complete
-          remainingQty = 0;
-
-          consumedBatches.push({
-            batchId: newLegacyBatch[0]._id,
-            consumedQty: neededFromLegacy,
-            costPrice: costPrice,
-            cogs: batchCOGS
-          });
-          console.log(`[SUCCESS LEGACY] Consumed ${neededFromLegacy} units via new LEGACY batch creation. Master Stock was ${masterStock}.`);
-        } else {
-          // Even master stock is insufficient after attempting batches
-          const totalAvailable = masterStock; // Master stock is the final source of truth
-          throw new Error(
-            `Insufficient stock in batches. Available: ${totalAvailable}, Requested: ${quantityToConsume}`
-          );
-        }
+        consumedBatches.push({
+          batchId: newLegacyBatch[0]._id,
+          consumedQty: neededFromLegacy,
+          costPrice: costPrice,
+          cogs: batchCOGS
+        });
+        console.log(`[SUCCESS LEGACY] Consumed ${neededFromLegacy} units via new LEGACY batch creation. Master Stock was ${masterStock}.`);
       }
-      // 3. --- Throw error if still remaining ---
+      // 3. --- No error thrown for negative stock - allow it ---
+      // If remainingQty > 0, it means we need to allow negative stock
       if (remainingQty > 0) {
-        throw new Error(
-          `Insufficient stock in batches. Available: ${masterStock}, Requested: ${quantityToConsume}`
-        );
+        console.log(`🟠 Allowing negative stock: Available: ${masterStock}, Requested: ${quantityToConsume}, Shortage: ${remainingQty}`);
+        // The shortage will be handled by the product stock going negative
       }
-      // 4. --- Update Product Master Stock ---
+      // 4. --- Update Product Master Stock (allow negative values) ---
       const product = await Product.findById(productId).session(session);
       if (product) {
-        product.stocks = Math.max(0, (product.stocks || 0) - quantityToConsume);
+        product.stocks = (product.stocks || 0) - quantityToConsume;
         await product.save({ session });
       }
       consumptionResults.push({
@@ -1781,9 +1773,9 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     const finalClosingQty = (totalOpeningQty + totalPurchaseQty) - totalSalesQty;
     const finalClosingAmt = (totalOpeningAmt + totalPurchaseAmt) - totalCOGS;
 
-    // Use Math.max to prevent negative value errors
-    ledger.closingStock.quantity = Math.max(0, finalClosingQty);
-    ledger.closingStock.amount = Math.max(0, finalClosingAmt);
+    // Allow negative values for closing stock
+    ledger.closingStock.quantity = finalClosingQty;
+    ledger.closingStock.amount = finalClosingAmt;
 
     // Save final state
     await ledger.save({ session });
