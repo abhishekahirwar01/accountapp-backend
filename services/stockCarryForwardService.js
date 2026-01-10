@@ -42,29 +42,36 @@ class StockCarryForwardService {
   static async carryForwardStock({ companyId, clientId, date = new Date() }) {
     try {
       const TodayIST = this.getTodayIST(date);
-      const YesterdayIST = this.getYesterdayIST(date);
 
       console.log(
-        "carryForwardStock — yesterdayIST:",
-        YesterdayIST.toISOString(),
-        "todayIST:",
+        "carryForwardStock — todayIST:",
         TodayIST.toISOString()
       );
 
-      // Find yesterday ledger
-      const yesterdayLedger = await DailyStockLedger.findOne({
+      // Find the most recent ledger before today (regardless of date gap)
+      const latestLedger = await DailyStockLedger.findOne({
         companyId,
         clientId,
-        date: YesterdayIST,
-      });
+        date: { $lt: TodayIST }   // Any date before today
+      })
+        .sort({ date: -1 })           // Sort by date descending to get latest
+        .limit(1);                     // Get only the most recent one
 
       let openingStock = { quantity: 0, amount: 0 };
 
-      if (yesterdayLedger) {
+      if (latestLedger) {
         openingStock = {
-          quantity: yesterdayLedger.closingStock.quantity,
-          amount: yesterdayLedger.closingStock.amount,
+          quantity: latestLedger.closingStock.quantity,
+          amount: latestLedger.closingStock.amount,
         };
+        console.log(
+          "Found latest ledger from:",
+          latestLedger.date.toISOString(),
+          "with closing stock:",
+          openingStock
+        );
+      } else {
+        console.log("No previous ledger found, using default opening stock: 0");
       }
 
       // Prevent duplicates
@@ -130,27 +137,31 @@ class StockCarryForwardService {
   // VERIFY CARRY FORWARD
   // ==========================
   static async verifyCarryForward({ companyId, clientId }) {
-    const { todayLedgerDate, yesterdayLedgerDate } = this.getLedgerDatesIST();
+    const { todayLedgerDate } = this.getLedgerDatesIST();
+    const todayIST = this.getTodayIST();
 
-    const yesterdayDoc = await DailyStockLedger.findOne({
+    // Find the most recent ledger before today (regardless of date gap)
+    const latestDoc = await DailyStockLedger.findOne({
       companyId,
       clientId,
-      date: yesterdayLedgerDate,
-    });
+      date: { $lt: todayIST }   // Any date before today
+    })
+      .sort({ date: -1 })           // Sort by date descending to get latest
+      .limit(1);                     // Get only the most recent one
 
     const todayDoc = await DailyStockLedger.findOne({
       companyId,
       clientId,
-      date: todayLedgerDate,
+      date: todayIST,
     });
 
     return {
-      yesterdayExists: !!yesterdayDoc,
-      yesterdayClosing: yesterdayDoc?.closingStock || null,
+      latestExists: !!latestDoc,
+      latestClosing: latestDoc?.closingStock || null,
+      latestDate: latestDoc?.date || null,
       todayExists: !!todayDoc,
       todayOpening: todayDoc?.openingStock || null,
-      todayLedgerDate,
-      yesterdayLedgerDate
+      todayLedgerDate
     };
   }
 }

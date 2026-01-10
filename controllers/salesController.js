@@ -1708,18 +1708,16 @@ async function updateDailyStockLedgerForSales(salesEntry, products, currentSaleC
     const salesQuantity = products.reduce((sum, item) => sum + item.quantity, 0);
     const salesAmount = products.reduce((sum, item) => sum + (item.quantity * item.pricePerUnit), 0);
 
-    // 2. Fetch Previous Day's Ledger (Opening Stock ke liye)
-    const previousDay = new Date(salesDate);
-    previousDay.setDate(previousDay.getDate() - 1);
-    previousDay.setUTCHours(18, 30, 0, 0);
-
-    const previousLedger = await DailyStockLedger.findOne({
+    // 2. Fetch Latest Ledger (Opening Stock ke liye) - regardless of date gap
+    const latestLedger = await DailyStockLedger.findOne({
       companyId: salesEntry.company,
       clientId: salesEntry.client,
-      date: previousDay
-    }).session(session);
+      date: { $lt: salesDate }   // Any date before sales date
+    })
+      .sort({ date: -1 })           // Sort by date descending to get latest
+      .session(session);
 
-    const openingStockDefaults = previousLedger ? previousLedger.closingStock : { quantity: 0, amount: 0 };
+    const openingStockDefaults = latestLedger ? latestLedger.closingStock : { quantity: 0, amount: 0 };
 
     // ------------------------------------------------------------------
     // STEP 1: FIND OR CREATE LEDGER (FIXED FOR UNIQUE INDEX)
