@@ -306,11 +306,7 @@ async function updateDailyStockLedgerForPurchase(purchaseEntry, products, sessio
     }).session(session);
 
     if (!ledger) {
-      // 2. If no ledger exists, get previous day's closing stock
-      const previousDay = new Date(purchaseDate);
-      previousDay.setDate(previousDay.getDate() - 1);
-      previousDay.setUTCHours(18, 30, 0, 0);
-
+      // 2. If no ledger exists, get MOST RECENT ledger's closing stock (regardless of date gap)
       const previousLedger = await DailyStockLedger.findOne({
         clientId: purchaseEntry.client,
         companyId: purchaseEntry.company,
@@ -1018,14 +1014,11 @@ async function updateDailyStockLedgerForPurchaseUpdate(purchaseEntry, oldProduct
     }).session(session);
 
     if (!newLedger) {
-      // Get previous day's closing stock
-      const previousDay = new Date(newDate);
-      previousDay.setDate(previousDay.getDate() - 1);
-      previousDay.setUTCHours(18, 30, 0, 0);
-
+      // Get MOST RECENT ledger's closing stock (regardless of date gap)
       const previousLedger = await DailyStockLedger.findOne({
         companyId: purchaseEntry.company,
-        date: { $lt: purchaseDate }   // 🔑 ANY earlier date
+        clientId: purchaseEntry.client,
+        date: { $lt: newDate }   // 🔑 ANY earlier date
       })
         .sort({ date: -1 })             // 🔑 get latest one
         .session(session);
