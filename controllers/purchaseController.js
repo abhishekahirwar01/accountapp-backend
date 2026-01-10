@@ -801,12 +801,12 @@ exports.getPurchaseEntries = async (req, res) => {
     await ensureAuthCaps(req);
 
     const filter = {};
-
     const user = req.user;
+    const { role, allowedCompanies } = req.auth;
 
-
-    // Company filtering
-    if (req.query.companyId) {
+    // --- 1. FILTER LOGIC (User ke liye "all" handle kiya gaya hai) ---
+    if (req.query.companyId && req.query.companyId !== "all" && req.query.companyId !== "undefined") {
+      // Jab koi specific company select ki ho
       if (!companyAllowedForUser(req, req.query.companyId)) {
         return res.status(403).json({
           success: false,
@@ -814,41 +814,39 @@ exports.getPurchaseEntries = async (req, res) => {
         });
       }
       filter.company = req.query.companyId;
-
     } else {
-      const allowedCompanies = user.allowedCompanies || [];
-      if (allowedCompanies.length > 0) {
+      // "All Companies" ka case
+      if (role === "user") {
+        if (allowedCompanies && allowedCompanies.length > 0) {
+          // Sirf wahi data dikhega jo user ko allot kiya gaya hai
         filter.company = { $in: allowedCompanies };
-      } else if (user.role === "user") {
+      } else {
         return res.status(200).json({
           success: true,
           count: 0,
-          data: [],
-        });
+          data: [] });
       }
+      }
+      // Master/Admin ke liye filter.company empty rahega (Sara data fetch hoga)
     }
 
-    // Client filtering
+    // Client filtering (Tenant security)
     if (user.role === "client") {
       filter.client = user.id;
     }
 
-    // Date range
-const { startDate, endDate, dateFrom, dateTo } = req.query;
+    // Date range handling
+    const { startDate, endDate, dateFrom, dateTo } = req.query;
     const finalStart = startDate || dateFrom;
     const finalEnd = endDate || dateTo;
 
     if (finalStart || finalEnd) {
       filter.date = {};
-      if (finalStart) {
-        filter.date.$gte = new Date(`${finalStart}T00:00:00`);
-      }
-      if (finalEnd) {
-        filter.date.$lte = new Date(`${finalEnd}T23:59:59`);
-      }
+      if (finalStart) filter.date.$gte = new Date(`${finalStart}T00:00:00`);
+      if (finalEnd) filter.date.$lte = new Date(`${finalEnd}T23:59:59`);
     }
 
-    // Search
+    // Search query
     if (req.query.q) {
       const searchTerm = String(req.query.q);
       filter.$or = [
@@ -858,47 +856,51 @@ const { startDate, endDate, dateFrom, dateTo } = req.query;
       ];
     }
 
-    // --- PAGINATION ---
-    const page = parseInt(req.query.page) || 1;
-    let limit = parseInt(req.query.limit) || 20;
+    // --- 2. DASHBOARD LOGIC (Bypass pagination for sum) ---
+    const isDashboard = req.query.isDashboard === 'true';
 
-    const total = await PurchaseEntry.countDocuments(filter);
+    if (isDashboard) {
+      // Dashboard ke liye saara data fetch karein taaki accurate sum dikhe
+      const entries = await PurchaseEntry.find(filter)
+        .sort({ date: -1 })
+        .populate({ path: "vendor", select: "vendorName" })
+        .lean();
 
-    if (total > 10000) {
-      if (!req.query.limit) {
-        limit = Math.min(limit, 200);
-      } else if (limit > 1000) {
-        console.warn(`High limit requested in purchases: ${limit}.`);
-      }
+      return res.status(200).json({
+        success: true,
+        count: entries.length,
+        data: entries.map(entry => ({ ...entry, type: "purchases" })),
+      });
     }
 
+    // --- 3. NORMAL PAGINATION LOGIC (List page ke liye) ---
+    const page = parseInt(req.query.page) || 1;
+    let limit = parseInt(req.query.limit) || 20;
+    const total = await PurchaseEntry.countDocuments(filter);
     const skip = (page - 1) * limit;
     const totalPages = Math.ceil(total / limit);
 
-    let query = PurchaseEntry.find(filter)
+    const data = await PurchaseEntry.find(filter)
       .sort({ date: -1 })
+      .skip(skip)
+      .limit(limit)
       .populate({ path: "vendor", select: "vendorName" })
       .populate({ path: "products.product", select: "name unitType hsn" })
       .populate({ path: "services.serviceName", select: "serviceName sac" })
       .populate({ path: "services.service", select: "serviceName", strictPopulate: false })
-      .populate({ path: "company", select: "businessName" });
-
-    let data;
-    if (total <= 10000 && !req.query.page && !req.query.limit) {
-      data = await query.lean();
-    } else {
-      data = await query.skip(skip).limit(limit).lean();
-    }
+      .populate({ path: "company", select: "businessName" })
+      .lean();
 
     res.status(200).json({
       success: true,
       total,
       count: data.length,
-      page: total <= 10000 && !req.query.page ? 1 : page,
-      limit: total <= 10000 && !req.query.limit ? total : limit,
+      page,
+      limit,
       totalPages,
       data: data.map(entry => ({ ...entry, type: "purchases" })),
     });
+
   } catch (err) {
     console.error("Error fetching purchase entries:", err.message);
     res.status(500).json({
@@ -908,7 +910,6 @@ const { startDate, endDate, dateFrom, dateTo } = req.query;
   }
 };
 
-
 // --- ADMIN: LIST BY CLIENT --------------------------------------
 exports.getPurchaseEntriesByClient = async (req, res) => {
   try {
@@ -917,7 +918,7 @@ exports.getPurchaseEntriesByClient = async (req, res) => {
     const { clientId } = req.params;
     const { companyId, page = 1, limit = 100 } = req.query;
 
-    // only master/admin can query arbitrary clients; client can only query self
+  // only master/admin can query arbitrary clients; client can only query self
     if (req.auth.role === "client" && String(clientId) !== String(req.auth.clientId)) {
       return res.status(403).json({ message: "Not authorized" });
     }
@@ -925,31 +926,21 @@ exports.getPurchaseEntriesByClient = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
+    // 2. Build Filter Logic
     const where = { client: clientId };
-    if (companyId) where.company = companyId;
+    
+    if (companyId && companyId !== "all" && companyId !== "undefined") {
+      where.company = companyId;
+    }
+    let query = PurchaseEntry.find(where).sort({ date: -1 });
 
-    const perPage = Math.min(Number(limit) || 100, 500);
-    const skip = (Number(page) - 1) * perPage;
-
-    // Construct a cache key based on clientId and query parameters
-    const cacheKey = `purchaseEntriesByClient:${JSON.stringify({ client: clientId, company: companyId })}`;
-
-    // Check if the data is cached in Redis
-    // const cachedEntries = await getFromCache(cacheKey);
-    // if (cachedEntries) {
-    //   // If cached, return the data directly
-    //   return res.status(200).json({
-    //     success: true,
-    //     count: cachedEntries.length,
-    //     data: cachedEntries,
-    //   });
-    // }
-
+    if (req.query.limit !== 'all') {
+      const perPage = Math.min(Number(limit) || 100, 500);
+      const skip = (Number(page) - 1) * perPage;
+      query = query.skip(skip).limit(perPage);
+    }
     const [entries, total] = await Promise.all([
-      PurchaseEntry.find(where)
-        .sort({ date: -1 })
-        .skip(skip)
-        .limit(perPage)
+      query
         .populate({ path: "vendor", select: "vendorName" })
         .populate({ path: "products.product", select: "name unitType" })
         .populate({ path: "services.serviceName", select: "serviceName" })
@@ -958,10 +949,14 @@ exports.getPurchaseEntriesByClient = async (req, res) => {
         .lean(),
       PurchaseEntry.countDocuments(where),
     ]);
+    res.status(200).json({ 
+      success: true,
+      entries, 
+      total, 
+      page: req.query.limit === 'all' ? 1 : Number(page), 
+      limit: req.query.limit === 'all' ? total : (Number(limit) || 100) 
+    });
 
-    // await setToCache(cacheKey, entries);
-
-    res.status(200).json({ entries, total, page: Number(page), limit: perPage });
   } catch (err) {
     console.error("getPurchaseEntriesByClient error:", err);
     res.status(500).json({ error: err.message });

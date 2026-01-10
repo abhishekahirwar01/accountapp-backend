@@ -2022,58 +2022,65 @@ exports.getSalesEntries = async (req, res) => {
 
     const filter = {};
     const user = req.user;
-
+    const { clientId, role, allowedCompanies } = req.auth;
     console.log("User role:", user.role);
     console.log("User ID:", user.id);
     console.log("Query companyId:", req.query.companyId);
 
-    // Handle company filtering properly
-    if (req.query.companyId) {
-      // Validate company access
+    // --- 1. Filter Logic Fix ---
+    if (req.query.companyId && req.query.companyId !== "all") {
       if (!companyAllowedForUser(req, req.query.companyId)) {
         return res.status(403).json({
           success: false,
-          message: "Access denied to this company"
+          message: "Access denied"
         });
       }
       filter.company = req.query.companyId;
     } else {
-      // If no specific company requested, filter by user's accessible companies
-      if (req.auth.allowedCompanies && req.auth.allowedCompanies.length > 0) {
-        filter.company = { $in: req.auth.allowedCompanies };
-      } else if (user.role === "user") {
-        // Regular users should only see data from their assigned companies
+      if (role === "user") {
+      if (allowedCompanies && allowedCompanies.length > 0) {
+        filter.company = { $in: allowedCompanies };
+      } else {
         return res.status(200).json({
           success: true,
           count: 0,
-          data: [],
+          data: []
         });
       }
-      // For master/admin, no company filter = see all data
+      }
     }
 
-    // For client users, also filter by client ID
     if (user.role === "client") {
       filter.client = user.id;
     }
 
-  const { startDate, endDate } = req.query;
-
+    // Date filters handle karna (Agar dashboard page par specific date select ho)
+    const { startDate, endDate } = req.query;
     if (startDate || endDate) {
       filter.date = {};
-      if (startDate) {
-        filter.date.$gte = new Date(`${startDate}T00:00:00`);
-      }
-      if (endDate) {
-        filter.date.$lte = new Date(`${endDate}T23:59:59`);
-      }
+      if (startDate) filter.date.$gte = new Date(`${startDate}T00:00:00`);
+      if (endDate) filter.date.$lte = new Date(`${endDate}T23:59:59`);
     }
-    console.log("Final filter for sales entries:", JSON.stringify(filter, null, 2));
 
-    // ==================== ADD PAGINATION HERE ====================
-    // Get pagination parameters from query
+    // --- 2. Dashboard Logic Fix (Sum accurate karne ke liye) ---
+    const isDashboard = req.query.isDashboard === 'true';
+
+    if (isDashboard) {
+      // Dashboard ke liye bina limit ke data fetch karein
+      const entries = await SalesEntry.find(filter)
+        .populate("party", "name")
+        .sort({ date: -1 });
+
+      return res.status(200).json({
+        success: true,
+        count: entries.length,
+        data: entries,
+      });
+    }
+
+    // --- 3. Normal Pagination Logic ---
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20; // Default 20 per page
+    const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
     // Get total count
@@ -2095,13 +2102,9 @@ exports.getSalesEntries = async (req, res) => {
       .populate("bank")
       .sort({ date: -1 });
 
-    console.log(`Found ${entries.length} sales entries for user ${user.role}/${user.id}, page ${page}`);
-
-    // Calculate total pages
     const totalPages = Math.ceil(totalCount / limit);
 
-    // Return paginated response
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       count: entries.length,
       total: totalCount,
@@ -2114,11 +2117,9 @@ exports.getSalesEntries = async (req, res) => {
         hasPrevPage: page > 1,
       }
     });
-    // ==================== END PAGINATION ====================
-    
   } catch (err) {
     console.error("Error fetching sales entries:", err.message);
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       error: err.message,
     });
