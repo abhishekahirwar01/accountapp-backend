@@ -19,55 +19,46 @@ const dailyStockLedgerSchema = new mongoose.Schema({
   openingStock: {
     quantity: {
       type: Number,
-      default: 0,
-      min: 0
+      default: 0
     },
     amount: {
       type: Number,
-      default: 0,
-      min: 0
+      default: 0
     }
   },
   closingStock: {
     quantity: {
       type: Number,
-      default: 0,
-      min: 0
+      default: 0
     },
     amount: {
       type: Number,
-      default: 0,
-      min: 0
+      default: 0
     }
   },
   totalPurchaseOfTheDay: {
     quantity: {
       type: Number,
-      default: 0,
-      min: 0
+      default: 0
     },
     amount: {
       type: Number,
-      default: 0,
-      min: 0
+      default: 0
     }
   },
   totalSalesOfTheDay: {
     quantity: {
       type: Number,
-      default: 0,
-      min: 0
+      default: 0
     },
     amount: {
       type: Number,
-      default: 0,
-      min: 0
+      default: 0
     }
   },
   totalCOGS: {
     type: Number,
-    default: 0,
-    min: 0
+    default: 0
   },
   expenseSummary: [
     {
@@ -78,8 +69,7 @@ const dailyStockLedgerSchema = new mongoose.Schema({
       },
       amount: {
         type: Number,
-        required: true,
-        min: 0,
+        required: true
       },
       // optional metadata (if you ever need it)
       // count: { type: Number, default: 0, min: 0 }, // number of vouchers
@@ -88,8 +78,7 @@ const dailyStockLedgerSchema = new mongoose.Schema({
 
   totalExpenses: {
     type: Number,
-    default: 0,
-    min: 0,
+    default: 0
   },
   ledgerDate: {
   type: String, // "YYYY-MM-DD" (IST)
