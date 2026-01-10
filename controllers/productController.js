@@ -262,19 +262,22 @@ exports.createProduct = async (req, res) => {
 // GET /api/products
 exports.getProducts = async (req, res) => {
   try {
-    const { clientId } = req.auth;
-    const { company } = req.query; // ✅ Get company from query params
+    const { clientId, role } = req.auth; 
+    const queryClientId = req.query.clientId; 
 
-    // Build filter object
-    const filter = { createdByClient: clientId };
+    let filter = {};
 
-    // ✅ Add company filter if provided
-    if (company) {
-      filter.company = company;
+    if ((role === "master" || role === "admin") && queryClientId) {
+      filter.createdByClient = queryClientId;
+    } else {
+      filter.createdByClient = clientId;
+    }
+    if (req.query.company) {
+      filter.company = req.query.company;
     }
 
     const products = await Product.find(filter)
-      .populate('company') // ✅ Optional: populate company details
+      .populate('company')
       .sort({ createdAt: -1 })
       .lean();
 
