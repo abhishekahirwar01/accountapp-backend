@@ -2059,6 +2059,7 @@ exports.getSalesEntries = async (req, res) => {
       // Dashboard ke liye bina limit ke data fetch karein
       const entries = await SalesEntry.find(filter)
         .populate("party", "name")
+        .populate("party", "name").sort({ date: -1 })
         .sort({ date: -1 });
 
       return res.status(200).json({
