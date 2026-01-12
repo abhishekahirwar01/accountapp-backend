@@ -369,19 +369,20 @@ exports.getPayments = async (req, res) => {
 
     const filter = {};
     const user = req.user || req.auth;
+    const { role, allowedCompanies, clientId: authClientId } = req.auth;
 
-    console.log("User role:", user.role);
-    console.log("User ID:", user.id);
+    console.log("User role:", role);
     console.log("Query companyId:", req.query.companyId);
 
-
     // --- Client filtering ---
-    if (user.role === "client") {
+    if (role === "client") {
       filter.client = user.id;
+    } else {
+      filter.client = authClientId; 
     }
 
     // --- Company filtering ---
-    if (req.query.companyId) {
+    if (req.query.companyId && req.query.companyId !== "all" && req.query.companyId !== "undefined") {
       if (!companyAllowedForUser(req, req.query.companyId)) {
         return res.status(403).json({ 
           success: false, 
@@ -390,25 +391,21 @@ exports.getPayments = async (req, res) => {
       }
       filter.company = req.query.companyId;
     } else {
-      const allowedCompanies = user.allowedCompanies || [];
-      if (allowedCompanies.length > 0 && user.role === "user") {
-        filter.company = { $in: allowedCompanies };
-      } else if (user.role === "user") {
-        // Regular user with no company access
+      if (role === "user") {
+        if (allowedCompanies && allowedCompanies.length > 0) {
+          filter.company = { $in: allowedCompanies.map(String) };
+        } else {
         return res.status(200).json({
           success: true,
           total: 0,
           count: 0,
-          page: 1,
-          limit: 20,
-          totalPages: 0,
           data: [],
+            message: "No companies assigned to this user" 
         });
       }
     }
-
-    // --- Date range filtering ---
- const { startDate, endDate, dateFrom, dateTo } = req.query;
+    }
+    const { startDate, endDate, dateFrom, dateTo } = req.query;
     const finalStart = startDate || dateFrom;
     const finalEnd = endDate || dateTo;
 
@@ -428,8 +425,7 @@ exports.getPayments = async (req, res) => {
       filter.$or = [
         { description: { $regex: searchTerm, $options: "i" } },
         { referenceNumber: { $regex: searchTerm, $options: "i" } },
-        { paymentNumber: { $regex: searchTerm, $options: "i" } },
-        { 'vendor.vendorName': { $regex: searchTerm, $options: "i" } }
+        { paymentNumber: { $regex: searchTerm, $options: "i" } }
       ];
     }
 
@@ -437,45 +433,20 @@ exports.getPayments = async (req, res) => {
 
     // --- ENHANCED PAGINATION ---
     const page = parseInt(req.query.page) || 1;
-    let limit = parseInt(req.query.limit) || 20; // Default to 20 for frontend pagination
+    let limit = parseInt(req.query.limit) || 20; 
     
-    // Validate pagination parameters
-    if (page < 1) {
-      return res.status(400).json({
-        success: false,
-        message: "Page must be at least 1"
-      });
-    }
+    if (page < 1) return res.status(400).json({ success: false, message: "Page must be at least 1" });
     
-    if (limit < 1 || limit > 5000) {
-      return res.status(400).json({
-        success: false,
-        message: "Limit must be between 1 and 5000"
-      });
-    }
-    
-    // Calculate total count
     const total = await PaymentEntry.countDocuments(filter);
     
-    // Auto-adjust limit for large datasets
     let effectiveLimit = limit;
     if (total > 10000 && !req.query.limit) {
-      console.log(`Large dataset detected: ${total} payments. Auto-adjusting limit to 200.`);
       effectiveLimit = Math.min(200, limit);
     }
     
     const skip = (page - 1) * effectiveLimit;
-    const totalPages = Math.ceil(total / effectiveLimit);
-    
-    // Ensure page doesn't exceed total pages
-    if (page > totalPages && totalPages > 0) {
-      return res.status(400).json({
-        success: false,
-        message: `Page ${page} exceeds total pages (${totalPages})`
-      });
-    }
+    const totalPages = Math.ceil(total / effectiveLimit) || 1;
 
-    // Build query with proper population
     const query = PaymentEntry.find(filter)
       .sort({ date: -1, createdAt: -1 })
       .populate({ 
@@ -492,17 +463,14 @@ exports.getPayments = async (req, res) => {
         select: "businessName address gstin phoneNumber email" 
       });
 
-    // Execute query with pagination
     let data;
     if (total <= 10000 && !req.query.page && !req.query.limit) {
-      // Small dataset without explicit pagination - return all
       data = await query.lean();
     } else {
-      // Apply pagination
       data = await query.skip(skip).limit(effectiveLimit).lean();
     }
 
-    // Add transaction type for frontend
+
     const typedData = data.map(entry => ({ 
       ...entry, 
       type: "payment"
@@ -519,12 +487,7 @@ exports.getPayments = async (req, res) => {
       data: typedData,
       metadata: {
         datasetSize: total,
-        filtered: Object.keys(filter).length > 0,
-        includes: {
-          vendor: true,
-          expense: true,
-          company: true
-        }
+        filtered: Object.keys(filter).length > 0
       }
     });
   } catch (err) {
