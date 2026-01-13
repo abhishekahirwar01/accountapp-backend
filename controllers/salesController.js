@@ -1753,35 +1753,34 @@ exports.deleteSalesEntry = async (req, res) => {
 
       // Retrieve companyId and clientId from the sales entry to delete related cache
       const companyId = entry.company.toString();
-      const clientId = entry.client.toString(); // Retrieve clientId from the entry
 
       // Socket emit for sale deletion
-try {
-  if (global.io) {
-    console.log('📡 Emitting transaction-update (delete sale)...');
-    
-    const customerDoc = await Party.findById(entry.party);
-    const customerName = customerDoc?.name || 'Unknown Customer';
-    
-    const socketPayload = {
-      message: 'Sale Entry Deleted',
-      type: 'sale',
-      action: 'delete',
-      entryId: entry._id,
-      customerName: customerName
-    };
+      try {
+        if (global.io) {
+          console.log('📡 Emitting transaction-update (delete sale)...');
 
-    global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
-    global.io.to('all-transactions-updates').emit('transaction-update', {
-      ...socketPayload,
-      clientId: req.auth.clientId
-    });
-  }
-} catch (socketError) {
-  console.error("⚠️ Socket Emit Failed (Sale Delete):", socketError.message);
-}
+          const customerDoc = await Party.findById(entry.party);
+          const customerName = customerDoc?.name || 'Unknown Customer';
 
-// ⬆️⬆️⬆️ END OF ADDED CODE ⬆️⬆️⬆️
+          const socketPayload = {
+            message: 'Sale Entry Deleted',
+            type: 'sale',
+            action: 'delete',
+            entryId: entry._id,
+            customerName: customerName
+          };
+
+          global.io.to(`client-${req.auth.clientId}`).emit('transaction-update', socketPayload);
+          global.io.to('all-transactions-updates').emit('transaction-update', {
+            ...socketPayload,
+            clientId: req.auth.clientId
+          });
+        }
+      } catch (socketError) {
+        console.error("⚠️ Socket Emit Failed (Sale Delete):", socketError.message);
+      }
+
+      // ⬆️⬆️⬆️ END OF ADDED CODE ⬆️⬆️⬆️
 
 
 
