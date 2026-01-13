@@ -25,7 +25,7 @@ function userCanAccessAllClientData(req) {
 }
 
 async function adjustBalanceGuarded({ partyId, clientId, companyId, delta, session }) {
-  console.log('adjustBalanceGuarded called with:', { partyId, clientId, companyId, delta });
+  // console.log('adjustBalanceGuarded called with:', { partyId, clientId, companyId, delta });
   if (delta < 0) {
     // deducting → allow even if balance is insufficient
     const updated = await Party.findOneAndUpdate(
@@ -33,7 +33,7 @@ async function adjustBalanceGuarded({ partyId, clientId, companyId, delta, sessi
       { $inc: { [`balances.${companyId}`]: delta } }, // delta is negative, so it deducts
       { new: true, session, select: { _id: 1, [`balances.${companyId}`]: 1 } }
     );
-    console.log('adjustBalanceGuarded result:', updated);
+    // console.log('adjustBalanceGuarded result:', updated);
     return updated; // null if guard failed
   } else {
     // adding back / reducing receipt → always allowed
@@ -796,6 +796,7 @@ exports.deleteReceipt = async (req, res) => {
       const updatedParty = await adjustBalanceGuarded({
         partyId: receipt.party,
         clientId: req.auth.clientId,
+        companyId: receipt.company.toString(),
         delta: +amt,  // add back
         session,
       });
@@ -848,6 +849,7 @@ exports.deleteReceipt = async (req, res) => {
         const updatedParty = await adjustBalanceGuarded({
           partyId: receipt.party,
           clientId: req.auth.clientId,
+          companyId: receipt.company.toString(),
           delta: +amt,
           session: undefined,
         });
