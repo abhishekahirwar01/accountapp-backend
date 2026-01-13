@@ -14,7 +14,7 @@ const { resolveActor, findAdminUser } = require("../utils/actorUtils");
 const PRIV_ROLES = new Set(["master", "client", "admin"]);
 
 function userIsPrivForCompanyAccess(req) {
-  // Only master and client should bypass company restrictions
+  // Only master and client should bypass company r`estrictions
   return req.auth?.role === "master" || req.auth?.role === "client";
 }
 
@@ -25,13 +25,15 @@ function userCanAccessAllClientData(req) {
 }
 
 async function adjustBalanceGuarded({ partyId, clientId, companyId, delta, session }) {
+  console.log('adjustBalanceGuarded called with:', { partyId, clientId, companyId, delta });
   if (delta < 0) {
-    // deducting → require enough balance for the specific company
+    // deducting → allow even if balance is insufficient
     const updated = await Party.findOneAndUpdate(
-      { _id: partyId, createdByClient: clientId, [`balances.${companyId}`]: { $gte: -delta } },
+      { _id: partyId, createdByClient: clientId },
       { $inc: { [`balances.${companyId}`]: delta } }, // delta is negative, so it deducts
       { new: true, session, select: { _id: 1, [`balances.${companyId}`]: 1 } }
     );
+    console.log('adjustBalanceGuarded result:', updated);
     return updated; // null if guard failed
   } else {
     // adding back / reducing receipt → always allowed
@@ -664,6 +666,8 @@ exports.updateReceipt = async (req, res) => {
     const finalAmount = newAmount != null ? newAmount : oldAmount;
     const delta = finalAmount - oldAmount; // >0 means more deduction, <0 means refund
 
+    console.log('updateReceipt delta calculation:', { oldAmount, finalAmount, delta });
+
     let session;
     try {
       session = await mongoose.startSession();
@@ -671,9 +675,12 @@ exports.updateReceipt = async (req, res) => {
 
       // Apply full delta to maintain consistency with create logic
       if (delta !== 0) {
+        const companyId = receipt.company.toString();
+        console.log('Calling adjustBalanceGuarded with:', { partyId: receipt.party, clientId: req.auth.clientId, companyId, delta: -delta });
         const updatedParty = await adjustBalanceGuarded({
           partyId: receipt.party,
           clientId: req.auth.clientId,
+          companyId: companyId,
           delta: -delta, // Apply full delta (negative for receipts)
           session,
         });
