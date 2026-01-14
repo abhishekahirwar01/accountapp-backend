@@ -6,5 +6,6 @@ const verifyClientOrAdmin = require("../middleware/verifyClientOrAdmin");
 router.get("/payables", verifyClientOrAdmin, ledgerController.getPayablesLedger);
 router.get("/vendor-payables", verifyClientOrAdmin, ledgerController.getVendorPayablesLedger);
 router.get("/expense-payables", verifyClientOrAdmin, ledgerController.getExpensePayablesLedger);
+router.get("/all-expense-totals", verifyClientOrAdmin, ledgerController.getAllExpenseTotals);
 
 module.exports = router;

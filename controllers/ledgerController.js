@@ -286,3 +286,43 @@ exports.getExpensePayablesLedger = async (req, res) => {
     res.status(500).json({ message: "Server error", error: error.message });
   }
 };
+
+exports.getAllExpenseTotals = async (req, res) => {
+  try {
+    const clientId = req.auth.clientId;
+    const { fromDate, toDate, companyId } = req.query;
+
+    const companyFilter = companyId ? { company: companyId } : {};
+    const dateFilter = {};
+    if (fromDate || toDate) {
+      dateFilter.date = {};
+      if (fromDate) dateFilter.date.$gte = new Date(fromDate);
+      if (toDate) dateFilter.date.$lte = new Date(toDate);
+    }
+
+    const totals = await PaymentEntry.aggregate([
+      {
+        $match: {
+          client: clientId,
+          isExpense: true,
+          ...companyFilter,
+          ...(dateFilter.date ? { date: dateFilter.date } : {})
+        }
+      },
+      {
+        $group: {
+          _id: "$expense", 
+          totalAmount: { $sum: "$amount" } 
+        }
+      }
+    ]);
+    const response = {};
+    totals.forEach(item => {
+      response[item._id] = item.totalAmount;
+    });
+
+    res.json(response);
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error: error.message });
+  }
+};
