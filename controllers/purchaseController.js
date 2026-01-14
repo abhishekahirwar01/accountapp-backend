@@ -131,7 +131,7 @@ async function notifyAdminOnPurchaseAction({ req, action, vendorName, entryId, c
 /**
  * Update Product stocks and cost price (weighted average)
  */
-async function updateProductStockAndCostPrice(productId, newQuantity, newCostPrice, session = null) {
+async function updateProductStockAndCostPrice(productId, newQuantity, newCostPrice, session = null, isPurchase = false) {
   const product = await Product.findById(productId).session(session);
   if (!product) throw new Error(`Product not found: ${productId}`);
 
@@ -146,7 +146,10 @@ async function updateProductStockAndCostPrice(productId, newQuantity, newCostPri
 
   // Update product
   product.stocks = totalQuantity;
-  product.costPrice = weightedAverageCost;
+  // Only update cost price if this is not a purchase transaction
+  if (!isPurchase) {
+    product.costPrice = weightedAverageCost;
+  }
 
   await product.save({ session });
   return product;
@@ -593,7 +596,8 @@ exports.createPurchaseEntry = async (req, res) => {
                 item.product,
                 item.quantity,
                 item.pricePerUnit,
-                session
+                session,
+                true // This is a purchase transaction
               )
             );
             await Promise.all(productUpdates);
@@ -1255,7 +1259,9 @@ exports.updatePurchaseEntry = async (req, res) => {
               await updateProductStockAndCostPrice(
                 newItem.product,
                 quantityDiff,
-                newItem.pricePerUnit
+                newItem.pricePerUnit,
+                null,
+                true // This is a purchase transaction
               );
             }
           } else if (newItem) {
@@ -1263,7 +1269,9 @@ exports.updatePurchaseEntry = async (req, res) => {
             await updateProductStockAndCostPrice(
               newItem.product,
               newItem.quantity,
-              newItem.pricePerUnit
+              newItem.pricePerUnit,
+              null,
+              true // This is a purchase transaction
             );
           }
         });
