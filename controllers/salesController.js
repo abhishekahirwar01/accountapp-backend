@@ -1729,6 +1729,8 @@ exports.deleteSalesEntry = async (req, res) => {
 
         console.log("✅ Stock & ledger reversal successful for DELETE.");
       }
+            // Retrieve companyId and clientId from the sales entry to delete related cache
+      const companyId = entry.company.toString();
 
       // 🟢🟢🟢 REVERSE CREDIT BALANCE IF PAYMENT WAS CREDIT 🟢🟢🟢
       if (paymentMethod === "Credit") {
@@ -1745,14 +1747,14 @@ exports.deleteSalesEntry = async (req, res) => {
           console.log(`✅ Reversed credit balance for customer ${entry.party}: -${totalAmount}`);
         } catch (creditError) {
           console.error("❌ Error reversing credit balance:", creditError);
+          throw creditError; // Re-throw to ensure transaction rolls back
         }
       }
 
       // Delete the sales entry
       await entry.deleteOne();
 
-      // Retrieve companyId and clientId from the sales entry to delete related cache
-      const companyId = entry.company.toString();
+
 
       // Socket emit for sale deletion
       try {
