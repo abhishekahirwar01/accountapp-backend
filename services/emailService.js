@@ -6,11 +6,16 @@ const Client = require("../models/Client");
 // Create a system-level transporter for reports
 function createSystemTransporter() {
   return nodemailer.createTransport({
-    service: 'gmail',
+    host: "smtp.gmail.com",
+    port: 465, // Secure port
+    secure: true, // Use SSL
     auth: {
-      user: process.env.EMAIL_USER, // Your system email
-      pass: process.env.EMAIL_PASSWORD // Your system email password
-    }
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASSWORD,
+    },
+    // Timeout badha dein
+    connectionTimeout: 10000, // 10 seconds
+    greetingTimeout: 10000,
   });
 }
 
