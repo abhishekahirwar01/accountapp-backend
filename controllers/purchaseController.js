@@ -863,6 +863,7 @@ exports.getPurchaseEntries = async (req, res) => {
       // Dashboard ke liye saara data fetch karein taaki accurate sum dikhe
       const entries = await PurchaseEntry.find(filter)
         .sort({ date: -1 })
+        .populate("products.product", "name productName")
         .populate({ path: "vendor", select: "vendorName" })
         .lean();
 
