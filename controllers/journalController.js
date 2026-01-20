@@ -235,10 +235,40 @@ exports.getJournals = async (req, res) => {
     const perPage = Math.min(parseInt(limitRaw, 10) || 100, 500);
     const skip = (page - 1) * perPage;
 
-    const where = {
+const where = {
       client: req.auth.clientId,
-      ...companyFilterForUser(req, companyId),
     };
+
+    const user = req.auth;
+
+    // --- 2. Company Filtering (Fixed Logic) ---
+    if (companyId && companyId !== "all" && companyId !== "undefined") {
+      if (!companyAllowedForUser(req, companyId)) {
+        return res.status(403).json({ 
+          message: "You are not allowed to use this company" 
+        });
+      }
+      where.company = companyId;
+
+    } else {
+      if (user.role !== "client" && user.role !== "master") {
+        
+        const allowedCompanies = user.allowedCompanies || [];
+
+        if (allowedCompanies.length > 0) {
+          where.company = { $in: allowedCompanies.map(String) };
+        } else {
+          return res.status(200).json({
+            success: true,
+            total: 0,
+            page,
+            limit: perPage,
+            data: [],
+            message: "No companies assigned to this user" 
+          });
+        }
+      }
+    }
 
    const { startDate, endDate } = req.query;
     const finalStart = startDate || dateFrom;

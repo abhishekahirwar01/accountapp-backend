@@ -613,9 +613,9 @@ exports.getSalesEntries = async (req, res) => {
       }
       filter.company = req.query.companyId;
     } else {
-      if (role === "user") {
+if (role === "admin" || role === "user") {
         if (allowedCompanies && allowedCompanies.length > 0) {
-          filter.company = { $in: allowedCompanies };
+          filter.company = { $in: allowedCompanies.map(String) };
         } else {
           return res.status(200).json({
             success: true,
@@ -626,8 +626,8 @@ exports.getSalesEntries = async (req, res) => {
       }
     }
 
-    if (user.role === "client") {
-      filter.client = user.id;
+    if (req.auth.clientId) {
+      filter.client = req.auth.clientId;
     }
 
     // Date filters handle karna (Agar dashboard page par specific date select ho)
