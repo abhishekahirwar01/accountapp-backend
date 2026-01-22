@@ -816,7 +816,7 @@ exports.getPurchaseEntries = async (req, res) => {
       filter.company = req.query.companyId;
     } else {
       // "All Companies" ka case
-      if (role === "user") {
+if (role === "user" || role === "admin") {
         if (allowedCompanies && allowedCompanies.length > 0) {
           // Sirf wahi data dikhega jo user ko allot kiya gaya hai
         filter.company = { $in: allowedCompanies };
@@ -831,8 +831,8 @@ exports.getPurchaseEntries = async (req, res) => {
     }
 
     // Client filtering (Tenant security)
-    if (user.role === "client") {
-      filter.client = user.id;
+   if (req.auth.clientId) {
+      filter.client = req.auth.clientId;
     }
 
     // Date range handling

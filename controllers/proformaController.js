@@ -245,10 +245,26 @@ exports.getProformaEntries = async (req, res) => {
       }
       
       filter.company = companyId;
-    } else {
-      // If no companyId specified, show only companies the user is allowed to access
-      if (!userIsPriv(req) && Array.isArray(req.auth.allowedCompanies)) {
-        filter.company = { $in: req.auth.allowedCompanies };
+   } else {
+      
+      if (req.auth.role !== "client" && req.auth.role !== "master") {
+        
+        const allowedCompanies = req.auth.allowedCompanies || [];
+
+        if (allowedCompanies.length > 0) {
+          filter.company = { $in: allowedCompanies.map(String) };
+        } else {
+          return res.status(200).json({
+            success: true,
+            total: 0,
+            count: 0,
+            page: 1,
+            limit: 20,
+            totalPages: 0,
+            data: [],
+            message: "No companies assigned to this user"
+          });
+        }
       }
     }
 

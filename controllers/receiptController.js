@@ -455,7 +455,6 @@ exports.getReceipts = async (req, res) => {
     console.log("User ID:", user.id);
     console.log("Query companyId:", req.query.companyId);
 
-    // --- Client filtering ---
    filter.client = req.auth.clientId;
 
     // --- Company filtering ---
@@ -469,21 +468,24 @@ exports.getReceipts = async (req, res) => {
       filter.company = req.query.companyId;
 
     } else {
+      
       const allowedCompanies = user.allowedCompanies || [];
-      if (allowedCompanies.length > 0 && user.role === "user") {
-        filter.company = { $in: allowedCompanies };
-      } else if (user.role === "user") {
-        // Regular user with no company access
-        return res.status(200).json({
-          success: true,
-          total: 0,
-          count: 0,
-          page: 1,
-          limit: 20,
-          totalPages: 0,
-          data: [],
-        });
 
+      if (user.role !== "client" && user.role !== "master") {
+        
+        if (allowedCompanies.length > 0) {
+          filter.company = { $in: allowedCompanies };
+        } else {
+          return res.status(200).json({
+            success: true,
+            total: 0,
+            count: 0,
+            page: 1,
+            limit: 20,
+            totalPages: 0,
+            data: [],
+          });
+        }
       }
     }
 
@@ -512,7 +514,7 @@ exports.getReceipts = async (req, res) => {
       ];
     }
 
-    console.log("Final filter for receipt entries:", JSON.stringify(filter, null, 2));
+  console.log("Final filter for receipt entries:", JSON.stringify(filter, null, 2));
 
     // --- ENHANCED PAGINATION ---
     const page = parseInt(req.query.page) || 1;

@@ -390,20 +390,24 @@ exports.getPayments = async (req, res) => {
         });
       }
       filter.company = req.query.companyId;
-    } else {
-      if (role === "user") {
+} else {
+     if (role === "user" || role === "admin") {
+        
         if (allowedCompanies && allowedCompanies.length > 0) {
           filter.company = { $in: allowedCompanies.map(String) };
         } else {
-        return res.status(200).json({
-          success: true,
-          total: 0,
-          count: 0,
-          data: [],
+          return res.status(200).json({
+            success: true,
+            total: 0,
+            count: 0,
+            page: 1,
+            limit: 20,
+            totalPages: 0,
+            data: [],
             message: "No companies assigned to this user" 
-        });
+          });
+        }
       }
-    }
     }
     const { startDate, endDate, dateFrom, dateTo } = req.query;
     const finalStart = startDate || dateFrom;
