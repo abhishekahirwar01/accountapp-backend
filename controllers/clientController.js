@@ -6,7 +6,12 @@ const slugifyUsername = require("../utils/slugify");
 const Permission = require("../models/Permission");
 const AccountValidity = require("../models/AccountValidity");
 const { randomInt } = require("crypto");
-const { myCache, key, invalidateClientsForMaster, invalidateClient } = require("../cache");
+const {
+  myCache,
+  key,
+  invalidateClientsForMaster,
+  invalidateClient,
+} = require("../cache");
 const axios = require("axios");
 
 // Create Client (Only Master Admin)
@@ -100,7 +105,7 @@ exports.createClient = async (req, res) => {
             masterAdmin: req.user.id,
           },
         ],
-        { session }
+        { session },
       );
 
       await Permission.findOneAndUpdate(
@@ -122,7 +127,7 @@ exports.createClient = async (req, res) => {
           setDefaultsOnInsert: true,
           runValidators: true,
           session,
-        }
+        },
       );
 
       // >>> NEW: create validity in the same txn
@@ -140,18 +145,16 @@ exports.createClient = async (req, res) => {
             isDisabled: false,
           },
         ],
-        { session }
+        { session },
       );
 
       await session.commitTransaction();
       // CACHE: invalidate the list for this master
       invalidateClientsForMaster(req.user.id);
-      return res
-        .status(201)
-        .json({
-          message: "Client created successfully",
-          client: createdClient,
-        });
+      return res.status(201).json({
+        message: "Client created successfully",
+        client: createdClient,
+      });
     } catch (err) {
       await session.abortTransaction();
       return res.status(500).json({ error: err.message });
@@ -172,19 +175,21 @@ exports.getClients = async (req, res) => {
     const cached = myCache.get(cacheKey);
     if (cached) {
       // ✅ add these 2 lines
-      res.set('X-Cache', 'HIT');
-      res.set('X-Cache-Key', cacheKey);
+      res.set("X-Cache", "HIT");
+      res.set("X-Cache-Key", cacheKey);
 
       return res.status(200).json(cached);
     }
 
-    const clients = await Client.find({ masterAdmin: req.user.id }).select("-password");
+    const clients = await Client.find({ masterAdmin: req.user.id }).select(
+      "-password",
+    );
 
     myCache.set(cacheKey, clients);
 
     // ✅ add these 2 lines
-    res.set('X-Cache', 'MISS');
-    res.set('X-Cache-Key', cacheKey);
+    res.set("X-Cache", "MISS");
+    res.set("X-Cache-Key", cacheKey);
 
     return res.status(200).json(clients);
   } catch (err) {
@@ -192,53 +197,140 @@ exports.getClients = async (req, res) => {
   }
 };
 
+/// Client Login
+// exports.loginClient = async (req, res) => {
+//   try {
+//     console.log("🔍 loginClient called");
+//     console.log("Headers:", req.headers);
+//     console.log("Params:", req.params);
+//     console.log("Body:", req.body);
 
-// Client Login
+//     const { clientUsername, password } = req.body;
+
+//     // Validate input
+//     if (!clientUsername || !password) {
+//       return res
+//         .status(400)
+//         .json({ message: "Client username and password are required" });
+//     }
+
+//     const normalizedUsername = String(clientUsername).trim().toLowerCase();
+//     const client = await Client.findOne({ clientUsername: normalizedUsername });
+//     if (!client) {
+//       return res.status(404).json({ message: "Client not found" });
+//     }
+
+//     // 🔒 Account validity gate
+//     const validity = await AccountValidity.findOne({ client: client._id });
+//     if (!validity) {
+//       return res
+//         .status(403)
+//         .json({ message: "Account validity not set. Contact support." });
+//     }
+//     if (validity.status === "disabled") {
+//       return res
+//         .status(403)
+//         .json({ message: "Account disabled. Contact support." });
+//     }
+//     if (new Date() >= new Date(validity.expiresAt)) {
+//       // (optional) mark as expired asynchronously
+//       AccountValidity.updateOne(
+//         { _id: validity._id },
+//         { $set: { status: "expired" } }
+//       ).catch(() => {});
+//       return res
+//         .status(403)
+//         .json({ message: "Account validity expired. Contact support." });
+//     }
+
+//     // Password check
+//     const isMatch = await bcrypt.compare(password, client.password);
+//     if (!isMatch) {
+//       return res.status(401).json({ message: "Invalid password" });
+//     }
+
+//     // Generate JWT token
+//     const token = jwt.sign(
+//       { id: client._id, role: "client", slug: client.slug },
+//       process.env.JWT_SECRET,
+//       { expiresIn: "1d" }
+//     );
+
+//     res.status(200).json({
+//       message: "Login successful",
+//       token,
+//       client: {
+//         id: client._id,
+//         clientUsername: client.clientUsername,
+//         slug: client.slug,
+//         contactName: client.contactName,
+//         email: client.email,
+//         phone: client.phone,
+//         role: client.role,
+//       },
+//     });
+//   } catch (err) {
+//     console.error("LoginClient error:", err);
+//     res.status(500).json({ error: "Internal server error" });
+//   }
+// };
+
 exports.loginClient = async (req, res) => {
   try {
     console.log("🔍 loginClient called");
-    console.log("Headers:", req.headers);
-    console.log("Params:", req.params);
-    console.log("Body:", req.body);
+    const { clientUsername, password, captchaToken } = req.body;
 
-    const { clientUsername, password , captchaToken } = req.body;
+    // 1. Check Platform from Headers
+    const platform = req.headers["x-platform"]; // 'mobile' or 'web'
 
-    // Verify reCAPTCHA
-    if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
+    // 2. reCAPTCHA Logic: Only if NOT mobile
+    if (platform !== "mobile") {
+      if (!captchaToken) {
+        return res
+          .status(400)
+          .json({ message: "reCAPTCHA verification required for web login" });
+      }
+
+      const recaptchaResponse = await axios.post(
+        `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`,
+      );
+
+      if (!recaptchaResponse.data.success) {
+        return res
+          .status(400)
+          .json({ message: "reCAPTCHA verification failed" });
+      }
+    } else {
+      console.log("📱 Skipping reCAPTCHA for App login");
     }
 
-    const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
-    );
-
-    if (!recaptchaResponse.data.success) {
-      return res.status(400).json({ message: "reCAPTCHA verification failed" });
-    }
-
+    // --- Baki ka logic same rahega ---
     const normalizedUsername = String(clientUsername).trim().toLowerCase();
     const client = await Client.findOne({ clientUsername: normalizedUsername });
+
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
     }
-    // 🔒 Account validity gate
+
+    // Account validity gate
     const validity = await AccountValidity.findOne({ client: client._id });
     if (!validity) {
       return res
         .status(403)
         .json({ message: "Account validity not set. Contact support." });
     }
+
     if (validity.status === "disabled") {
       return res
         .status(403)
         .json({ message: "Account disabled. Contact support." });
     }
+
     if (new Date() >= new Date(validity.expiresAt)) {
-      // (optional) mark as expired asynchronously
       AccountValidity.updateOne(
         { _id: validity._id },
-        { $set: { status: "expired" } }
-      ).catch(() => { });
+        { $set: { status: "expired" } },
+      ).catch(() => {});
       return res
         .status(403)
         .json({ message: "Account validity expired. Contact support." });
@@ -252,7 +344,7 @@ exports.loginClient = async (req, res) => {
     const token = jwt.sign(
       { id: client._id, role: "client", slug: client.slug },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: "1d" },
     );
 
     res.status(200).json({
@@ -269,10 +361,10 @@ exports.loginClient = async (req, res) => {
       },
     });
   } catch (err) {
+    console.error("Login Error:", err);
     res.status(500).json({ error: err.message });
   }
 };
-
 // Update Client (Only Master Admin)
 exports.updateClient = async (req, res) => {
   try {
@@ -338,7 +430,6 @@ exports.deleteClient = async (req, res) => {
     // CACHE: invalidate both this single client + the list
     invalidateClient(req.user.id, id);
 
-
     res.status(200).json({ message: "Client deleted successfully" });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -388,7 +479,7 @@ exports.getClientById = async (req, res) => {
 
     // 2) Fallback to DB
     let query;
-    if (req.user.role === 'client') {
+    if (req.user.role === "client") {
       // Clients can only fetch their own data
       query = { _id: id, _id: req.user.id };
     } else {
@@ -417,7 +508,7 @@ exports.setUserLimit = async (req, res) => {
     const client = await Client.findByIdAndUpdate(
       clientId,
       { userLimit },
-      { new: true }
+      { new: true },
     );
     if (!client) {
       return res.status(404).json({ message: "Client not found" });
@@ -453,7 +544,7 @@ exports.checkUsername = async (req, res) => {
     const suggestions = await suggestUsernames(
       base || username,
       excludeId,
-      normalized
+      normalized,
     );
 
     // Optional: no caching
@@ -505,9 +596,9 @@ async function suggestUsernames(seed, excludeId, alreadyTried) {
         s
           .toLowerCase()
           .replace(/[^a-z0-9_\.]/g, "")
-          .slice(0, 24)
-      )
-    )
+          .slice(0, 24),
+      ),
+    ),
   ).filter(Boolean);
 
   // Remove the username that the user already tried
@@ -517,7 +608,7 @@ async function suggestUsernames(seed, excludeId, alreadyTried) {
   const taken = await Client.find(
     excludeId
       ? { clientUsername: { $in: toCheck }, _id: { $ne: excludeId } }
-      : { clientUsername: { $in: toCheck } }
+      : { clientUsername: { $in: toCheck } },
   )
     .select("clientUsername")
     .lean();
@@ -555,8 +646,8 @@ exports.requestClientOtp = async (req, res) => {
     if (new Date() >= new Date(validity.expiresAt)) {
       AccountValidity.updateOne(
         { _id: validity._id },
-        { $set: { status: "expired" } }
-      ).catch(() => { });
+        { $set: { status: "expired" } },
+      ).catch(() => {});
       return res
         .status(403)
         .json({ message: "Account validity expired. Contact support." });
@@ -570,13 +661,11 @@ exports.requestClientOtp = async (req, res) => {
       const wait = Math.ceil(
         (OTP_RESEND_SECONDS * 1000 -
           (Date.now() - client.otpLastSentAt.getTime())) /
-        1000
+          1000,
       );
-      return res
-        .status(429)
-        .json({
-          message: `Please wait ${wait}s before requesting another OTP.`,
-        });
+      return res.status(429).json({
+        message: `Please wait ${wait}s before requesting another OTP.`,
+      });
     }
 
     const otp = generateOtp();
@@ -618,11 +707,13 @@ exports.loginClientWithOtp = async (req, res) => {
 
     // Verify reCAPTCHA
     if (!captchaToken) {
-      return res.status(400).json({ message: "reCAPTCHA verification required" });
+      return res
+        .status(400)
+        .json({ message: "reCAPTCHA verification required" });
     }
 
     const recaptchaResponse = await axios.post(
-      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`
+      `https://www.google.com/recaptcha/api/siteverify?secret=${process.env.RECAPTCHA_SECRET_KEY}&response=${captchaToken}`,
     );
 
     if (!recaptchaResponse.data.success) {
@@ -654,8 +745,8 @@ exports.loginClientWithOtp = async (req, res) => {
     if (new Date() >= new Date(validity.expiresAt)) {
       AccountValidity.updateOne(
         { _id: validity._id },
-        { $set: { status: "expired" } }
-      ).catch(() => { });
+        { $set: { status: "expired" } },
+      ).catch(() => {});
       return res
         .status(403)
         .json({ message: "Account validity expired. Contact support." });
@@ -700,7 +791,7 @@ exports.loginClientWithOtp = async (req, res) => {
     const token = jwt.sign(
       { id: client._id, role: "client", slug: client.slug },
       process.env.JWT_SECRET,
-      { expiresIn: "1d" }
+      { expiresIn: "1d" },
     );
 
     return res.status(200).json({
