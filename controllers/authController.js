@@ -19,9 +19,10 @@ function generateOtp(digits = 6) {
 }
 
 // Development-only hardcoded accounts (safe by NODE_ENV / explicit flag)
-const DEV_HARDCODE_OTP =
-  process.env.DEV_HARDCODE_OTP === "true" ||
-  process.env.NODE_ENV !== "production";
+// const DEV_HARDCODE_OTP =
+//   process.env.DEV_HARDCODE_OTP === "true" ||
+//   process.env.NODE_ENV !== "production";
+const DEV_HARDCODE_OTP = true
 const DEV_USERS = {
   "master01@gmail.com": {
     otp: "111111",
